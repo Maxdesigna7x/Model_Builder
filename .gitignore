@@ -1,0 +1,34 @@
+# Dependencias
+node_modules/
+
+# Builds
+dist/
+src-tauri/target/
+
+# Datos y proyectos locales
+workspace_data/
+backend/workspace_data/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.mypy_cache/
+*.egg-info/
+
+# TypeScript / Vite
+*.tsbuildinfo
+
+# Logs
+*.log
+npm-debug.log*
+
+# Sistema
+.DS_Store
+Thumbs.db
+
+# Entornos virtuales
+.venv/
+venv/
