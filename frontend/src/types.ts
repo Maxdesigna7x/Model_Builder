@@ -3,6 +3,33 @@ import type { Edge, Node } from "@xyflow/react";
 export type Step = "model" | "data" | "builder" | "training" | "inference";
 export type TaskId = "tabular.classification" | "tabular.regression" | "tabular.reconstruction" | "image.classification" | "image.regression" | "image.reconstruction" | "sequence.classification" | "sequence.regression" | "sequence.forecast" | "text.classification" | "text.language_model" | "image.segmentation.binary" | "image.segmentation.multiclass";
 export type Architecture = "mlp" | "cnn1d" | "lstm" | "transformer" | "transformer_causal" | "cnn" | "vit" | "unet" | "autoencoder";
+
+export type ArchitectureDef = { name: string; description: string; accent: string; tasks: TaskId[] };
+export type TaskDef = {
+  name: string;
+  nameKey?: string;
+  category: string;
+  categoryKey?: string;
+  modality: string;
+  modalityKey?: string;
+  input: string;
+  inputKey?: string;
+  output: string;
+  outputKey?: string;
+  metric: string;
+  metricKey?: string;
+  format: string;
+  formatKey?: string;
+};
+export type BlockDef = {
+  type: string;
+  label: string;
+  labelKey?: string;
+  category: string;
+  categoryKey?: string;
+  defaults: Record<string, number | string | boolean>;
+};
+
 export type ModelNodeData = { label: string; blockType: string; category: string; shape?: string; properties: Record<string, string | number | boolean>; error?: string; onDelete?: (id: string) => void; [key: string]: unknown };
 export type ModelNode = Node<ModelNodeData>;
 export type ModelEdge = Edge;
@@ -51,6 +78,24 @@ export interface DatasetOptions {
   vocab_size?: number;
   max_length?: number;
   vocab?: string[];
+  max_samples?: number;
+  window?: number;
+  horizon?: number;
+  stride?: number;
+}
+
+export interface HuggingFaceDataset {
+  id: string;
+  name: string;
+  repoId: string;
+  revision: string;
+  tasks: TaskId[];
+  sizeBytes: number;
+  license: string;
+  description: string;
+  defaultOptions: DatasetOptions;
+  cached: boolean;
+  installed: boolean;
 }
 
 export type DataNodeCategory = "source" | "inspect" | "curate" | "split" | "transform" | "augment" | "output";
@@ -85,7 +130,7 @@ export interface DataPipeline {
 export interface DatasetSummary {
   id: string;
   revision?: number;
-  source: "synthetic" | "imported";
+  source: "synthetic" | "imported" | "huggingface";
   samples: number;
   inputShape: number[];
   outputShape: number[];
@@ -95,6 +140,12 @@ export interface DatasetSummary {
   preview?: DatasetPreview;
   options?: DatasetOptions;
   sourcePath?: string;
+  catalogId?: string;
+  repoId?: string;
+  repoRevision?: string;
+  license?: string;
+  downloadSizeBytes?: number;
+  cacheStatus?: "project" | "disk" | "downloaded";
   pipeline?: DataPipeline;
   validation?: { errors: number; warnings: number; checks: number };
   analytics?: DatasetAnalytics;

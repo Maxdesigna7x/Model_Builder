@@ -10,7 +10,7 @@ El recorrido conserva el orden anterior, con un constructor sustancialmente nuev
 
 1. Crear o abrir un proyecto.
 2. Seleccionar tarea, familia de arquitectura y modalidad de datos compatible.
-3. Importar datos propios o generar datos sintéticos específicos para ese caso.
+3. Elegir un dataset público compatible de Hugging Face o importar datos propios.
 4. Construir y validar el modelo arrastrando bloques a un canvas.
 5. Configurar y observar el entrenamiento real.
 6. Elegir un checkpoint y ejecutar inferencia.
@@ -57,7 +57,7 @@ Dentro del proyecto hay cinco pasos persistentes: **Modelo y tarea · Datos · C
 | Paso | Condición para estar listo | Bloqueo o revisión |
 | --- | --- | --- |
 | Modelo y tarea | Familia + tarea + modalidad confirmadas | Combinación no soportada |
-| Datos | Importación/generación válida, contrato resuelto, split y pipeline guardados | Error de formato, etiquetas, pares o partición |
+| Datos | Descarga/importación válida, contrato resuelto, split y pipeline guardados | Error de descarga, formato, etiquetas, pares o partición |
 | Constructor | Grafo guardado, sin errores y prueba de un batch correcta | Forma, dtype, ruta de salida o revisión desactualizados |
 | Entrenamiento | Existe al menos un checkpoint válido de la revisión seleccionada | Run fallida sin checkpoint; incompatibilidad con revisión actual |
 | Inferencia | Se completó una predicción válida | No hay checkpoint compatible o entrada inválida |
@@ -84,7 +84,7 @@ El diálogo de cambio de tarea/familia ofrecerá «Crear variante» y «Cancelar
 - Shapes y parámetros se calculan; las estimaciones de memoria y tiempo se etiquetan como estimaciones.
 - Ninguna curva, progreso o predicción presentada como real se inventa para animar la interfaz.
 - Las métricas dependen de la tarea, no sólo del nombre de la arquitectura.
-- Datos sintéticos reproducibles sirven para experimentar y probar el flujo; no representan rendimiento sobre datos reales.
+- El catálogo público muestra procedencia, licencia y descarga estimada; cada fuente se fija a una revisión reproducible.
 - Un mismo preprocesamiento congelado acompaña al modelo hasta inferencia.
 - Test queda reservado a evaluación final y no gobierna early stopping ni selección de checkpoint.
 

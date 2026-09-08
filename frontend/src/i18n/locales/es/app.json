@@ -1,0 +1,387 @@
+{
+  "edge": {
+    "deleteConnectionTitle": "Eliminar conexión"
+  },
+  "step": {
+    "model": "Modelo y tarea",
+    "data": "Datos",
+    "builder": "Constructor",
+    "training": "Entrenamiento",
+    "inference": "Inferencia"
+  },
+  "trainingRun": {
+    "defaultName": "Corrida {{index}}"
+  },
+  "projectModel": {
+    "defaultName": "Modelo {{index}}"
+  },
+  "graphError": {
+    "singleInput": "Debe existir exactamente un bloque de entrada.",
+    "singleOutput": "Debe existir exactamente un bloque de salida.",
+    "duplicateConnection": "Conexión duplicada.",
+    "outputCannotSource": "Una salida no puede iniciar conexiones.",
+    "inputCannotTarget": "Una entrada no puede recibir conexiones.",
+    "blockNoInput": "El bloque no tiene entrada.",
+    "blockNoOutput": "El bloque no tiene salida.",
+    "singleInputOnly": "Este bloque solo admite una entrada.",
+    "needsTwoInputs": "Este bloque necesita al menos dos entradas.",
+    "cycle": "El bloque forma parte de un ciclo."
+  },
+  "notice": {
+    "trainingComplete": "Entrenamiento completado y checkpoint guardado.",
+    "selectTaskAndArchitecture": "Selecciona una tarea y arquitectura para continuar.",
+    "loadDataset": "Selecciona, descarga o importa un dataset para continuar.",
+    "completeRun": "Completa la corrida activa antes de usarla en inferencia."
+  },
+  "openFolder": {
+    "notTauri": "Abrir una carpeta está disponible en la aplicación Tauri.",
+    "prompt": "Ruta de la carpeta del proyecto:"
+  },
+  "deleteProject": {
+    "confirm": "¿Estás seguro de que deseas eliminar el proyecto \"{{name}}\"?"
+  },
+  "model": {
+    "namePrompt": "Nombre del modelo:",
+    "createTitle": "Crear nuevo modelo",
+    "modelsAria": "Modelos del proyecto"
+  },
+  "inference": {
+    "stepEyebrow": "PASO 5 DE 5",
+    "title": "Prueba tu modelo",
+    "activeRun": "Corrida activa",
+    "checkpointOf": "checkpoint de {{runName}}",
+    "blockedMessage": "Entrena el modelo o carga un checkpoint compatible antes de inferir.",
+    "inputShape": "Entrada: {{shape}}",
+    "chooseInput": "Elige una entrada y prueba el modelo",
+    "dataSourceAria": "Origen de los datos de inferencia",
+    "mode": {
+      "test": "Muestra eval.",
+      "testSmall": "Test",
+      "manual": "{{type}}",
+      "manualSmall": "Manual"
+    },
+    "manualType": {
+      "image": "Cargar imagen",
+      "text": "Texto",
+      "tabular": "Valores",
+      "sequence": "Secuencia"
+    },
+    "manualHelp": {
+      "image": "Una imagen se ajustará a {{shape}}.",
+      "text": "Escribe texto libre; se tokenizará con el vocabulario del dataset y se ajustará a {{length}} tokens.",
+      "tabular": "Escribe {{count}} valores separados por comas.",
+      "sequence": "Introduce una secuencia compatible con {{shape}}."
+    },
+    "resultEyebrow": "RESULTADO",
+    "predictionHeading": "Predicción del modelo",
+    "status": {
+      "correct": "Correcta",
+      "check": "Revisar",
+      "calculated": "Calculada"
+    },
+    "cannotCalculate": "No se pudo calcular la predicción",
+    "predictionCorrect": "Predicción correcta",
+    "predictionIncorrect": "Predicción incorrecta",
+    "matchesExpected": "Coincide con la etiqueta esperada.",
+    "expectedLabel": "Se esperaba {{label}}.",
+    "predictionLabel": "PREDICCIÓN DEL MODELO",
+    "noResult": "Sin resultado",
+    "trueLabel": "Etiqueta real esperada: {{label}}",
+    "inputImageCaption": "Imagen de entrada",
+    "outputImageCaption": {
+      "segmentation": "Máscara generada",
+      "default": "Salida del modelo"
+    },
+    "classFallback": "Clase {{index}}",
+    "testSourceTitle": "Conjunto reservado de evaluación",
+    "testSourceHint": "Se elegirá una muestra aleatoria que el modelo no utilizó durante el entrenamiento.",
+    "awaitingTitle": "La entrada y el resultado aparecerán aquí al ejecutar la inferencia.",
+    "uploadHint": "Selecciona o arrastra un archivo",
+    "uploadFormats": "JPG, PNG, WebP o BMP",
+    "textPlaceholder": "Escribe aquí una frase o párrafo…",
+    "tabularPlaceholder": "ej. 0.12, 0.45, -0.8, ...",
+    "runButton": {
+      "calculating": "Calculando predicción…",
+      "test": "Elegir muestra y calcular",
+      "manual": "Ejecutar inferencia"
+    }
+  },
+  "builder": {
+    "graph": "Grafo",
+    "createModelTitle": "Crear nuevo modelo",
+    "saveRevision": "Guardar revisión",
+    "graphSummary": "{{blocks}} bloques · {{connections}} conexiones",
+    "libraryEyebrow": "BIBLIOTECA",
+    "paramEstimate": "Estimación: {{count}} params",
+    "vramEstimate": "{{estimated}} MB de {{total}} GB · {{percent}}%"
+  },
+  "inspector": {
+    "properties": "PROPIEDADES",
+    "noParams": "Este bloque no tiene parámetros editables.",
+    "tensor": "TENSOR",
+    "shapePlaceholder": "Se resolverá al validar",
+    "parameters": "PARÁMETROS",
+    "parametersPerBlock": "estimados en este bloque",
+    "totalModel": "Total del modelo",
+    "emptyTitle": "Selecciona un bloque",
+    "emptyHint": "Edita aquí sus propiedades y revisa las dimensiones."
+  },
+  "blockInfo": {
+    "pinnedEyebrow": "INFORMACIÓN FIJADA",
+    "previewEyebrow": "VISTA RÁPIDA",
+    "closeInfo": "Cerrar información",
+    "usageTitle": "Cómo se usa",
+    "defaults": "Propiedades iniciales",
+    "noEditableDefaults": "Sin parámetros editables",
+    "pinHint": "Haz clic en el icono de información para mantener esta guía abierta.",
+    "pinTitle": "Fijar información sobre {{block}}",
+    "fallbackDescription": "Bloque de procesamiento compatible con esta arquitectura.",
+    "fallbackUsage": "Conéctalo respetando las dimensiones indicadas al validar el grafo."
+  },
+  "presets": {
+    "modalEyebrow": "PRESETS DE MODELO",
+    "modalTitle": "Empieza desde una estructura fiable",
+    "apply": "Aplicar preset",
+    "benefitLabel": "Ventaja:",
+    "tradeoffLabel": "Desventaja:",
+    "base": {
+      "name": "{{arch}} · Base recomendada",
+      "benefit": "estructura corta y validada para empezar",
+      "tradeoff": "capacidad limitada para problemas complejos"
+    },
+    "regularized": {
+      "mlp": {
+        "name": "MLP · Regularizada",
+        "description": "Dos capas densas con BatchNorm y Dropout para datos tabulares con más variación.",
+        "benefit": "mejor control del sobreajuste",
+        "tradeoff": "entrena algo más lento"
+      },
+      "unet": {
+        "name": "U-Net · Normalizada",
+        "description": "Añade BatchNorm, activación y Dropout al cuello de botella para una segmentación más estable.",
+        "benefit": "mejor generalización en datasets variados",
+        "tradeoff": "entrena más despacio"
+      }
+    },
+    "compact": {
+      "name": "MLP · Compacta",
+      "description": "Una capa oculta pequeña para iterar rápidamente o trabajar con pocos datos.",
+      "benefit": "rápida de entrenar y fácil de interpretar",
+      "tradeoff": "menor capacidad de representación"
+    },
+    "standard": {
+      "name": "CNN · Clasificador estándar",
+      "description": "Dos bloques Conv–BatchNorm–ReLU con pooling y promedio global. Buen punto de partida para imágenes reales.",
+      "benefit": "combina capacidad, estabilidad y tamaño moderado",
+      "tradeoff": "requiere más datos que la base"
+    },
+    "deep_regularized": {
+      "name": "CNN · Profunda con regularización",
+      "description": "Cuatro convoluciones, dos escalas espaciales y Dropout 2D para clasificación visual más exigente.",
+      "benefit": "detecta patrones visuales más complejos",
+      "tradeoff": "más parámetros y mayor riesgo de sobreajuste"
+    },
+    "resnet": {
+      "name": "CNN · Bloque residual",
+      "description": "Dos convoluciones y una rama identidad completamente visibles.",
+      "benefit": "facilita entrenar redes más profundas",
+      "tradeoff": "las ramas deben conservar shapes compatibles"
+    },
+    "gru": {
+      "name": "Recurrente · GRU",
+      "description": "Unidad recurrente compacta sin estado de celda separado.",
+      "benefit": "menos parámetros que LSTM",
+      "tradeoff": "puede representar menos memoria"
+    },
+    "rnn": {
+      "name": "Recurrente · RNN simple",
+      "description": "Recurrencia clásica con activación tanh.",
+      "benefit": "estructura educativa y ligera",
+      "tradeoff": "peor memoria de dependencias largas"
+    },
+    "bidirectional": {
+      "name": "LSTM · Bidireccional",
+      "description": "Lee la secuencia en ambos sentidos antes de producir la predicción final.",
+      "benefit": "aprovecha contexto pasado y futuro",
+      "tradeoff": "no es apropiada para predicción estrictamente en tiempo real"
+    },
+    "stacked": {
+      "name": "LSTM · Apilada",
+      "description": "Dos capas recurrentes con Dropout para dinámicas temporales más ricas.",
+      "benefit": "mayor capacidad para dependencias complejas",
+      "tradeoff": "más lenta de entrenar"
+    },
+    "light": {
+      "name": "U-Net · Ligera",
+      "description": "Encoder–decoder compacto para probar rápidamente máscaras y formatos de segmentación.",
+      "benefit": "consume menos memoria",
+      "tradeoff": "pierde detalle en escenas complejas"
+    }
+  },
+  "customPreset": {
+    "description": "Modelo personalizado guardado desde el constructor.",
+    "benefit": "conserva tu diseño y configuración",
+    "tradeoff": "depende de las dimensiones del dataset actual"
+  },
+  "savePreset": {
+    "label": "Guardar el modelo actual",
+    "placeholder": "Nombre del preset"
+  },
+  "property": {
+    "autoAdjusted": "Este valor se ajusta automáticamente a la salida del dataset."
+  },
+  "training": {
+    "stepEyebrow": "PASO 4 DE 5",
+    "title": "Entrena y observa",
+    "subtitle": "Loss de train/validation y {{metric}} en tiempo real.",
+    "runsAriaLabel": "Corridas de entrenamiento",
+    "addRunTitle": "Crear nueva corrida",
+    "chartMainEyebrow": "CURVA PRINCIPAL",
+    "loss": "Loss",
+    "statusLive": "EN VIVO",
+    "statusCompleted": "COMPLETADO",
+    "statusReady": "LISTO",
+    "bestValLoss": "Mejor val. loss {{loss}} · época {{epoch}}",
+    "taskMetricEyebrow": "MÉTRICA DE TAREA",
+    "bestMetric": "Mejor {{metric}} {{value}} · época {{epoch}}",
+    "modelLabel": "Modelo a entrenar",
+    "epochsLabel": "Épocas",
+    "lrLabel": "Learning rate",
+    "batchLabel": "Batch size",
+    "optimizerLabel": "Optimizador",
+    "bestModelCriterionLabel": "Criterio de mejor modelo",
+    "criterion": {
+      "none": "Ninguno (Última época)",
+      "val_loss": "Menor Pérdida de Validación (Val Loss)",
+      "train_loss": "Menor Pérdida de Entrenamiento (Train Loss)",
+      "metric": "Mejor Métrica ({{metric}})"
+    },
+    "deviceLabel": "DISPOSITIVO",
+    "deviceValue": "Auto · CUDA si disponible",
+    "epochProgress": "Época {{current}} de {{target}}",
+    "elapsed": "Transcurrido",
+    "remaining": "Restante aprox.",
+    "calculating": "calculando…",
+    "testResult": "RESULTADO DE TEST",
+    "trainingButton": "Entrenando…",
+    "completedButton": "Corrida completada",
+    "startButton": "Iniciar entrenamiento",
+    "newRunHint": "Crea una nueva corrida con + para probar otra configuración.",
+    "preparing": "Preparando entrenamiento…"
+  },
+  "appearance": {
+    "themeLabel": "TEMA",
+    "accentColorLabel": "COLOR DE ACENTO"
+  },
+  "hub": {
+    "heroEyebrow": "TALLER LOCAL DE MACHINE LEARNING",
+    "heroTitle": "Construye, entrena y entiende",
+    "heroTitleEmphasis": "tu propio modelo.",
+    "heroSubtitle": "Del dataset al checkpoint mediante un constructor visual conectado a PyTorch.",
+    "newProjectButton": "Nuevo proyecto",
+    "recentProjects": "Proyectos recientes",
+    "projectCount": "{{count}} proyectos en este equipo",
+    "noProjects": "Aún no hay proyectos",
+    "openFolder": "Abrir carpeta",
+    "projectFallbackDescription": "Proyecto de ModelBuilder",
+    "unconfigured": "Sin configurar",
+    "deleteProjectTitle": "Eliminar proyecto",
+    "emptyTitle": "Tu primer experimento empieza aquí",
+    "emptyHint": "Crea un proyecto y elige qué quieres aprender de tus datos.",
+    "createProjectEyebrow": "NUEVO PROYECTO",
+    "createProjectTitle": "Prepara tu espacio",
+    "projectNameLabel": "Nombre",
+    "projectNamePlaceholder": "Clasificador de señales",
+    "projectDescriptionLabel": "Descripción opcional",
+    "projectDescriptionPlaceholder": "Qué quieres probar…",
+    "createProjectButton": "Crear proyecto"
+  },
+  "sidebar": {
+    "homeTitle": "Volver a proyectos",
+    "flowLabel": "FLUJO",
+    "engineLabel": "Motor local",
+    "engineSublabel": "PyTorch · CPU/CUDA",
+    "memoryLabel": "MEMORIA ESTIMADA",
+    "vramEstimate": "{{estimated}} MB de {{total}} GB · {{percent}}%"
+  },
+  "modelTask": {
+    "stepEyebrow": "PASO 1 DE 5",
+    "title": "¿Qué quieres construir?",
+    "subtitle": "La tarea define tus datos, la salida y cómo mediremos el aprendizaje.",
+    "architectureEyebrow": "ARQUITECTURA"
+  },
+  "taskCategory": {
+    "all": "Todas",
+    "Table": "Tabla",
+    "Signals and series": "Señales y series",
+    "Vision": "Visión",
+    "Text": "Texto",
+    "Reconstruction": "Reconstrucción"
+  },
+  "contract": {
+    "compatibleInput": "ENTRADA COMPATIBLE",
+    "mainMetric": "MÉTRICA PRINCIPAL",
+    "modality": "MODALIDAD"
+  },
+  "blocked": {
+    "selectTaskArchitecture": "Selecciona primero una tarea y arquitectura."
+  },
+  "data": {
+    "browseNotTauri": "El selector de carpetas está disponible en la aplicación de escritorio. En navegador, escribe una ruta accesible por el servidor local.",
+    "importTitle": "Importar datos propios",
+    "importSubtitle": "Usa el formato compatible y valida cada muestra antes de crear el modelo.",
+    "localPathLabel": "Ruta local",
+    "pathPlaceholder": "/ruta/al/dataset",
+    "browse": "Buscar",
+    "inspectImport": "Inspeccionar e importar",
+    "hfEyebrow": "CATÁLOGO COMPATIBLE",
+    "hfTitle": "Datasets de Hugging Face",
+    "hfSubtitle": "La app comprueba primero el proyecto y la caché física. Sólo descarga los archivos si faltan.",
+    "installed": "En el proyecto",
+    "cached": "En disco",
+    "remote": "Remoto",
+    "useDataset": "Usar dataset",
+    "prepareDataset": "Preparar",
+    "downloadDataset": "Descargar",
+    "openingDataset": "Abriendo el dataset existente…",
+    "preparingCached": "Preparando desde los archivos en disco…",
+    "downloadingDataset": "Descargando {{name}} desde Hugging Face…",
+    "loadedFromProject": "Dataset verificado en el proyecto",
+    "loadedFromCache": "Preparado desde la caché física",
+    "downloadComplete": "Descargado y verificado",
+    "changeDataset": "Cambiar dataset",
+    "explorerEyebrow": "EXPLORADOR DE DATOS",
+    "samplesTab": "Muestras",
+    "chartsTab": "Gráficas",
+    "inputCaption": "Entrada",
+    "outputCaption": "Salida",
+    "targetCaption": "Objetivo",
+    "sampleLabel": "Muestra #{{number}}",
+    "partitionsEyebrow": "PARTICIONES DE DATOS",
+    "classesEyebrow": "CLASES ({{count}})",
+    "applyOptionsLoading": "Aplicando propiedades…",
+    "regenerateLoading": "Regenerando datos…",
+    "reloadLoading": "Volviendo a cargar el dataset…",
+    "regenerateDatasetLoading": "Regenerando el dataset…",
+    "importLoading": "Importando y validando datos…",
+    "generateLoading": "Preparando dataset…",
+    "datasetReady": "Dataset listo: {{samples}} muestras.",
+    "importedNotice": "Datos importados y validados.",
+    "pipelineApplied": "Pipeline aplicado · revisión {{revision}}.",
+    "noActiveProject": "No hay un proyecto activo.",
+    "noActiveDataset": "No hay un dataset activo.",
+    "completeProjectData": "Completa proyecto y datos.",
+    "stepEyebrow": "PASO 2 DE 5",
+    "title": "Prepara los datos",
+    "viewAria": "Vista del dataset",
+    "nodePropertiesEyebrow": "PROPIEDADES DEL NODO"
+  },
+  "split": {
+    "trainValidationAria": "Límite entre entrenamiento y validación",
+    "validationTestAria": "Límite entre validación y prueba"
+  },
+  "time": {
+    "seconds": "{{count}}s",
+    "minutes": "{{minutes}}m {{seconds}}s"
+  }
+}

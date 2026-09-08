@@ -157,21 +157,22 @@ Los bloques de atención están implementados como operaciones monolíticas (no 
 
 | Plantilla | Grafo y dimensiones clave |
 | --- | --- |
-| MLP clasificación | Input `[B,F]` → Linear64 → ReLU → Dropout0.1 → Linear32 → ReLU → LinearK → Output `[B,K]` |
+| MLP clasificación | Input `[B,F]` → Linear64 → ReLU → Dropout0.1 → LinearK → Output `[B,K]` |
 | MLP regresión | Misma base, cabeza Linear1 → Output `[B,1]` |
-| CNN clasificación | `[B,3,32,32]` → Conv16 k3 p1 → ReLU → MaxPool2 → Conv32 k3 p1 → ReLU → AdaptiveAvgPool1 → Flatten → LinearK |
-| CNN regresión | Misma base con Linear1 |
+| CNN clasificación | `[B,C,H,W]` → dos bloques Conv/BatchNorm/ReLU/Pool → AdaptiveAvgPool1 → Flatten → LinearK |
+| CNN regresión | Misma base con una tercera Conv64 y cabeza Linear1 |
+| CNN 1D | `[B,T,F]` → Permute → Conv32/Pool → Conv64 → AdaptiveAvgPool4 → Flatten → cabeza de tarea |
 | LSTM clasificación | `[B,T,F]` → LSTM64 → TemporalSelect → LinearK |
 | LSTM regresión | Mismo encoder → Linear1 |
 | LSTM pronóstico | `[B,T,F]` → LSTM64 → TemporalSelect → LinearP |
-| U-Net binaria/multiclase | Encoder Conv/MaxPool con skips → bottleneck → Decoder ConvTranspose/Concat → Conv1×1(1 o K) |
-| AE denso | `[B,F]` → Linear64 → ReLU → Linear8 → Linear64 → ReLU → LinearF |
-| AE imagen | `[B,C,H,W]` → Conv/MaxPool → bottleneck → ConvTranspose → `[B,C,H,W]` |
-| ViT clasificación | `[B,C,H,W]` → PatchEmbedding → PositionalEncoding → TransformerEncoder → SequencePool → LinearK |
+| U-Net binaria/multiclase | Encoder de dos escalas 16/32 → bottleneck64 → dos decoders con skips → Conv1×1(1 o K) |
+| AE denso | `[B,F]` → Linear32 → ReLU → Linear8 → Linear32 → ReLU → LinearF |
+| AE imagen | `[B,C,H,W]` → dos Conv stride2 → dos ConvTranspose → `[B,C,H,W]` |
+| ViT clasificación | `[B,C,H,W]` → patches 7×7 en MNIST → Transformer D64 de 2 capas → SequencePool → LinearK |
 | Transformer clasificación de texto | Tokens `[B,T]` → Embedding → PositionalEncoding → TransformerEncoder → SequencePool → LinearK |
 | Transformer causal | Tokens `[B,T]` → Embedding → PositionalEncoding → CausalTransformer → LinearV |
 
-Cambiar el input real actualiza dimensiones derivadas. Las variantes binarias de clasificación general usan dos logits y CE; la segmentación binaria usa un logit por píxel.
+Al cargar o cambiar el dataset, la cabeza, el vocabulario, la longitud posicional y el `Reshape` de pronóstico se sincronizan con su contrato real. Los proyectos existentes conservan sus grafos editados; la plantilla se crea al elegir por primera vez una combinación o añadir un modelo nuevo. Las variantes binarias de clasificación general usan dos logits y CE; la segmentación binaria usa un logit por píxel.
 
 ## 12. Validación
 

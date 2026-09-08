@@ -1,0 +1,157 @@
+{
+  "title": "Pipeline de datos",
+  "eyebrow": "PIPELINE DE DATOS",
+  "addNode": "Añadir nodo",
+  "apply": "Aplicar",
+  "revision": "Rev. {{revision}}",
+  "unapplied": "sin aplicar",
+  "revisionUnapplied": "Rev. {{revision}} · {{unappliedText}}",
+  "pipelineValid": "Pipeline válido",
+  "readyToGenerate": "Listo para generar una revisión.",
+  "ariaPipeline": "Pipeline de preparación",
+  "dataLibrary": "BIBLIOTECA DE DATOS",
+  "addTransformation": "Añadir transformación",
+  "compatibleOperations": "Sólo aparecen operaciones compatibles con {{modality}}.",
+  "modality_image": "imágenes",
+  "modality_sequence": "secuencias",
+  "modality_text": "texto",
+  "modality_tabular": "tablas",
+  "scope_train": "Sólo train",
+  "scope_all": "Todos los splits",
+  "nodeActive": "Nodo activo",
+  "moveBefore": "Mover antes",
+  "moveAfter": "Mover después",
+  "before": "Antes",
+  "after": "Después",
+  "delete": "Eliminar",
+  "lockedNodeNote": "Este nodo permanece fijo en el {{position}}.",
+  "position_start": "inicio",
+  "position_end": "final",
+  "categories": {
+    "source": "FUENTE",
+    "inspect": "INSPECCIÓN",
+    "curate": "CURACIÓN",
+    "split": "PARTICIÓN",
+    "transform": "TRANSFORMACIÓN",
+    "augment": "AUMENTACIÓN",
+    "output": "SALIDA"
+  },
+  "definitions": {
+    "source": {
+      "importedLabel": "Datos importados",
+      "huggingFaceLabel": "Dataset de Hugging Face",
+      "syntheticLabel": "Generador sintético",
+      "label": "Fuente",
+      "description": "Punto de inicio del pipeline de datos."
+    },
+    "output": {
+      "label": "Dataset preparado",
+      "description": "Define cómo se entregan los datos al entrenamiento. La forma final se actualiza al aplicar el pipeline."
+    },
+    "validate": {
+      "label": "Validar calidad",
+      "description": "Revisa shapes, targets y valores inválidos. Sirve como control temprano antes de preparar el dataset.",
+      "scope": "Se aplica de forma determinista"
+    },
+    "deduplicate": {
+      "label": "Eliminar duplicados",
+      "description": "Detecta entradas idénticas y conserva una sola copia. Ayuda a evitar que una muestra repetida aparezca en distintos splits.",
+      "scope": "Se aplica de forma determinista"
+    },
+    "finite_filter": {
+      "label": "Excluir no finitos",
+      "description": "Descarta muestras que contienen NaN o infinito antes de calcular estadísticas o entrenar.",
+      "scope": "Se aplica de forma determinista"
+    },
+    "normalize": {
+      "label": "Normalizar variables",
+      "description": "Calcula Z-Score o Min-Max únicamente con train y reutiliza esos parámetros en validation, test e inferencia.",
+      "scope": "Se aplica de forma determinista"
+    },
+    "clip": {
+      "label": "Limitar extremos",
+      "description": "Recorta valores a cuantiles aprendidos en train. Es útil cuando unos pocos outliers dominan la escala.",
+      "scope": "Se aplica de forma determinista"
+    },
+    "resize": {
+      "label": "Redimensionar",
+      "description": "Cambia la resolución de todas las imágenes. En segmentación aplica el mismo cambio a la máscara usando vecino más cercano.",
+      "scope": "Se aplica de forma determinista"
+    },
+    "center_crop": {
+      "label": "Recorte central",
+      "description": "Recorta una región central reproducible. Imagen y máscara permanecen perfectamente alineadas.",
+      "scope": "Se aplica de forma determinista"
+    },
+    "convert_channels": {
+      "label": "Convertir canales",
+      "description": "Convierte imágenes entre RGB y escala de grises y actualiza automáticamente el contrato de entrada.",
+      "scope": "Se aplica de forma determinista"
+    },
+    "image_normalize": {
+      "label": "Normalizar imagen",
+      "description": "Sí tiene sentido para CNN: centra cada canal y estabiliza la optimización. La media y desviación se calculan sólo con train y se guardan para inferencia.",
+      "scope": "Se aplica de forma determinista"
+    },
+    "random_flip": {
+      "label": "Flip aleatorio",
+      "description": "Voltea horizontalmente una proporción de las imágenes en cada época. En segmentación y reconstrucción transforma también el target.",
+      "scope": "Se ejecuta sólo en train"
+    },
+    "random_rotate90": {
+      "label": "Rotación de 90°",
+      "description": "Rota aleatoriamente en múltiplos de 90°. Mantiene imagen y máscara alineadas y evita artefactos de interpolación.",
+      "scope": "Se ejecuta sólo en train"
+    },
+    "color_jitter": {
+      "label": "Color y contraste",
+      "description": "Varía brillo y contraste sólo durante train. Aumenta robustez a iluminación sin modificar la geometría ni las etiquetas.",
+      "scope": "Se ejecuta sólo en train"
+    },
+    "random_noise": {
+      "label": "Ruido aleatorio",
+      "description": "Añade ruido independiente durante train. Es útil para robustez y denoising; validation y test permanecen deterministas.",
+      "scope": "Se ejecuta sólo en train"
+    }
+  },
+  "properties": {
+    "batchSize": "Batch size",
+    "workers": "Workers",
+    "pin_memory": "Fijar memoria",
+    "mode": "Método",
+    "probability": "Probabilidad",
+    "horizontal": "Horizontal",
+    "std": "Desviación",
+    "lower": "Cuantil inferior",
+    "upper": "Cuantil superior",
+    "include_target": "Incluir target",
+    "fail_on_error": "Bloquear errores",
+    "width": "Ancho",
+    "height": "Alto",
+    "method": "Interpolación",
+    "channels": "Canales",
+    "brightness": "Brillo",
+    "contrast": "Contraste"
+  },
+  "options": {
+    "mode": {
+      "standard": "Z-Score",
+      "minmax": "Min-Max [0,1]",
+      "minmax_sym": "Min-Max [-1,1]"
+    },
+    "method": {
+      "bilinear": "Bilineal",
+      "nearest": "Vecino cercano",
+      "bicubic": "Bicúbica"
+    },
+    "channels": {
+      "3": "RGB · 3",
+      "1": "Grises · 1"
+    }
+  },
+  "validation": {
+    "endpoints": "La fuente y la salida deben permanecer en los extremos.",
+    "outOfOrder": "{{label}} está fuera de orden; muévelo antes de aplicar.",
+    "trainOnly": "{{label}} debe limitarse a train."
+  }
+}

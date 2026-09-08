@@ -8,6 +8,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from .errors import BackendError
+
 
 def workspace_root() -> Path:
     configured = os.environ.get("MODELBUILDER_WORKSPACE")
@@ -22,12 +24,12 @@ def slug(value: str) -> str:
 def project_dir(project: dict) -> Path:
     project_id = str(project.get("id", "")).strip()
     if not project_id or not re.fullmatch(r"[a-zA-Z0-9_-]+", project_id):
-        raise ValueError("ID de proyecto inválido")
+        raise BackendError("PROJECT_INVALID_ID")
     configured_path = Path(str(project.get("path", ""))).expanduser()
     if configured_path.is_absolute() and (configured_path / "project.json").is_file():
         manifest = json.loads((configured_path / "project.json").read_text(encoding="utf-8"))
         if manifest.get("id") != project_id:
-            raise ValueError("La carpeta no corresponde al ID del proyecto")
+            raise BackendError("PROJECT_FOLDER_MISMATCH")
         return configured_path.resolve()
     return workspace_root() / "projects" / project_id
 
@@ -44,7 +46,7 @@ def atomic_json(path: Path, value: Any) -> None:
 def create_project(project: dict) -> dict:
     root = project_dir(project)
     if root.exists():
-        raise ValueError("Ya existe un proyecto con ese identificador")
+        raise BackendError("PROJECT_ALREADY_EXISTS")
     for relative in ("datasets", "experiments/active/draft", "runs", "predictions", "exports", "cache"):
         (root / relative).mkdir(parents=True, exist_ok=True)
     manifest = {**project, "schema_version": 1, "created_at": project.get("createdAt") or iso_now(), "updated_at": iso_now()}
@@ -56,10 +58,10 @@ def open_project(path: str) -> dict:
     root = Path(path).expanduser().resolve()
     manifest_path = root / "project.json" if root.is_dir() else root
     if manifest_path.name != "project.json" or not manifest_path.is_file():
-        raise ValueError("Selecciona una carpeta de proyecto que contenga project.json")
+        raise BackendError("PROJECT_MISSING_MANIFEST")
     value = json.loads(manifest_path.read_text(encoding="utf-8"))
     if value.get("schema_version") != 1 or not value.get("id"):
-        raise ValueError("El proyecto no usa un esquema compatible")
+        raise BackendError("PROJECT_INCOMPATIBLE_SCHEMA")
     value["path"] = str(manifest_path.parent)
     state_path = manifest_path.parent / "state.json"
     if state_path.is_file():

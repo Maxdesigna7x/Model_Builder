@@ -63,21 +63,21 @@ Al seleccionar tarea y familia, el panel derecho muestra:
 - Formatos admitidos y columnas/etiquetas requeridas.
 - Modalidad, tipo de clasificación o número de objetivos previsto.
 - Loss y métrica recomendadas, con explicación breve.
-- Datos sintéticos disponibles y plantilla inicial de arquitectura.
+- Datasets públicos compatibles disponibles y plantilla inicial de arquitectura.
 
 La cantidad real de variables/clases o la resolución se confirma en Datos. Se elige aquí el contrato, no se inventan dimensiones del archivo que todavía no se ha cargado. Una combinación incompatible se oculta por filtro o se muestra deshabilitada con una razón concreta. CTA «Continuar a datos» exige una combinación válida.
 
 ## 6. Datos
 
-Entrada inicial con dos tarjetas: **Importar datos propios** y **Generar datos sintéticos**. Elegir modelo no instala ni genera datos automáticamente.
+Entrada inicial con un catálogo de **datasets compatibles de Hugging Face** y la tarjeta **Importar datos propios**. Cada dataset muestra repositorio, tamaño estimado, licencia y si ya está en el proyecto, en la caché física o pendiente de descarga. Elegir modelo no descarga datos automáticamente.
 
 Importación: elegir fuente → mapear columnas/etiquetas o pares → previsualizar errores → confirmar preprocesamiento y splits. Mantener el patrón detectado visible. La lista de errores enlaza con archivo/fila y no se limita a «dataset inválido».
 
-Tras importar/generar: barra de resumen de muestras, variables/resolución, clases y tamaño; tabs «Vista previa», «Distribución», «Preparación» y «Particiones». Vista según modalidad: tabla, galería, imagen+máscara, serie temporal o texto tokenizado.
+Tras descargar/importar: barra de resumen de muestras, variables/resolución, clases y tamaño; tabs «Vista previa», «Distribución», «Preparación» y «Particiones». Vista según modalidad: tabla, galería, imagen+máscara, serie temporal o texto tokenizado.
 
 El control train/validation/test usa una barra de tres segmentos y dos tiradores, con porcentajes y cantidades editables por teclado. Arrastrar muestra una propuesta; confirmar recalcula los índices una sola vez. Para series se muestra una línea temporal con límites, no un reparto aleatorio. Splits aportados por la fuente se conservan por defecto.
 
-La muestra de preview se mantiene hasta pulsar «Otra muestra». Seed, parámetros de generador y distribución resultante son visibles. Si faltan muestras o clases para una partición válida, el CTA explica qué corregir. CTA «Abrir constructor» se activa al guardar un contrato de datos válido.
+La muestra de preview se mantiene hasta pulsar «Otra muestra». Revisión de origen, opciones del adaptador y distribución resultante son visibles. Si faltan muestras o clases para una partición válida, el CTA explica qué corregir. CTA «Abrir constructor» se activa al guardar un contrato de datos válido.
 
 ## 7. Constructor visual
 

@@ -82,13 +82,14 @@ Evento de entrenamiento:
 | --- | --- |
 | `hello` / `system.gpu` | Handshake mínimo y detección de dispositivo. |
 | `project.create` / `project.open` / `project.delete` / `project.state.save` | Gestión de proyectos en disco (solo Tauri). |
-| `data.generate` / `data.import` / `data.pipeline.apply` / `data.analytics` | Generación, importación y análisis de datasets. |
+| `data.catalog` / `data.download` / `data.exists` | Catálogo por tarea, descarga/caché de Hugging Face y verificación física. |
+| `data.generate` / `data.import` / `data.pipeline.apply` / `data.analytics` | Compatibilidad histórica, importación y análisis de datasets. |
 | `graph.validate` | Validación semántica y dry-run del grafo. |
 | `train` | Inicio de entrenamiento; devuelve aceptación y emite eventos. |
 | `inference.run` | Predicción desde un checkpoint. |
 | `pick_directory` | Diálogo nativo de selección de carpeta (Tauri). |
 
-*Pendientes respecto a la propuesta:* `catalog.*`, `graph.save`, `graph.dry_run`, `resources.*`, `run.pause/resume/cancel`, `checkpoint.*`, `evaluation.*`, `artifact.*`, idempotencia y versionado de protocolo.
+*Pendientes respecto a la propuesta:* un catálogo general de modelos/bloques, `graph.save`, `graph.dry_run`, `resources.*`, `run.pause/resume/cancel`, `checkpoint.*`, `evaluation.*`, `artifact.*`, idempotencia y versionado de protocolo.
 
 ## 6. Dominio actual
 

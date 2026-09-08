@@ -1,16 +1,19 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 import {
   ReactFlow, Background, Controls, MiniMap, addEdge, useEdgesState, useNodesState,
   type Connection, type NodeMouseHandler, type ReactFlowInstance
 } from "@xyflow/react";
-import { Activity, AlertCircle, ArrowLeft, BarChart3, Box, BrainCircuit, Check, CheckCircle2, ChevronRight, Clock3, Cpu, Database, FolderOpen, GitBranch, Info, Layers3, Moon, Palette, Play, Plus, RefreshCw, Save, Sparkles, Sun, Upload, WandSparkles, X } from "lucide-react";
-import { ARCHITECTURES, BLOCK_INFO, BLOCKS, TASKS, presetsFor, templateFor } from "./catalog";
+import { Activity, AlertCircle, ArrowLeft, BarChart3, Box, BrainCircuit, Check, CheckCircle2, ChevronRight, Clock3, Cloud, Cpu, Database, Download, FolderOpen, GitBranch, Info, Layers3, Moon, Palette, Play, Plus, RefreshCw, Save, Sparkles, Sun, Upload, WandSparkles, X } from "lucide-react";
+import { ARCHITECTURES, BLOCK_INFO, BLOCKS, TASKS, presetsFor, syncOutputContract, templateFor } from "./catalog";
+import { getPresetBenefit, getPresetDescription, getPresetName, getPresetTradeoff } from "./catalog-i18n";
 import { backend, isTauri, onTrainingEvent, pickDatasetDirectory, startTraining } from "./bridge";
 import ModelNode from "./ModelNode";
 import { TrainingChart } from "./Chart";
 import DataPipelineEditor from "./DataPipelineEditor";
 import DataCharts from "./DataCharts";
-import type { Architecture, DataPipeline, DatasetAnalytics, DatasetOptions, DatasetPreview, DatasetSummary, GpuInfo, MetricPoint, ModelEdge, ModelNode as ModelNodeT, Project, ProjectModel, RunResult, Step, TaskId, TrainingRun } from "./types";
+import { translateBackendError } from "./i18n/errors";
+import type { Architecture, DataPipeline, DatasetAnalytics, DatasetOptions, DatasetPreview, DatasetSummary, GpuInfo, HuggingFaceDataset, MetricPoint, ModelEdge, ModelNode as ModelNodeT, Project, ProjectModel, RunResult, Step, TaskId, TrainingRun } from "./types";
 
 const nodeTypes = { modelNode: ModelNode };
 
@@ -18,6 +21,7 @@ import { BaseEdge, EdgeLabelRenderer, getSmoothStepPath, type EdgeProps } from "
 import { Trash2 } from "lucide-react";
 
 function CustomEdge({ id, sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition, selected, style, markerEnd, data }: EdgeProps) {
+  const { t } = useTranslation(["app", "common"]);
   const [edgePath, labelX, labelY] = getSmoothStepPath({ sourceX, sourceY, sourcePosition, targetX, targetY, targetPosition });
   return (
     <>
@@ -40,7 +44,7 @@ function CustomEdge({ id, sourceX, sourceY, targetX, targetY, sourcePosition, ta
                   (data.onDelete as (edgeId: string) => void)(id);
                 }
               }}
-              title="Eliminar conexión"
+              title={t("app:edge.deleteConnectionTitle")}
             >
               <Trash2 size={11} />
             </button>
@@ -53,32 +57,24 @@ function CustomEdge({ id, sourceX, sourceY, targetX, targetY, sourcePosition, ta
 
 const edgeTypes = { customEdge: CustomEdge, smoothstep: CustomEdge };
 
-const STEPS: Array<{ id: Step; label: string; icon: typeof BrainCircuit }> = [
-  { id: "model", label: "Modelo y tarea", icon: BrainCircuit }, { id: "data", label: "Datos", icon: Database },
-  { id: "builder", label: "Constructor", icon: GitBranch }, { id: "training", label: "Entrenamiento", icon: Activity }, { id: "inference", label: "Inferencia", icon: Play }
-];
+function useSteps() {
+  const { t } = useTranslation("app");
+  return useMemo(() => [
+    { id: "model" as Step, label: t("app:step.model"), icon: BrainCircuit },
+    { id: "data" as Step, label: t("app:step.data"), icon: Database },
+    { id: "builder" as Step, label: t("app:step.builder"), icon: GitBranch },
+    { id: "training" as Step, label: t("app:step.training"), icon: Activity },
+    { id: "inference" as Step, label: t("app:step.inference"), icon: Play },
+  ], [t]);
+}
 
 const uid = () => crypto.randomUUID();
 const now = () => new Date().toISOString();
-const newTrainingRun = (index: number): TrainingRun => ({ id: uid(), name: `Corrida ${index}`, status: "draft", config: {}, history: [], result: null, createdAt: now() });
-const newProjectModel = (index: number, architecture: Architecture, task: TaskId): ProjectModel => {
+const formatBytes = (bytes: number) => bytes < 1024 ? `${bytes} B` : bytes < 1024 ** 2 ? `${(bytes / 1024).toFixed(1)} KB` : `${(bytes / 1024 ** 2).toFixed(bytes < 10 * 1024 ** 2 ? 2 : 0)} MB`;
+const newTrainingRun = (index: number, name: string): TrainingRun => ({ id: uid(), name, status: "draft", config: {}, history: [], result: null, createdAt: now() });
+const newProjectModel = (index: number, architecture: Architecture, task: TaskId, name: string): ProjectModel => {
   const graph = templateFor(architecture, task);
-  return { id: uid(), name: `Modelo ${index}`, architecture, nodes: graph.nodes, edges: graph.edges, graphValid: false };
-};
-const syncOutputContract = (nodes: ModelNodeT[], edges: ModelEdge[], dataset: DatasetSummary | null): ModelNodeT[] => {
-  if (!dataset) return nodes;
-  const outputIds = new Set(nodes.filter(node => node.data.blockType === "output").map(node => node.id));
-  const byId=new Map(nodes.map(node=>[node.id,node]));const headIds=new Set<string>();let frontier=edges.filter(edge=>outputIds.has(edge.target)).map(edge=>edge.source);const visited=new Set<string>();
-  while(frontier.length){const id=frontier.shift()!;if(visited.has(id))continue;visited.add(id);const block=byId.get(id)?.data.blockType;if(["linear","conv2d","convtranspose2d"].includes(block||"")){headIds.add(id);continue}frontier.push(...edges.filter(edge=>edge.target===id).map(edge=>edge.source))}
-  // La última proyección aprendible dicta el contrato, incluso si después hay
-  // Reshape o Sigmoide. En lenguaje causal la dimensión de clases es la última.
-  return nodes.map(node => {
-    if(node.data.blockType==="embedding"&&dataset.options?.vocab_size)return {...node,data:{...node.data,properties:{...node.data.properties,vocab_size:dataset.options.vocab_size}}};
-    if(node.data.blockType==="positional_encoding"&&dataset.options?.max_length)return {...node,data:{...node.data,properties:{...node.data.properties,max_length:dataset.options.max_length}}};
-    if (!headIds.has(node.id)) return node;
-    const key = node.data.blockType === "linear" ? "out_features" : "out_channels";const required=node.data.blockType==="linear"&&dataset.outputShape.length===2?(dataset.inputShape.length===1?dataset.outputShape.at(-1)!:dataset.outputShape.reduce((a,b)=>a*b,1)):dataset.outputShape[0];
-    return { ...node, data: { ...node.data, label: `${node.data.label.split(" ·")[0]} · ${required}`, properties: { ...node.data.properties, [key]: required } } };
-  });
+  return { id: uid(), name, architecture, nodes: graph.nodes, edges: graph.edges, graphValid: false };
 };
 const loadProjects = (): Project[] => JSON.parse(localStorage.getItem("mb-projects") || "[]");
 type Theme = "dark" | "light";
@@ -100,15 +96,15 @@ function estimateNodeParameters(node:ModelNodeT):number {
   return 0;
 }
 
-function graphErrorMap(nodes:ModelNodeT[],edges:ModelEdge[]):Map<string,string>{
+function graphErrorMap(nodes:ModelNodeT[],edges:ModelEdge[],t:(key:string)=>string):Map<string,string>{
   const errors=new Map<string,string>();const byId=new Map(nodes.map(node=>[node.id,node]));
   const inputs=nodes.filter(node=>node.data.blockType==="input"),outputs=nodes.filter(node=>node.data.blockType==="output");
-  if(inputs.length!==1) inputs.forEach(node=>errors.set(node.id,"Debe existir exactamente un bloque de entrada."));
-  if(outputs.length!==1) outputs.forEach(node=>errors.set(node.id,"Debe existir exactamente un bloque de salida."));
+  if(inputs.length!==1) inputs.forEach(node=>errors.set(node.id,t("app:graphError.singleInput")));
+  if(outputs.length!==1) outputs.forEach(node=>errors.set(node.id,t("app:graphError.singleOutput")));
   const seen=new Set<string>();
-  edges.forEach(edge=>{const key=`${edge.source}:${edge.sourceHandle||""}->${edge.target}:${edge.targetHandle||""}`;if(seen.has(key)){errors.set(edge.source,"Conexión duplicada.");errors.set(edge.target,"Conexión duplicada.")}seen.add(key);if(!byId.has(edge.source)||!byId.has(edge.target))return;if(byId.get(edge.source)?.data.blockType==="output")errors.set(edge.source,"Una salida no puede iniciar conexiones.");if(byId.get(edge.target)?.data.blockType==="input")errors.set(edge.target,"Una entrada no puede recibir conexiones.")});
-  nodes.forEach(node=>{const incoming=edges.filter(edge=>edge.target===node.id);const outgoing=edges.filter(edge=>edge.source===node.id);if(node.data.blockType!=="input"&&!incoming.length)errors.set(node.id,"El bloque no tiene entrada.");if(node.data.blockType!=="output"&&!outgoing.length)errors.set(node.id,"El bloque no tiene salida.");if(!["concat","add"].includes(node.data.blockType)&&incoming.length>1)errors.set(node.id,"Este bloque solo admite una entrada.");if(["concat","add"].includes(node.data.blockType)&&incoming.length<2)errors.set(node.id,"Este bloque necesita al menos dos entradas.")});
-  const indegree=new Map(nodes.map(node=>[node.id,0]));edges.forEach(edge=>indegree.set(edge.target,(indegree.get(edge.target)||0)+1));const queue=[...indegree].filter(([,degree])=>degree===0).map(([id])=>id);let visited=0;while(queue.length){const id=queue.shift()!;visited++;edges.filter(edge=>edge.source===id).forEach(edge=>{const degree=(indegree.get(edge.target)||1)-1;indegree.set(edge.target,degree);if(degree===0)queue.push(edge.target)})}if(visited!==nodes.length)[...indegree].filter(([,degree])=>degree>0).forEach(([id])=>errors.set(id,"El bloque forma parte de un ciclo."));
+  edges.forEach(edge=>{const key=`${edge.source}:${edge.sourceHandle||""}->${edge.target}:${edge.targetHandle||""}`;if(seen.has(key)){errors.set(edge.source,t("app:graphError.duplicateConnection"));errors.set(edge.target,t("app:graphError.duplicateConnection"))}seen.add(key);if(!byId.has(edge.source)||!byId.has(edge.target))return;if(byId.get(edge.source)?.data.blockType==="output")errors.set(edge.source,t("app:graphError.outputCannotSource"));if(byId.get(edge.target)?.data.blockType==="input")errors.set(edge.target,t("app:graphError.inputCannotTarget"))});
+  nodes.forEach(node=>{const incoming=edges.filter(edge=>edge.target===node.id);const outgoing=edges.filter(edge=>edge.source===node.id);if(node.data.blockType!=="input"&&!incoming.length)errors.set(node.id,t("app:graphError.blockNoInput"));if(node.data.blockType!=="output"&&!outgoing.length)errors.set(node.id,t("app:graphError.blockNoOutput"));if(!["concat","add"].includes(node.data.blockType)&&incoming.length>1)errors.set(node.id,t("app:graphError.singleInputOnly"));if(["concat","add"].includes(node.data.blockType)&&incoming.length<2)errors.set(node.id,t("app:graphError.needsTwoInputs"))});
+  const indegree=new Map(nodes.map(node=>[node.id,0]));edges.forEach(edge=>indegree.set(edge.target,(indegree.get(edge.target)||0)+1));const queue=[...indegree].filter(([,degree])=>degree===0).map(([id])=>id);let visited=0;while(queue.length){const id=queue.shift()!;visited++;edges.filter(edge=>edge.source===id).forEach(edge=>{const degree=(indegree.get(edge.target)||1)-1;indegree.set(edge.target,degree);if(degree===0)queue.push(edge.target)})}if(visited!==nodes.length)[...indegree].filter(([,degree])=>degree>0).forEach(([id])=>errors.set(id,t("app:graphError.cycle")));
   return errors;
 }
 
@@ -124,7 +120,9 @@ export default function App() {
   const [models, setModels] = useState<ProjectModel[]>([]);
   const [activeModelId, setActiveModelId] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const firstRun = useRef<TrainingRun>(newTrainingRun(1));
+  const { t } = useTranslation(["app", "common", "catalog"]);
+  const steps = useSteps();
+  const firstRun = useRef<TrainingRun>(newTrainingRun(1, t("app:trainingRun.defaultName", { index: 1 })));
   const [trainingRuns, setTrainingRuns] = useState<TrainingRun[]>([firstRun.current]);
   const [activeRunId, setActiveRunId] = useState(firstRun.current.id);
   const [graphValid, setGraphValid] = useState(false);
@@ -160,8 +158,8 @@ export default function App() {
     const targetId = runningRunId.current;
     if (!targetId) return;
     if (event.type === "metric") setTrainingRuns(runs => runs.map(item => item.id === targetId ? { ...item, history: [...item.history.filter(p => p.epoch !== Number(event.epoch)), { epoch: Number(event.epoch), trainLoss: Number(event.train_loss), valLoss: Number(event.val_loss), metric: Number(event.metric) }].sort((a,b) => a.epoch-b.epoch) } : item));
-    if (event.type === "complete") { const result=event.result as unknown as RunResult; setTraining(false); setTrainingRuns(runs => runs.map(item => item.id === targetId ? { ...item, status:"completed", result, history:result.history || item.history, completedAt:now() } : item)); runningRunId.current=null; setNotice("Entrenamiento completado y checkpoint guardado."); }
-    if (event.type === "error") { setTraining(false); setTrainingRuns(runs => runs.map(item => item.id === targetId ? { ...item, status:"error", error:String(event.message), completedAt:now() } : item)); runningRunId.current=null; setNotice(String(event.message)); }
+    if (event.type === "complete") { const result=event.result as unknown as RunResult; setTraining(false); setTrainingRuns(runs => runs.map(item => item.id === targetId ? { ...item, status:"completed", result, history:result.history || item.history, completedAt:now() } : item)); runningRunId.current=null; setNotice(t("app:notice.trainingComplete")); }
+    if (event.type === "error") { setTraining(false); setTrainingRuns(runs => runs.map(item => item.id === targetId ? { ...item, status:"error", error:String(event.message), completedAt:now() } : item)); runningRunId.current=null; setNotice(translateBackendError(String(event.message))); }
   }).then(fn => off = fn); return () => off(); }, []);
 
   const activeTrainingRun = trainingRuns.find(item => item.id === activeRunId) || trainingRuns[0];
@@ -172,30 +170,30 @@ export default function App() {
 
   const createProject = async (name: string, description: string) => {
     const p: Project = { id: uid(), name, description, path: `projects/${name.toLowerCase().replace(/[^a-z0-9áéíóúñ]+/gi, "-")}`, createdAt: now(), updatedAt: now() };
-    if (isTauri()) { try { await backend("project.create", { project: p }); } catch (e) { setNotice(String(e)); return; } }
-    const freshRun=newTrainingRun(1); setProjects(v => [p, ...v]); setProject(p); setStep("model"); setTask(null); setArchitecture(null); setDataset(null); setNodes([]); setEdges([]); setModels([]); setActiveModelId(null); setTrainingRuns([freshRun]); setActiveRunId(freshRun.id); setGraphValid(false);
+    if (isTauri()) { try { await backend("project.create", { project: p }); } catch (e) { setNotice(translateBackendError(String(e))); return; } }
+    const freshRun=newTrainingRun(1, t("app:trainingRun.defaultName", { index: 1 })); setProjects(v => [p, ...v]); setProject(p); setStep("model"); setTask(null); setArchitecture(null); setDataset(null); setNodes([]); setEdges([]); setModels([]); setActiveModelId(null); setTrainingRuns([freshRun]); setActiveRunId(freshRun.id); setGraphValid(false);
   };
 
   const openProject = (p: Project) => {
     const stored = localStorage.getItem(`mb-state-${p.id}`);
     setProject(p);
     if (stored || p.savedState) {
-      const state = stored ? JSON.parse(stored) : p.savedState!; const restoredModels=(state.models as ProjectModel[] | undefined) || []; const legacyArchitecture=state.architecture as Architecture || p.architecture || null; const legacyTask=state.task as TaskId || p.taskId || null; const fallback=legacyArchitecture&&legacyTask?[{id:uid(),name:"Modelo 1",architecture:legacyArchitecture,nodes:state.nodes as ModelNodeT[] || [],edges:state.edges as ModelEdge[] || [],graphValid:Boolean(state.graphValid)}]:[]; const loadedModels=restoredModels.length?restoredModels:fallback; const selectedModel=loadedModels.find(model=>model.id===state.activeModelId)||loadedModels[0]; setStep(state.step as Step || "model"); setTask(legacyTask); setArchitecture(selectedModel?.architecture || legacyArchitecture); setDataset(state.dataset as DatasetSummary || null); setNodes(selectedModel?.nodes || []); setEdges(selectedModel?.edges || []); setModels(loadedModels); setActiveModelId(selectedModel?.id || null); const restoredRuns=(state.trainingRuns as TrainingRun[] | undefined)?.length ? state.trainingRuns as TrainingRun[] : [{ ...newTrainingRun(1), history:state.history as MetricPoint[] || [], result:state.run as RunResult || null, status:state.run ? "completed":"draft" } as TrainingRun]; setTrainingRuns(restoredRuns); setActiveRunId((state.activeRunId as string) || restoredRuns[0].id); setGraphValid(Boolean(selectedModel?.graphValid));
+      const state = stored ? JSON.parse(stored) : p.savedState!; const restoredModels=(state.models as ProjectModel[] | undefined) || []; const legacyArchitecture=state.architecture as Architecture || p.architecture || null; const legacyTask=state.task as TaskId || p.taskId || null; const fallback=legacyArchitecture&&legacyTask?[{id:uid(),name:t("app:projectModel.defaultName", { index: 1 }),architecture:legacyArchitecture,nodes:state.nodes as ModelNodeT[] || [],edges:state.edges as ModelEdge[] || [],graphValid:Boolean(state.graphValid)}]:[]; const loadedModels=restoredModels.length?restoredModels:fallback; const selectedModel=loadedModels.find(model=>model.id===state.activeModelId)||loadedModels[0]; setStep(state.step as Step || "model"); setTask(legacyTask); setArchitecture(selectedModel?.architecture || legacyArchitecture); setDataset(state.dataset as DatasetSummary || null); setNodes(selectedModel?.nodes || []); setEdges(selectedModel?.edges || []); setModels(loadedModels); setActiveModelId(selectedModel?.id || null); const restoredRuns=(state.trainingRuns as TrainingRun[] | undefined)?.length ? state.trainingRuns as TrainingRun[] : [{ ...newTrainingRun(1, t("app:trainingRun.defaultName", { index: 1 })), history:state.history as MetricPoint[] || [], result:state.run as RunResult || null, status:state.run ? "completed":"draft" } as TrainingRun]; setTrainingRuns(restoredRuns); setActiveRunId((state.activeRunId as string) || restoredRuns[0].id); setGraphValid(Boolean(selectedModel?.graphValid));
     } else if (p.architecture && p.taskId) {
-      setTask(p.taskId); setArchitecture(p.architecture); const template=templateFor(p.architecture,p.taskId); setNodes(template.nodes); setEdges(template.edges); const freshRun=newTrainingRun(1);setTrainingRuns([freshRun]);setActiveRunId(freshRun.id);setStep("model"); setGraphValid(false);
+      setTask(p.taskId); setArchitecture(p.architecture); const template=templateFor(p.architecture,p.taskId); setNodes(template.nodes); setEdges(template.edges); const freshRun=newTrainingRun(1, t("app:trainingRun.defaultName", { index: 1 }));setTrainingRuns([freshRun]);setActiveRunId(freshRun.id);setStep("model"); setGraphValid(false);
     }
   };
 
   const openPath = async () => {
-    if (!isTauri()) { window.alert("Abrir una carpeta está disponible en la aplicación Tauri."); return; }
-    const path = window.prompt("Ruta de la carpeta del proyecto:");
+    if (!isTauri()) { window.alert(t("app:openFolder.notTauri")); return; }
+    const path = window.prompt(t("app:openFolder.prompt"));
     if (!path) return;
     try { const p=await backend<Project>("project.open",{path}); setProjects(v=>[p,...v.filter(item=>item.id!==p.id)]); openProject(p); }
-    catch(e) { window.alert(String(e)); }
+    catch(e) { window.alert(translateBackendError(String(e))); }
   };
 
   const deleteProject = async (p: Project) => {
-    if (!window.confirm(`¿Estás seguro de que deseas eliminar el proyecto "${p.name}"?`)) return;
+    if (!window.confirm(t("app:deleteProject.confirm", { name: p.name }))) return;
     if (isTauri()) {
       try {
         await backend("project.delete", { project: p });
@@ -210,73 +208,73 @@ export default function App() {
     }
   };
 
-  const choose = (a: Architecture, t: TaskId) => {
-    const freshRun=newTrainingRun(1); const template = templateFor(a, t); setArchitecture(a); setTask(t); setDataset(null); setTrainingRuns([freshRun]);setActiveRunId(freshRun.id);setGraphValid(false); setNodes(template.nodes); setEdges(template.edges);
-    const model=activeModelId ? { id:activeModelId, name:models.find(item=>item.id===activeModelId)?.name || "Modelo 1", architecture:a, nodes:template.nodes, edges:template.edges, graphValid:false } : newProjectModel(1,a,t);
+  const choose = (a: Architecture, taskId: TaskId) => {
+    const freshRun=newTrainingRun(1, t("app:trainingRun.defaultName", { index: 1 })); const template = templateFor(a, taskId); setArchitecture(a); setTask(taskId); setDataset(null); setTrainingRuns([freshRun]);setActiveRunId(freshRun.id);setGraphValid(false); setNodes(template.nodes); setEdges(template.edges);
+    const model=activeModelId ? { id:activeModelId, name:models.find(item=>item.id===activeModelId)?.name || t("app:projectModel.defaultName", { index: 1 }), architecture:a, nodes:template.nodes, edges:template.edges, graphValid:false } : newProjectModel(1,a,taskId,t("app:projectModel.defaultName", { index: 1 }));
     if (!activeModelId) { model.nodes=template.nodes; model.edges=template.edges; setActiveModelId(model.id); setModels([model]); } else setModels(items=>items.map(item=>item.id===activeModelId?model:item));
-    if (project) { const updated = { ...project, architecture: a, taskId: t, updatedAt: now() }; setProject(updated); setProjects(v => v.map(p => p.id === updated.id ? updated : p)); }
+    if (project) { const updated = { ...project, architecture: a, taskId, updatedAt: now() }; setProject(updated); setProjects(v => v.map(p => p.id === updated.id ? updated : p)); }
   };
 
-  const generateData = async (options?: DatasetOptions) => {
+  const downloadData = async (datasetId: string, options?: DatasetOptions) => {
     if (!task || !architecture) return;
     try {
       let result: DatasetSummary;
-      if (project) result = await backend("data.generate", { project, task_id: task, architecture, seed: 42, options });
-      else throw new Error("No hay un proyecto activo.");
-      setDataset(result); setNodes(current => syncOutputContract(current, edges, result)); setGraphValid(false); setNotice(`Dataset listo: ${result.samples} muestras.`);
-    } catch (e) { setNotice(String(e)); }
+      if (project) result = await backend("data.download", { project, task_id: task, architecture, dataset_id: datasetId, options });
+      else throw new Error(t("app:data.noActiveProject"));
+      setDataset(result); setNodes(current => syncOutputContract(current, edges, result)); setGraphValid(false); setNotice(t("app:data.datasetReady", { samples: result.samples }));
+    } catch (e) { setNotice(translateBackendError(String(e))); }
   };
 
   const importData = async (path: string, options?: DatasetOptions) => {
     if (!task || !architecture || !project || !path) return;
-    try { const result = await backend<DatasetSummary>("data.import", { project, task_id: task, architecture, path, options }); setDataset({...result,sourcePath:path}); setNodes(current => syncOutputContract(current, edges, result)); setGraphValid(false); setNotice("Datos importados y validados."); }
-    catch (e) { setNotice(String(e)); }
+    try { const result = await backend<DatasetSummary>("data.import", { project, task_id: task, architecture, path, options }); setDataset({...result,sourcePath:path}); setNodes(current => syncOutputContract(current, edges, result)); setGraphValid(false); setNotice(t("app:data.importedNotice")); }
+    catch (e) { setNotice(translateBackendError(String(e))); }
   };
 
   const applyDataPipeline = async (pipeline: DataPipeline) => {
-    if (!project || !dataset || !task) throw new Error("No hay un dataset activo.");
+    if (!project || !dataset || !task) throw new Error(t("app:data.noActiveDataset"));
     try {
       const result=await backend<DatasetSummary>("data.pipeline.apply",{project,dataset,task_id:task,pipeline});
-      setDataset(result);setNodes(current=>syncOutputContract(current,edges,result));setGraphValid(false);setNotice(`Pipeline aplicado · revisión ${result.pipeline?.revision ?? result.revision}.`);
-    } catch(e) { setNotice(String(e)); throw e; }
+      setDataset(result);setNodes(current=>syncOutputContract(current,edges,result));setGraphValid(false);setNotice(t("app:data.pipelineApplied", { revision: result.pipeline?.revision ?? result.revision }));
+    } catch(e) { setNotice(translateBackendError(String(e))); throw e; }
   };
 
   const validateGraph = async () => {
     const contractNodes = syncOutputContract(nodes, edges, dataset);
     if (contractNodes !== nodes) setNodes(contractNodes);
     const graphNodes = contractNodes;
-    const errors=graphErrorMap(graphNodes,edges);
+    const errors=graphErrorMap(graphNodes,edges,t);
     setNodes(items=>items.map(node=>({...node,data:{...node.data,error:errors.get(node.id)}})));
-    if (errors.size) { const [nodeId,message]=errors.entries().next().value as [string,string];setSelectedId(nodeId);setNotice(`${nodes.find(node=>node.id===nodeId)?.data.label || "Grafo"}: ${message}`);setGraphValid(false);return false; }
+    if (errors.size) { const [nodeId,message]=errors.entries().next().value as [string,string];setSelectedId(nodeId);setNotice(`${nodes.find(node=>node.id===nodeId)?.data.label || t("app:builder.graph")}: ${message}`);setGraphValid(false);return false; }
     if (project && dataset && task && architecture) {
       try {
         const r = await backend<{ valid: boolean; message: string; node_shapes?: Record<string, number[]> }>("graph.validate", { project, dataset, task_id: task, architecture, graph: { nodes: graphNodes, edges } });
         if (r.node_shapes) setNodes(ns => ns.map(n => ({ ...n, data: { ...n.data, shape: `[B, ${r.node_shapes?.[n.id]?.join(", ") || "?"}]` } })));
         setGraphValid(r.valid); setNotice(r.message); return r.valid;
-      } catch (e) { const message=String(e);const failed=nodes.find(node=>message.includes(node.data.label)||message.includes(node.id));if(failed){setNodes(items=>items.map(node=>node.id===failed.id?{...node,data:{...node.data,error:message}}:node));setSelectedId(failed.id)}setGraphValid(false);setNotice(message); }
+      } catch (e) { const message=translateBackendError(String(e));const failed=nodes.find(node=>message.includes(node.data.label)||message.includes(node.id));if(failed){setNodes(items=>items.map(node=>node.id===failed.id?{...node,data:{...node.data,error:message}}:node));setSelectedId(failed.id)}setGraphValid(false);setNotice(message); }
     }
     setGraphValid(true); return true;
   };
 
   const train = async (config: Record<string, number | string>) => {
     if (!project || !dataset || !task || !architecture || !(await validateGraph())) return;
-    const targetId=activeTrainingRun?.id || newTrainingRun(trainingRuns.length+1).id;
+    const targetId=activeTrainingRun?.id || newTrainingRun(trainingRuns.length+1, t("app:trainingRun.defaultName", { index: trainingRuns.length + 1 })).id;
     runningRunId.current=targetId;
-    setTraining(true); setTrainingRuns(runs=>runs.map(item=>item.id===targetId?{...item,modelId:activeModelId || undefined,status:"running",config,history:[],result:null,error:undefined,startedAt:now(),completedAt:undefined}:item)); setNotice("Preparando entrenamiento…");
+    setTraining(true); setTrainingRuns(runs=>runs.map(item=>item.id===targetId?{...item,modelId:activeModelId || undefined,status:"running",config,history:[],result:null,error:undefined,startedAt:now(),completedAt:undefined}:item)); setNotice(t("app:training.preparing"));
     try {
       await startTraining({ project, dataset, task_id: task, architecture, graph: { nodes: syncOutputContract(nodes, edges, dataset), edges }, config });
     } catch (e) {
-      setTraining(false); runningRunId.current=null; setTrainingRuns(runs=>runs.map(item=>item.id===targetId?{...item,status:"error",error:String(e),completedAt:now()}:item));setNotice(String(e));
+      setTraining(false); runningRunId.current=null; setTrainingRuns(runs=>runs.map(item=>item.id===targetId?{...item,status:"error",error:translateBackendError(String(e)),completedAt:now()}:item));setNotice(translateBackendError(String(e)));
     }
   };
 
   const infer = async (payload: { mode: string; values?: string; index?: number }) => {
-    if (!project || !task || !architecture || !dataset) throw new Error("Completa proyecto y datos.");
+    if (!project || !task || !architecture || !dataset) throw new Error(t("app:data.completeProjectData"));
     return backend<Record<string, unknown>>("inference.run", { project, task_id: task, architecture, dataset, checkpoint: activeTrainingRun?.result?.checkpoint, ...payload });
   };
 
   const addTrainingRun = () => {
-    const fresh=newTrainingRun(trainingRuns.length+1);
+    const fresh=newTrainingRun(trainingRuns.length+1, t("app:trainingRun.defaultName", { index: trainingRuns.length + 1 }));
     setTrainingRuns(items=>[...items,fresh]);setActiveRunId(fresh.id);
   };
   const switchModel = (id:string) => {
@@ -285,18 +283,18 @@ export default function App() {
     setActiveModelId(id); setArchitecture(target.architecture); setNodes(target.nodes); setEdges(target.edges); setGraphValid(target.graphValid); setSelectedId(null);
   };
   const addModel = () => {
-    if(!architecture || !task)return; const defaultName=`Modelo ${models.length+1}`; const name=window.prompt("Nombre del modelo:",defaultName)?.trim(); if(!name)return;
-    const model=newProjectModel(models.length+1,architecture,task); model.name=name; setModels(items=>[...items,model]); switchModelAfterCreate(model);
+    if(!architecture || !task)return; const defaultName=t("app:projectModel.defaultName", { index: models.length + 1 }); const name=window.prompt(t("app:model.namePrompt"),defaultName)?.trim(); if(!name)return;
+    const model=newProjectModel(models.length+1,architecture,task,defaultName); model.name=name; model.nodes=syncOutputContract(model.nodes,model.edges,dataset); setModels(items=>[...items,model]); switchModelAfterCreate(model);
   };
   const switchModelAfterCreate=(model:ProjectModel)=>{setActiveModelId(model.id);setArchitecture(model.architecture);setNodes(model.nodes);setEdges(model.edges);setGraphValid(false);setSelectedId(null)};
 
-  const stepIndex=STEPS.findIndex(item=>item.id===step);
-  const goPrevious=()=>{if(stepIndex>0)setStep(STEPS[stepIndex-1].id)};
+  const stepIndex=steps.findIndex(item=>item.id===step);
+  const goPrevious=()=>{if(stepIndex>0)setStep(steps[stepIndex-1].id)};
   const goNext=async()=>{
-    if(step==="model"){if(!task||!architecture){setNotice("Selecciona una tarea y arquitectura para continuar.");return}setStep("data");return}
-    if(step==="data"){if(!dataset){setNotice("Carga o genera un dataset para continuar.");return}setStep("builder");return}
+    if(step==="model"){if(!task||!architecture){setNotice(t("app:notice.selectTaskAndArchitecture"));return}setStep("data");return}
+    if(step==="data"){if(!dataset){setNotice(t("app:notice.loadDataset"));return}setStep("builder");return}
     if(step==="builder"){if(await validateGraph())setStep("training");return}
-    if(step==="training"){if(!run){setNotice("Completa la corrida activa antes de usarla en inferencia.");return}setStep("inference")}
+    if(step==="training"){if(!run){setNotice(t("app:notice.completeRun"));return}setStep("inference")}
   };
 
   if (!project) return <ProjectHub projects={projects} onCreate={createProject} onOpen={openProject} onDelete={deleteProject} onOpenPath={openPath} theme={theme} setTheme={setTheme} accent={accent} setAccent={setAccent} />;
@@ -306,18 +304,19 @@ export default function App() {
     <main className="main-area">
       {notice && <div className="notice"><span>{notice}</span><button onClick={() => setNotice("")}><X size={14}/></button></div>}
       <section className={`content ${step === "training" ? "no-scroll" : ""}`}>
-        <div className={`stage-nav ${step==="builder"?"on-toolbar":""}`}><button className="secondary" onClick={goPrevious} disabled={stepIndex===0}><ArrowLeft/> Anterior</button>{stepIndex<STEPS.length-1&&<button className="primary" onClick={goNext}>Siguiente <ChevronRight/></button>}</div>
+        <div className={`stage-nav ${step==="builder"?"on-toolbar":""}`}><button className="secondary" onClick={goPrevious} disabled={stepIndex===0}><ArrowLeft/> {t("common:previous")}</button>{stepIndex<steps.length-1&&<button className="primary" onClick={goNext}>{t("common:next")} <ChevronRight/></button>}</div>
         {step === "model" && <ModelTask architecture={architecture} task={task} onChoose={choose} />}
-        {step === "data" && <DataStep task={task} dataset={dataset} onGenerate={generateData} onImport={importData} onApplyPipeline={applyDataPipeline} onSplitsChange={splits => setDataset(current => current ? { ...current, splits } : current)} />}
+        {step === "data" && <DataStep project={project} task={task} dataset={dataset} onDownload={downloadData} onImport={importData} onChooseAnother={()=>setDataset(null)} onApplyPipeline={applyDataPipeline} onSplitsChange={splits => setDataset(current => current ? { ...current, splits } : current)} />}
         {step === "builder" && architecture && task && <Builder architecture={architecture} task={task} dataset={dataset} models={models} activeModelId={activeModelId} onSelectModel={switchModel} onAddModel={addModel} theme={theme} nodes={nodes} edges={edges} setNodes={setNodes} setEdges={setEdges} onNodesChange={(changes: Parameters<typeof onNodesChange>[0]) => { setGraphValid(false); onNodesChange(changes); }} onEdgesChange={(changes: Parameters<typeof onEdgesChange>[0]) => { setGraphValid(false); onEdgesChange(changes); }} onDirty={()=>setGraphValid(false)} selected={selected} setSelectedId={setSelectedId} onValidate={validateGraph} />}
         {step === "training" && task && <Training task={task} dataset={dataset} models={models} activeModelId={activeModelId} onSelectModel={switchModel} runs={trainingRuns} activeRunId={activeRunId} training={training} accent={accent} onSelectRun={setActiveRunId} onAddRun={addTrainingRun} onTrain={train} />}
-        {step === "inference" && task && dataset && <Inference task={task} dataset={dataset} run={run} runName={activeTrainingRun?.name || "Corrida activa"} onInfer={infer} />}
+        {step === "inference" && task && dataset && <Inference task={task} dataset={dataset} run={run} runName={activeTrainingRun?.name || t("app:inference.activeRun")} onInfer={infer} />}
       </section>
     </main>
   </div>;
 }
 
 function Builder({ architecture, task, dataset, models, activeModelId, onSelectModel, onAddModel, theme, nodes, edges, setNodes, setEdges, onNodesChange, onEdgesChange, onDirty, selected, setSelectedId, onValidate }: { architecture: Architecture; task:TaskId; dataset:DatasetSummary|null; models:ProjectModel[]; activeModelId:string|null; onSelectModel:(id:string)=>void; onAddModel:()=>void; theme: Theme; nodes: ModelNodeT[]; edges: ModelEdge[]; setNodes: React.Dispatch<React.SetStateAction<ModelNodeT[]>>; setEdges: React.Dispatch<React.SetStateAction<ModelEdge[]>>; onNodesChange: any; onEdgesChange: any; onDirty: () => void; selected: ModelNodeT | null; setSelectedId: (id: string | null) => void; onValidate: () => void }) {
+  const { t } = useTranslation(["app", "common", "catalog"]);
   const [libraryOpen, setLibraryOpen] = useState(true);
   const [flow, setFlow] = useState<ReactFlowInstance<ModelNodeT, ModelEdge> | null>(null);
   const [hoveredBlock,setHoveredBlock]=useState<(typeof BLOCKS)[Architecture][number]|null>(null);
@@ -347,7 +346,7 @@ function Builder({ architecture, task, dataset, models, activeModelId, onSelectM
     setEdges(es => es.filter(e => e.id !== edgeId));
   }, [setEdges, onDirty]);
 
-  const liveErrors=useMemo(()=>graphErrorMap(nodes,edges),[nodes,edges]);
+  const liveErrors=useMemo(()=>graphErrorMap(nodes,edges,t),[nodes,edges,t]);
   const nodesWithHandler = useMemo(() => {
     return nodes.map(n => ({
       ...n,
@@ -425,30 +424,38 @@ function Builder({ architecture, task, dataset, models, activeModelId, onSelectM
   }, [nodes]);
   const builtinPresets = useMemo(() => presetsFor(architecture, task), [architecture, task]);
 
-  const applyPreset=(preset:{nodes:ModelNodeT[];edges:ModelEdge[]})=>{onDirty();setNodes(preset.nodes.map(node=>({...node,data:{...node.data,error:undefined}})));setEdges(preset.edges);setSelectedId(null);setPresetsOpen(false);window.setTimeout(()=>flow?.fitView({padding:.18}),20)};
-  const savePreset=()=>{if(!presetName.trim())return;setCustomPresets(items=>[...items,{id:uid(),name:presetName.trim(),description:"Modelo personalizado guardado desde el constructor.",nodes,edges}]);setPresetName("")};
+  const applyPreset=(preset:{nodes:ModelNodeT[];edges:ModelEdge[]})=>{onDirty();setNodes(syncOutputContract(preset.nodes,preset.edges,dataset).map(node=>({...node,data:{...node.data,error:undefined}})));setEdges(preset.edges);setSelectedId(null);setPresetsOpen(false);window.setTimeout(()=>flow?.fitView({padding:.18}),20)};
+  const savePreset=()=>{if(!presetName.trim())return;setCustomPresets(items=>[...items,{id:uid(),name:presetName.trim(),description:t("app:customPreset.description"),nodes,edges}]);setPresetName("")};
+  const presetI18n = (preset: typeof builtinPresets[number]) => {
+    return {
+      name: getPresetName(architecture, preset.id),
+      description: getPresetDescription(architecture, preset.id),
+      benefit: getPresetBenefit(architecture, preset.id),
+      tradeoff: getPresetTradeoff(architecture, preset.id)
+    };
+  };
 
   return (
     <div className="builder-page">
-      <div className="model-tabs" role="tablist" aria-label="Modelos del proyecto">{models.map(model=><button key={model.id} role="tab" aria-selected={model.id===activeModelId} className={model.id===activeModelId?"active":""} onClick={()=>onSelectModel(model.id)}><BrainCircuit size={13}/>{model.name}<small>{ARCHITECTURES[model.architecture].name}</small></button>)}<button className="add-model" onClick={onAddModel} title="Crear nuevo modelo" aria-label="Crear nuevo modelo"><Plus size={15}/></button></div>
+      <div className="model-tabs" role="tablist" aria-label={t("app:model.modelsAria")}>{models.map(model=><button key={model.id} role="tab" aria-selected={model.id===activeModelId} className={model.id===activeModelId?"active":""} onClick={()=>onSelectModel(model.id)}><BrainCircuit size={13}/>{model.name}<small>{t(`catalog:architectures.${model.architecture}.name`)}</small></button>)}<button className="add-model" onClick={onAddModel} title={t("app:model.createTitle")} aria-label={t("app:model.createTitle")}><Plus size={15}/></button></div>
       <div className="builder-toolbar">
-        <button className={libraryOpen ? "active" : ""} onClick={() => setLibraryOpen(!libraryOpen)}><Plus /> Bloques</button>
-        <button className={presetsOpen ? "active" : ""} onClick={()=>setPresetsOpen(true)}><Layers3/> Presets</button>
+        <button className={libraryOpen ? "active" : ""} onClick={() => setLibraryOpen(!libraryOpen)}><Plus /> {t("common:blocks")}</button>
+        <button className={presetsOpen ? "active" : ""} onClick={()=>setPresetsOpen(true)}><Layers3/> {t("common:presets")}</button>
         <span className="toolbar-separator" />
-        <button onClick={onValidate}><Check /> Validar</button>
-        <button onClick={onValidate}><Save /> Guardar revisión</button>
+        <button onClick={onValidate}><Check /> {t("common:validate")}</button>
+        <button onClick={onValidate}><Save /> {t("app:builder.saveRevision")}</button>
         <div className="toolbar-spacer" />
-        <span>{nodes.length} bloques · {edges.length} conexiones</span>
+        <span>{t("app:builder.graphSummary", { blocks: nodes.length, connections: edges.length })}</span>
       </div>
 
       <div className="builder-workspace">
         {libraryOpen && (
           <aside className="block-library">
-            <div><span className="eyebrow">BIBLIOTECA</span><h3>{ARCHITECTURES[architecture].name}</h3></div>
+            <div><span className="eyebrow">{t("app:builder.libraryEyebrow")}</span><h3>{t(`catalog:architectures.${architecture}.name`)}</h3></div>
             {Object.entries(groups).map(([cat, blocks]) => (
               <section key={cat}>
-                <small>{cat}</small>
-                {blocks.map(b => <div className="library-item" key={b.type} onMouseEnter={()=>{if(!pinnedBlock)setHoveredBlock(b)}} onMouseLeave={()=>setHoveredBlock(null)}><button draggable onClick={() => addBlock(b)} onDragStart={e => { e.dataTransfer.setData("application/modelbuilder", b.type); e.dataTransfer.effectAllowed = "move"; }}><Plus size={13} />{b.label}</button><button className={`block-info-button ${pinnedBlock?.type===b.type?"active":""}`} onClick={event=>{event.stopPropagation();setPinnedBlock(b);setHoveredBlock(null)}} title={`Fijar información sobre ${b.label}`} aria-label={`Fijar información sobre ${b.label}`}><Info size={13}/></button></div>)}
+                <small>{t(`catalog:blockCategories.${cat}`)}</small>
+                {blocks.map(b => <div className="library-item" key={b.type} onMouseEnter={()=>{if(!pinnedBlock)setHoveredBlock(b)}} onMouseLeave={()=>setHoveredBlock(null)}><button draggable onClick={() => addBlock(b)} onDragStart={e => { e.dataTransfer.setData("application/modelbuilder", b.type); e.dataTransfer.effectAllowed = "move"; }}><Plus size={13} />{t(`catalog:blocks.${b.type}.label`)}</button><button className={`block-info-button ${pinnedBlock?.type===b.type?"active":""}`} onClick={event=>{event.stopPropagation();setPinnedBlock(b);setHoveredBlock(null)}} title={t("app:blockInfo.pinTitle", { block: t(`catalog:blocks.${b.type}.label`) })} aria-label={t("app:blockInfo.pinTitle", { block: t(`catalog:blocks.${b.type}.label`) })}><Info size={13}/></button></div>)}
               </section>
             ))}
           </aside>
@@ -457,7 +464,7 @@ function Builder({ architecture, task, dataset, models, activeModelId, onSelectM
         <div className="flow-wrap">
           <div className="canvas-param-badge">
             <Cpu size={13} />
-            <span>Estimación: <strong>{paramEstimate > 0 ? paramEstimate.toLocaleString() : "---"}</strong> params</span>
+            <span>{t("app:builder.paramEstimate", { count: paramEstimate > 0 ? paramEstimate.toLocaleString() : "---" })}</span>
           </div>
 
           <ReactFlow
@@ -488,49 +495,51 @@ function Builder({ architecture, task, dataset, models, activeModelId, onSelectM
           {selected ? (
             <>
               <div className="inspector-head">
-                <span className="eyebrow">PROPIEDADES</span>
-                <h3>{selected.data.label}</h3>
+                <span className="eyebrow">{t("app:inspector.properties")}</span>
+                <h3>{t(`catalog:blocks.${selected.data.blockType}.label`, { defaultValue: selected.data.label })}</h3>
                 <code>{selected.data.blockType}</code>
               </div>
               {Object.entries(selected.data.properties).length ? Object.entries(selected.data.properties).map(([k, v]) => (
                 <Property key={k} name={k} value={v} disabled={!!dataset && ((selected.data.blockType==="linear"&&k==="out_features")||(selected.data.blockType==="conv2d"&&k==="out_channels")) && edges.some(edge=>edge.source===selected.id&&nodes.find(node=>node.id===edge.target)?.data.blockType==="output")} onChange={nv => updateProp(k, nv)} />
-              )) : <p className="muted">Este bloque no tiene parámetros editables.</p>}
+              )) : <p className="muted">{t("app:inspector.noParams")}</p>}
               <div className="inspector-section">
-                <span className="eyebrow">TENSOR</span>
-                <div className="shape-box">{selected.data.shape || "Se resolverá al validar"}</div>
+                <span className="eyebrow">{t("app:inspector.tensor")}</span>
+                <div className="shape-box">{selected.data.shape || t("app:inspector.shapePlaceholder")}</div>
               </div>
-              <div className="inspector-section parameter-summary"><span className="eyebrow">PARÁMETROS</span><strong>{estimateNodeParameters(selected).toLocaleString()}</strong><small>estimados en este bloque</small><div><span>Total del modelo</span><b>{paramEstimate.toLocaleString()}</b></div></div>
-              {liveErrors.get(selected.id)&&<div className="inspector-error"><AlertCircle/>{liveErrors.get(selected.id)}</div>}
+              <div className="inspector-section parameter-summary"><span className="eyebrow">{t("app:inspector.parameters")}</span><strong>{estimateNodeParameters(selected).toLocaleString()}</strong><small>{t("app:inspector.parametersPerBlock")}</small><div><span>{t("app:inspector.totalModel")}</span><b>{paramEstimate.toLocaleString()}</b></div></div>
+              {liveErrors.get(selected.id)&&<div className="inspector-error"><AlertCircle/>{translateBackendError(liveErrors.get(selected.id)!)}</div>}
             </>
           ) : (
             <div className="inspector-empty">
               <GitBranch />
-              <h3>Selecciona un bloque</h3>
-              <p>Edita aquí sus propiedades y revisa las dimensiones.</p>
+              <h3>{t("app:inspector.emptyTitle")}</h3>
+              <p>{t("app:inspector.emptyHint")}</p>
             </div>
           )}
         </aside>
       </div>
-      {(pinnedBlock||hoveredBlock)&&(()=>{const block=pinnedBlock||hoveredBlock!;return <div ref={infoCard} className={`block-info-popover ${pinnedBlock?"pinned":"preview"}`}><div className="block-info-head"><span className="eyebrow">{pinnedBlock?"INFORMACIÓN FIJADA":"VISTA RÁPIDA"}</span>{pinnedBlock&&<button className="modal-close" onClick={()=>setPinnedBlock(null)} aria-label="Cerrar información"><X/></button>}</div><h2>{block.label}</h2><p>{BLOCK_INFO[block.type]?.description || "Bloque de procesamiento compatible con esta arquitectura."}</p><div className="node-diagram">{(BLOCK_INFO[block.type]?.diagram || ["Entrada",block.label,"Salida"]).map((part,index)=><div key={`${part}-${index}`}>{index>0&&<ChevronRight/>}<span className={index===1?"operation":""}>{part}</span></div>)}</div><h3>Cómo se usa</h3><p>{BLOCK_INFO[block.type]?.usage || "Conéctalo respetando las dimensiones indicadas al validar el grafo."}</p><div className="default-properties"><span>Propiedades iniciales</span><code>{Object.keys(block.defaults).length?JSON.stringify(block.defaults):"Sin parámetros editables"}</code></div>{!pinnedBlock&&<small className="pin-hint">Haz clic en <Info/> para mantener esta guía abierta.</small>}</div>})()}
-      {presetsOpen&&<div className="modal-backdrop"><div className="modal presets-modal"><button className="modal-close" onClick={()=>setPresetsOpen(false)}><X/></button><span className="eyebrow">PRESETS DE MODELO</span><h2>Empieza desde una estructura fiable</h2><div className="preset-list">{builtinPresets.map(preset=><article key={preset.id}><div><Sparkles/><span><strong>{preset.name}</strong><small>{preset.description}</small></span></div><p><b>Ventaja:</b> {preset.benefit}. <b>Desventaja:</b> {preset.tradeoff}.</p><button className="secondary" onClick={()=>applyPreset(preset)}>Aplicar preset</button></article>)}{customPresets.map(preset=><article key={preset.id}><div><Save/><span><strong>{preset.name}</strong><small>{preset.description}</small></span></div><p><b>Ventaja:</b> conserva tu diseño y configuración. <b>Desventaja:</b> depende de las dimensiones del dataset actual.</p><button className="secondary" onClick={()=>applyPreset(preset)}>Aplicar preset</button></article>)}</div><div className="save-preset"><label>Guardar el modelo actual<input value={presetName} onChange={event=>setPresetName(event.target.value)} placeholder="Nombre del preset"/></label><button className="primary" disabled={!presetName.trim()} onClick={savePreset}><Save/> Guardar</button></div></div></div>}
+      {(pinnedBlock||hoveredBlock)&&(()=>{const block=pinnedBlock||hoveredBlock!;const blockLabel=t(`catalog:blocks.${block.type}.label`, { defaultValue: block.label });const description=t(`catalog:blocks.${block.type}.description`, { defaultValue: BLOCK_INFO[block.type]?.description });const usage=t(`catalog:blocks.${block.type}.usage`, { defaultValue: BLOCK_INFO[block.type]?.usage });const diagram=t(`catalog:blocks.${block.type}.diagram`, { returnObjects: true, defaultValue: BLOCK_INFO[block.type]?.diagram || [t("common:input"), blockLabel, t("common:output")] }) as string[];return <div ref={infoCard} className={`block-info-popover ${pinnedBlock?"pinned":"preview"}`}><div className="block-info-head"><span className="eyebrow">{pinnedBlock?t("app:blockInfo.pinnedEyebrow"):t("app:blockInfo.previewEyebrow")}</span>{pinnedBlock&&<button className="modal-close" onClick={()=>setPinnedBlock(null)} aria-label={t("app:blockInfo.closeInfo")}><X/></button>}</div><h2>{blockLabel}</h2><p>{description || t("app:blockInfo.fallbackDescription")}</p><div className="node-diagram">{diagram.map((part,index)=><div key={`${part}-${index}`}>{index>0&&<ChevronRight/>}<span className={index===1?"operation":""}>{part}</span></div>)}</div><h3>{t("app:blockInfo.usageTitle")}</h3><p>{usage || t("app:blockInfo.fallbackUsage")}</p><div className="default-properties"><span>{t("app:blockInfo.defaults")}</span><code>{Object.keys(block.defaults).length?JSON.stringify(block.defaults):t("app:blockInfo.noEditableDefaults")}</code></div>{!pinnedBlock&&<small className="pin-hint">{t("app:blockInfo.pinHint")}</small>}</div>})()}
+      {presetsOpen&&<div className="modal-backdrop"><div className="modal presets-modal"><button className="modal-close" onClick={()=>setPresetsOpen(false)}><X/></button><span className="eyebrow">{t("app:presets.modalEyebrow")}</span><h2>{t("app:presets.modalTitle")}</h2><div className="preset-list">{builtinPresets.map(preset=>{const info=presetI18n(preset);return <article key={preset.id}><div><Sparkles/><span><strong>{info.name}</strong><small>{info.description}</small></span></div><p><b>{t("app:presets.benefitLabel")}</b> {info.benefit}. <b>{t("app:presets.tradeoffLabel")}</b> {info.tradeoff}.</p><button className="secondary" onClick={()=>applyPreset(preset)}>{t("app:presets.apply")}</button></article>;})}{customPresets.map(preset=><article key={preset.id}><div><Save/><span><strong>{preset.name}</strong><small>{preset.description}</small></span></div><p><b>{t("app:presets.benefitLabel")}</b> {t("app:customPreset.benefit")}. <b>{t("app:presets.tradeoffLabel")}</b> {t("app:customPreset.tradeoff")}.</p><button className="secondary" onClick={()=>applyPreset(preset)}>{t("app:presets.apply")}</button></article>)}</div><div className="save-preset"><label>{t("app:savePreset.label")}<input value={presetName} onChange={event=>setPresetName(event.target.value)} placeholder={t("app:savePreset.placeholder")}/></label><button className="primary" disabled={!presetName.trim()} onClick={savePreset}><Save/> {t("common:save")}</button></div></div></div>}
     </div>
   );
 }
 
 function Property({ name, value, disabled=false, onChange }: { name: string; value: string | number | boolean; disabled?:boolean; onChange: (v: string | number | boolean) => void }) {
+  const { t } = useTranslation(["app", "common"]);
   return (
     <label className="property">
       <span>{name.replaceAll("_", " ")}</span>
       {typeof value === "boolean" ? (
         <button className={`toggle ${value ? "on" : ""}`} onClick={() => onChange(!value)} type="button"><i /></button>
       ) : (
-        <input disabled={disabled} title={disabled ? "Este valor se ajusta automáticamente a la salida del dataset." : undefined} type={typeof value === "number" ? "number" : "text"} step="any" value={String(value)} onChange={e => onChange(typeof value === "number" ? Number(e.target.value) : e.target.value)} />
+        <input disabled={disabled} title={disabled ? t("app:property.autoAdjusted") : undefined} type={typeof value === "number" ? "number" : "text"} step="any" value={String(value)} onChange={e => onChange(typeof value === "number" ? Number(e.target.value) : e.target.value)} />
       )}
     </label>
   );
 }
 
 function Training({ task, dataset, models, activeModelId, onSelectModel, runs, activeRunId, training, accent, onSelectRun, onAddRun, onTrain }: { task: TaskId; dataset:DatasetSummary|null; models:ProjectModel[]; activeModelId:string|null; onSelectModel:(id:string)=>void; runs: TrainingRun[]; activeRunId: string; training: boolean; accent: Accent; onSelectRun:(id:string)=>void; onAddRun:()=>void; onTrain: (c: Record<string, number | string>) => void }) {
+  const { t } = useTranslation(["app", "common", "catalog"]);
   const activeRun=runs.find(item=>item.id===activeRunId) || runs[0];
   const history=activeRun?.history || [];
   const run=activeRun?.result || null;
@@ -548,83 +557,84 @@ function Training({ task, dataset, models, activeModelId, onSelectModel, runs, a
   const progress=Math.min(100,Math.round(currentEpoch/targetEpochs*100));
   const elapsedSeconds=activeRun?.startedAt ? Math.max(0,Math.round(((activeRun.completedAt ? new Date(activeRun.completedAt).getTime() : Date.now())-new Date(activeRun.startedAt).getTime())/1000)) : 0;
   const etaSeconds=currentEpoch ? Math.max(0,Math.round((elapsedSeconds/currentEpoch)*(targetEpochs-currentEpoch))) : 0;
-  const formatTime=(seconds:number)=>seconds<60?`${seconds}s`:`${Math.floor(seconds/60)}m ${seconds%60}s`;
+  const formatTime=(seconds:number)=>seconds<60?t("app:time.seconds", { count: seconds }):t("app:time.minutes", { minutes: Math.floor(seconds/60), seconds: seconds%60 });
   const bestLoss=history.length ? history.reduce((best, point)=>point.valLoss<best.valLoss?point:best,history[0]) : null;
   const bestMetric=history.length ? history.reduce((best, point)=>point.metric>best.metric?point:best,history[0]) : null;
 
+  const metricName = t(`catalog:tasks.${task}.metric`);
   return (
     <div className="page training-page">
       <div className="page-intro">
         <div>
-          <span className="eyebrow">PASO 4 DE 5</span>
-          <h2>Entrena y observa</h2>
-          <p>Loss de train/validation y {TASKS[task].metric} en tiempo real.</p>
+          <span className="eyebrow">{t("app:training.stepEyebrow")}</span>
+          <h2>{t("app:training.title")}</h2>
+          <p>{t("app:training.subtitle", { metric: metricName })}</p>
         </div>
       </div>
 
-      <div className="run-tabs" role="tablist" aria-label="Corridas de entrenamiento">
+      <div className="run-tabs" role="tablist" aria-label={t("app:training.runsAriaLabel")}>
         {runs.map(item=><button key={item.id} role="tab" aria-selected={item.id===activeRunId} className={item.id===activeRunId?"active":""} onClick={()=>onSelectRun(item.id)}><i className={`run-dot ${item.status}`}/><span>{item.name}</span>{item.status==="completed"&&<Check size={12}/>}</button>)}
-        <button className="add-run" onClick={onAddRun} disabled={training} title="Crear nueva corrida"><Plus size={15}/></button>
+        <button className="add-run" onClick={onAddRun} disabled={training} title={t("app:training.addRunTitle")}><Plus size={15}/></button>
       </div>
 
       <div className="training-layout">
         <div className="charts">
           <article className="panel chart-panel">
             <div className="chart-title">
-              <div><span className="eyebrow">CURVA PRINCIPAL</span><h3>Loss</h3></div>
-              <div className="chart-status"><span className="live"><i /> {training ? "EN VIVO" : run ? "COMPLETADO" : "LISTO"}</span>{bestLoss&&<span className="best-value">Mejor val. loss <strong>{bestLoss.valLoss.toFixed(4)}</strong> · época {bestLoss.epoch}</span>}</div>
+              <div><span className="eyebrow">{t("app:training.chartMainEyebrow")}</span><h3>{t("app:training.loss")}</h3></div>
+              <div className="chart-status"><span className="live"><i /> {training ? t("app:training.statusLive") : run ? t("app:training.statusCompleted") : t("app:training.statusReady")}</span>{bestLoss&&<span className="best-value">{t("app:training.bestValLoss", { loss: bestLoss.valLoss.toFixed(4), epoch: bestLoss.epoch })}</span>}</div>
             </div>
             <TrainingChart history={history} metric="loss" accent={accent} />
           </article>
           <article className="panel chart-panel">
             <div className="chart-title">
-              <div><span className="eyebrow">MÉTRICA DE TAREA</span><h3>{TASKS[task].metric}</h3></div>
-              {bestMetric&&<span className="best-value">Mejor {TASKS[task].metric} <strong>{bestMetric.metric.toFixed(4)}</strong> · época {bestMetric.epoch}</span>}
+              <div><span className="eyebrow">{t("app:training.taskMetricEyebrow")}</span><h3>{metricName}</h3></div>
+              {bestMetric&&<span className="best-value">{t("app:training.bestMetric", { metric: metricName, value: bestMetric.metric.toFixed(4), epoch: bestMetric.epoch })}</span>}
             </div>
-            <TrainingChart history={history} metric={TASKS[task].metric} accent={accent} compact />
+            <TrainingChart history={history} metric={metricName} accent={accent} compact />
           </article>
         </div>
 
         <aside className="run-config">
           <div className="run-config-scroll">
-          <label>Modelo a entrenar
+          <label>{t("app:training.modelLabel")}
             <select value={activeModelId || ""} onChange={event=>onSelectModel(event.target.value)} disabled={training}>
-              {models.map(model=><option value={model.id} key={model.id}>{model.name} · {ARCHITECTURES[model.architecture].name}</option>)}
+              {models.map(model=><option value={model.id} key={model.id}>{model.name} · {t(`catalog:architectures.${model.architecture}.name`)}</option>)}
             </select>
           </label>
-          <label>Épocas
+          <label>{t("app:training.epochsLabel")}
             <input type="number" min="1" max="200" value={epochs} onChange={e => setEpochs(Number(e.target.value))} />
           </label>
-          <label>Learning rate
+          <label>{t("app:training.lrLabel")}
             <input type="number" step="0.0001" value={lr} onChange={e => setLr(Number(e.target.value))} />
           </label>
-          <label>Batch size
+          <label>{t("app:training.batchLabel")}
             <input type="number" min="1" value={batch} onChange={e => setBatch(Number(e.target.value))} />
           </label>
-          <label>Optimizador
+          <label>{t("app:training.optimizerLabel")}
             <select value={optimizer} onChange={e => setOptimizer(e.target.value)}>
               <option value="adamw">AdamW</option>
               <option value="adam">Adam</option>
               <option value="sgd">SGD</option>
             </select>
-          </label>          <label>Criterio de mejor modelo
+          </label>          <label>{t("app:training.bestModelCriterionLabel")}
             <select value={bestModelCriterion} onChange={e => setBestModelCriterion(e.target.value)}>
-              <option value="none">Ninguno (Última época)</option>
-              <option value="val_loss">Menor Pérdida de Validación (Val Loss)</option>
-              <option value="train_loss">Menor Pérdida de Entrenamiento (Train Loss)</option>
-              <option value="metric">Mejor Métrica ({TASKS[task].metric})</option>
+              <option value="none">{t("app:training.criterion.none")}</option>
+              <option value="val_loss">{t("app:training.criterion.val_loss")}</option>
+              <option value="train_loss">{t("app:training.criterion.train_loss")}</option>
+              <option value="metric">{t("app:training.criterion.metric", { metric: metricName })}</option>
             </select>
           </label>
 
           <div className="resource">
             <Cpu />
-            <span><small>DISPOSITIVO</small><strong>Auto · CUDA si disponible</strong></span>
+            <span><small>{t("app:training.deviceLabel")}</small><strong>{t("app:training.deviceValue")}</strong></span>
           </div>
-          {(history.length > 0 || activeRun?.startedAt) && <><div className="run-progress-head"><span>Época {currentEpoch} de {targetEpochs}</span><strong>{progress}%</strong></div><div className="run-progress" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={progress}><i style={{width:`${progress}%`}}/></div><div className="time-summary"><span><Clock3/> Transcurrido <strong>{formatTime(elapsedSeconds)}</strong></span>{activeRun?.status==="running"&&<span>Restante aprox. <strong>{currentEpoch?formatTime(etaSeconds):"calculando…"}</strong></span>}</div></>}
-          {run?.test&&<div className="test-summary"><CheckCircle2/><span><small>RESULTADO DE TEST</small><strong>{run.metricName}: {run.test.metric.toFixed(4)}</strong></span></div>}
-          {activeRun?.error&&<div className="run-error"><AlertCircle/>{activeRun.error}</div>}
+          {(history.length > 0 || activeRun?.startedAt) && <><div className="run-progress-head"><span>{t("app:training.epochProgress", { current: currentEpoch, target: targetEpochs })}</span><strong>{progress}%</strong></div><div className="run-progress" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={progress}><i style={{width:`${progress}%`}}/></div><div className="time-summary"><span><Clock3/> {t("app:training.elapsed")} <strong>{formatTime(elapsedSeconds)}</strong></span>{activeRun?.status==="running"&&<span>{t("app:training.remaining")} <strong>{currentEpoch?formatTime(etaSeconds):t("app:training.calculating")}</strong></span>}</div></>}
+          {run?.test&&<div className="test-summary"><CheckCircle2/><span><small>{t("app:training.testResult")}</small><strong>{run.metricName}: {run.test.metric.toFixed(4)}</strong></span></div>}
+          {activeRun?.error&&<div className="run-error"><AlertCircle/>{translateBackendError(activeRun.error)}</div>}
           </div>
-          <div className="run-config-footer"><button className="primary full" disabled={training || activeRun?.status==="completed"} onClick={() => onTrain({ epochs, learning_rate: lr, batch_size: batch, optimizer, best_model_criterion: bestModelCriterion })}>{activeRun?.status==="running" ? <><Activity className="spin" /> Entrenando…</> : activeRun?.status==="completed" ? <><Check/> Corrida completada</> : <><Play /> Iniciar entrenamiento</>}</button>{activeRun?.status==="completed"&&<small>Crea una nueva corrida con + para probar otra configuración.</small>}</div>
+          <div className="run-config-footer"><button className="primary full" disabled={training || activeRun?.status==="completed"} onClick={() => onTrain({ epochs, learning_rate: lr, batch_size: batch, optimizer, best_model_criterion: bestModelCriterion })}>{activeRun?.status==="running" ? <><Activity className="spin" /> {t("app:training.trainingButton")}</> : activeRun?.status==="completed" ? <><Check/> {t("app:training.completedButton")}</> : <><Play /> {t("app:training.startButton")}</>}</button>{activeRun?.status==="completed"&&<small>{t("app:training.newRunHint")}</small>}</div>
         </aside>
       </div>
     </div>
@@ -638,6 +648,7 @@ function Metric({ label, value }: { label: string; value: string }) {
 function Blocked({ message }: { message: string }) { return <div className="blocked-state"><div><X size={32} /><h3>{message}</h3></div></div>; }
 
 function AppearanceMenu({ theme, setTheme, accent, setAccent }: { theme:Theme; setTheme:(value:Theme)=>void; accent:Accent; setAccent:(value:Accent)=>void }) {
+  const { t, i18n } = useTranslation(["app", "common"]);
   const [open,setOpen]=useState(false);
   const root=useRef<HTMLDivElement>(null);
   useEffect(()=>{
@@ -647,49 +658,53 @@ function AppearanceMenu({ theme, setTheme, accent, setAccent }: { theme:Theme; s
     document.addEventListener("pointerdown",close); document.addEventListener("keydown",escape);
     return()=>{document.removeEventListener("pointerdown",close);document.removeEventListener("keydown",escape)};
   },[open]);
-  const colors:Array<{id:Accent;label:string}>=[{id:"blue",label:"Azul"},{id:"orange",label:"Naranja"},{id:"green",label:"Verde"},{id:"violet",label:"Violeta"}];
+  const colors:Array<{id:Accent;label:string}>=[{id:"blue",label:t("common:blue")},{id:"orange",label:t("common:orange")},{id:"green",label:t("common:green")},{id:"violet",label:t("common:violet")}];
+  const languages:Array<{id:string;label:string}>=[{id:"en",label:"English"},{id:"es",label:"Español"}];
   return <div className="appearance" ref={root}>
-    <button className={`icon-button ${open?"active":""}`} onClick={()=>setOpen(value=>!value)} aria-label="Apariencia" aria-haspopup="menu" aria-expanded={open}><Palette/></button>
+    <button className={`icon-button ${open?"active":""}`} onClick={()=>setOpen(value=>!value)} aria-label={t("common:settings")} aria-haspopup="menu" aria-expanded={open}><Palette/></button>
     {open&&<div className="appearance-menu" role="menu">
-      <div className="appearance-title"><Palette/><span><strong>Apariencia</strong><small>Tema y color de acento</small></span></div>
-      <span className="menu-label">TEMA</span>
-      <div className="theme-options"><button className={theme==="dark"?"selected":""} onClick={()=>setTheme("dark")}><Moon/> Oscuro</button><button className={theme==="light"?"selected":""} onClick={()=>setTheme("light")}><Sun/> Claro</button></div>
-      <span className="menu-label">COLOR DE ACENTO</span>
+      <div className="appearance-title"><Palette/><span><strong>{t("common:settings")}</strong><small>{t("common:appearanceDescription")}</small></span></div>
+      <span className="menu-label">{t("common:language")}</span>
+      <div className="theme-options">{languages.map(lang=><button key={lang.id} className={i18n.language===lang.id?"selected":""} onClick={()=>i18n.changeLanguage(lang.id)}>{lang.label}</button>)}</div>
+      <span className="menu-label">{t("app:appearance.themeLabel")}</span>
+      <div className="theme-options"><button className={theme==="dark"?"selected":""} onClick={()=>setTheme("dark")}><Moon/> {t("common:dark")}</button><button className={theme==="light"?"selected":""} onClick={()=>setTheme("light")}><Sun/> {t("common:light")}</button></div>
+      <span className="menu-label">{t("app:appearance.accentColorLabel")}</span>
       <div className="accent-options">{colors.map(color=><button key={color.id} className={accent===color.id?"selected":""} data-color={color.id} onClick={()=>setAccent(color.id)} title={color.label} aria-label={color.label} aria-pressed={accent===color.id}><i/>{accent===color.id&&<Check/>}</button>)}</div>
     </div>}
   </div>;
 }
 
 function ProjectHub({ projects, onCreate, onOpen, onDelete, onOpenPath, theme, setTheme, accent, setAccent }: { projects: Project[]; onCreate: (n:string,d:string)=>void; onOpen:(p:Project)=>void; onDelete:(p:Project)=>void; onOpenPath:()=>void; theme:Theme; setTheme:(v:Theme)=>void; accent:Accent; setAccent:(v:Accent)=>void }) {
+  const { t } = useTranslation(["app", "common"]);
   const [creating, setCreating] = useState(false); const [name, setName] = useState(""); const [description, setDescription] = useState("");
-  return <div className="hub"><header className="hub-header"><div className="brand" title="ModelBuilder" aria-label="ModelBuilder"><span className="brand-mark"><BrainCircuit /></span></div><AppearanceMenu theme={theme} setTheme={setTheme} accent={accent} setAccent={setAccent}/></header>
-    <div className="hub-content"><div className="hero"><span className="eyebrow">TALLER LOCAL DE MACHINE LEARNING</span><h1>Construye, entrena y entiende<br/><em>tu propio modelo.</em></h1><p>Del dataset al checkpoint mediante un constructor visual conectado a PyTorch.</p><button className="primary" onClick={() => setCreating(true)}><Plus size={17}/> Nuevo proyecto</button></div>
-      <div className="section-head"><div><h2>Proyectos recientes</h2><p>{projects.length ? `${projects.length} proyectos en este equipo` : "Aún no hay proyectos"}</p></div><button className="secondary" onClick={onOpenPath}><FolderOpen size={16}/> Abrir carpeta</button></div>
+  return <div className="hub"><header className="hub-header"><div className="brand" title={t("common:appName")} aria-label={t("common:appName")}><span className="brand-mark"><BrainCircuit /></span></div><AppearanceMenu theme={theme} setTheme={setTheme} accent={accent} setAccent={setAccent}/></header>
+    <div className="hub-content"><div className="hero"><span className="eyebrow">{t("app:hub.heroEyebrow")}</span><h1>{t("app:hub.heroTitle")}<br/><em>{t("app:hub.heroTitleEmphasis")}</em></h1><p>{t("app:hub.heroSubtitle")}</p><button className="primary" onClick={() => setCreating(true)}><Plus size={17}/> {t("app:hub.newProjectButton")}</button></div>
+      <div className="section-head"><div><h2>{t("app:hub.recentProjects")}</h2><p>{projects.length ? t("app:hub.projectCount", { count: projects.length }) : t("app:hub.noProjects")}</p></div><button className="secondary" onClick={onOpenPath}><FolderOpen size={16}/> {t("app:hub.openFolder")}</button></div>
       {projects.length ? (
         <div className="project-table">
           {projects.map(p => (
             <div className="project-row-wrap" key={p.id}>
               <button className="project-row" onClick={() => onOpen(p)}>
                 <span className="project-icon"><Box/></span>
-                <span><strong>{p.name}</strong><small>{p.description || "Proyecto de ModelBuilder"}</small></span>
-                <span className="pill">{p.architecture?.toUpperCase() || "Sin configurar"}</span>
+                <span><strong>{p.name}</strong><small>{p.description || t("app:hub.projectFallbackDescription")}</small></span>
+                <span className="pill">{p.architecture?.toUpperCase() || t("app:hub.unconfigured")}</span>
                 <time>{new Date(p.updatedAt).toLocaleDateString()}</time>
               </button>
-              <button className="project-delete-btn" onClick={(e) => { e.stopPropagation(); onDelete(p); }} title="Eliminar proyecto" aria-label="Eliminar proyecto">
+              <button className="project-delete-btn" onClick={(e) => { e.stopPropagation(); onDelete(p); }} title={t("app:hub.deleteProjectTitle")} aria-label={t("app:hub.deleteProjectTitle")}>
                 <Trash2 size={16} />
               </button>
             </div>
           ))}
         </div>
       ) : (
-        <div className="empty-state"><Sparkles/><h3>Tu primer experimento empieza aquí</h3><p>Crea un proyecto y elige qué quieres aprender de tus datos.</p></div>
+        <div className="empty-state"><Sparkles/><h3>{t("app:hub.emptyTitle")}</h3><p>{t("app:hub.emptyHint")}</p></div>
       )}
     </div>
-    {creating && <div className="modal-backdrop"><form className="modal" onSubmit={e => { e.preventDefault(); if(name.trim()) { onCreate(name.trim(), description.trim()); setCreating(false); } }}><button type="button" className="modal-close" onClick={() => setCreating(false)}><X/></button><span className="eyebrow">NUEVO PROYECTO</span><h2>Prepara tu espacio</h2><label>Nombre<input autoFocus value={name} onChange={e=>setName(e.target.value)} placeholder="Clasificador de señales"/></label><label>Descripción opcional<textarea value={description} onChange={e=>setDescription(e.target.value)} placeholder="Qué quieres probar…"/></label><div className="modal-actions"><button type="button" className="secondary" onClick={()=>setCreating(false)}>Cancelar</button><button className="primary" disabled={!name.trim()}>Crear proyecto <ChevronRight size={16}/></button></div></form></div>}
+    {creating && <div className="modal-backdrop"><form className="modal" onSubmit={e => { e.preventDefault(); if(name.trim()) { onCreate(name.trim(), description.trim()); setCreating(false); } }}><button type="button" className="modal-close" onClick={() => setCreating(false)}><X/></button><span className="eyebrow">{t("app:hub.createProjectEyebrow")}</span><h2>{t("app:hub.createProjectTitle")}</h2><label>{t("app:hub.projectNameLabel")}<input autoFocus value={name} onChange={e=>setName(e.target.value)} placeholder={t("app:hub.projectNamePlaceholder")}/></label><label>{t("app:hub.projectDescriptionLabel")}<textarea value={description} onChange={e=>setDescription(e.target.value)} placeholder={t("app:hub.projectDescriptionPlaceholder")}/></label><div className="modal-actions"><button type="button" className="secondary" onClick={()=>setCreating(false)}>{t("common:cancel")}</button><button className="primary" disabled={!name.trim()}>{t("app:hub.createProjectButton")} <ChevronRight size={16}/></button></div></form></div>}
   </div>;
 }
 
-function computeVramEstimate(nodes: ModelNodeT[], dataset: DatasetSummary | null, totalVramBytes: number) {
+function computeVramEstimate(nodes: ModelNodeT[], dataset: DatasetSummary | null, totalVramBytes: number, t: (key: string, opts?: Record<string, string | number>) => string) {
   let baseMB = 350;
   let paramMemoryMB = nodes.length * 12;
   if (dataset) {
@@ -701,26 +716,28 @@ function computeVramEstimate(nodes: ModelNodeT[], dataset: DatasetSummary | null
   const totalGB = (totalVramBytes / (1024 * 1024 * 1024)).toFixed(2);
   const percent = ((estimatedMB / (totalVramBytes / (1024 * 1024))) * 100).toFixed(1);
   return {
-    text: `${estimatedMB} MB de ${totalGB} GB · ${percent}%`,
+    text: t("app:sidebar.vramEstimate", { estimated: estimatedMB, total: totalGB, percent }),
     percent: Math.min(100, Number(percent))
   };
 }
 
 function Sidebar({ step, setStep, completed, onHome, gpuInfo, nodes, dataset, theme, setTheme, accent, setAccent }: { step:Step; setStep:(s:Step)=>void; completed:Record<Step,boolean>; onHome:()=>void; gpuInfo: GpuInfo | null; nodes: ModelNodeT[]; dataset: DatasetSummary | null; theme:Theme; setTheme:(value:Theme)=>void; accent:Accent; setAccent:(value:Accent)=>void }) {
+  const { t } = useTranslation(["app", "common"]);
+  const steps = useSteps();
   const totalVram = gpuInfo?.total_vram || 12487661158;
   const gpuName = gpuInfo?.name || "NVIDIA GeForce RTX 3060";
-  const vramEst = computeVramEstimate(nodes, dataset, totalVram);
+  const vramEst = computeVramEstimate(nodes, dataset, totalVram, t);
 
   return <aside className="sidebar">
     <div className="sidebar-top">
-      <button className="brand sidebar-brand" onClick={onHome} title="Volver a proyectos" aria-label="Volver a proyectos"><span className="brand-mark"><BrainCircuit/></span></button>
+      <button className="brand sidebar-brand" onClick={onHome} title={t("app:sidebar.homeTitle")} aria-label={t("app:sidebar.homeTitle")}><span className="brand-mark"><BrainCircuit/></span></button>
       <AppearanceMenu theme={theme} setTheme={setTheme} accent={accent} setAccent={setAccent}/>
     </div>
-    <nav><small>FLUJO</small>{STEPS.map((s,i) => { const Icon=s.icon; return <button key={s.id} className={step===s.id?"active":""} onClick={()=>setStep(s.id)}><span className="step-index">{completed[s.id]?<Check size={13}/>:i+1}</span><Icon size={16}/><span>{s.label}</span></button>; })}</nav>
+    <nav><small>{t("app:sidebar.flowLabel")}</small>{steps.map((s,i) => { const Icon=s.icon; return <button key={s.id} className={step===s.id?"active":""} onClick={()=>setStep(s.id)}><span className="step-index">{completed[s.id]?<Check size={13}/>:i+1}</span><Icon size={16}/><span>{s.label}</span></button>; })}</nav>
     <div className="sidebar-bottom">
-      <div><Cpu size={16}/><span><strong>Motor local</strong><small>PyTorch · CPU/CUDA</small></span></div>
+      <div><Cpu size={16}/><span><strong>{t("app:sidebar.engineLabel")}</strong><small>{t("app:sidebar.engineSublabel")}</small></span></div>
       <div className="vram-widget">
-        <span className="vram-header">MEMORIA ESTIMADA</span>
+        <span className="vram-header">{t("app:sidebar.memoryLabel")}</span>
         <span className="vram-value">{vramEst.text}</span>
         <div className="vram-track">
           <div className="vram-fill" style={{ width: `${vramEst.percent}%` }} />
@@ -735,30 +752,37 @@ function Sidebar({ step, setStep, completed, onHome, gpuInfo, nodes, dataset, th
 }
 
 function ModelTask({ architecture, task, onChoose }: { architecture:Architecture|null; task:TaskId|null; onChoose:(a:Architecture,t:TaskId)=>void }) {
+  const { t } = useTranslation(["app", "catalog"]);
   const [filter,setFilter]=useState("all");
-  return <div className="page model-page"><div className="page-intro"><div><span className="eyebrow">PASO 1 DE 5</span><h2>¿Qué quieres construir?</h2><p>La tarea define tus datos, la salida y cómo mediremos el aprendizaje.</p></div></div>
-    <div className="filter-tabs">{["all","Tabla","Señales y series","Visión","Texto","Reconstrucción"].map(f=><button className={filter===f?"selected":""} onClick={()=>setFilter(f)} key={f}>{f==="all"?"Todas":f}</button>)}</div>
+  const categories = ["all", "Table", "Signals and series", "Vision", "Text", "Reconstruction"];
+  return <div className="page model-page"><div className="page-intro"><div><span className="eyebrow">{t("app:modelTask.stepEyebrow")}</span><h2>{t("app:modelTask.title")}</h2><p>{t("app:modelTask.subtitle")}</p></div></div>
+    <div className="filter-tabs">{categories.map(f=><button className={filter===f?"selected":""} onClick={()=>setFilter(f)} key={f}>{t(`app:taskCategory.${f}`)}</button>)}</div>
     <div className="architecture-grid">{(Object.entries(ARCHITECTURES) as [Architecture,typeof ARCHITECTURES[Architecture]][]).map(([id,a]) => {
-      const visible=a.tasks.filter(t=>filter==="all"||TASKS[t].category===filter); if(!visible.length)return null;
-      return <article className={`architecture-card ${architecture===id?"chosen":""}`} key={id}><div className="arch-icon"><BrainCircuit/></div><div><span className="eyebrow">ARQUITECTURA</span><h3>{a.name}</h3><p>{a.description}</p></div><div className="task-list">{visible.map(t=><button key={t} className={task===t?"selected":""} onClick={()=>onChoose(id,t)}><span><strong>{TASKS[t].name}</strong><small>{TASKS[t].input} → {TASKS[t].output}</small></span><ChevronRight size={15}/></button>)}</div></article>;
-    })}</div>{task && <div className="contract-panel"><div><small>ENTRADA COMPATIBLE</small><strong>{TASKS[task].format}</strong></div><div><small>MÉTRICA PRINCIPAL</small><strong>{TASKS[task].metric}</strong></div><div><small>MODALIDAD</small><strong>{TASKS[task].modality}</strong></div></div>}
+      const visible=a.tasks.filter(taskId=>filter==="all"||t(`catalog:tasks.${taskId}.category`)===t(`app:taskCategory.${filter}`)); if(!visible.length)return null;
+      return <article className={`architecture-card ${architecture===id?"chosen":""}`} key={id}><div className="arch-icon"><BrainCircuit/></div><div><span className="eyebrow">{t("app:modelTask.architectureEyebrow")}</span><h3>{t(`catalog:architectures.${id}.name`)}</h3><p>{t(`catalog:architectures.${id}.description`)}</p></div><div className="task-list">{visible.map(taskId=><button key={taskId} className={task===taskId?"selected":""} onClick={()=>onChoose(id,taskId)}><span><strong>{t(`catalog:tasks.${taskId}.name`)}</strong><small>{t(`catalog:tasks.${taskId}.input`)} → {t(`catalog:tasks.${taskId}.output`)}</small></span><ChevronRight size={15}/></button>)}</div></article>;
+    })}</div>{task && <div className="contract-panel"><div><small>{t("app:contract.compatibleInput")}</small><strong>{t(`catalog:tasks.${task}.format`)}</strong></div><div><small>{t("app:contract.mainMetric")}</small><strong>{t(`catalog:tasks.${task}.metric`)}</strong></div><div><small>{t("app:contract.modality")}</small><strong>{t(`catalog:tasks.${task}.modality`)}</strong></div></div>}
   </div>;
 }
 
-function DataStep({ task, dataset, onGenerate, onImport, onApplyPipeline, onSplitsChange }: {
+function DataStep({ project, task, dataset, onDownload, onImport, onChooseAnother, onApplyPipeline, onSplitsChange }: {
+  project: Project | null;
   task: TaskId | null;
   dataset: DatasetSummary | null;
-  onGenerate: (opts?: DatasetOptions) => Promise<void>;
+  onDownload: (datasetId: string, opts?: DatasetOptions) => Promise<void>;
   onImport: (path: string, opts?: DatasetOptions) => Promise<void>;
+  onChooseAnother: () => void;
   onApplyPipeline: (pipeline: DataPipeline) => Promise<void>;
   onSplitsChange: (splits: DatasetSummary["splits"]) => void;
 }) {
+  const { t } = useTranslation(["app", "common", "catalog"]);
   const [path, setPath] = useState(dataset?.sourcePath || "");
   const [loading, setLoading] = useState(false);
   const [progress, setProgress] = useState(0);
   const [loadingLabel, setLoadingLabel] = useState("");
   const [dataView,setDataView]=useState<"preview"|"charts">("preview");
   const [analytics,setAnalytics]=useState<DatasetAnalytics|undefined>(dataset?.analytics);
+  const [catalog,setCatalog]=useState<HuggingFaceDataset[]>([]);
+  const [catalogError,setCatalogError]=useState("");
   const isImage = task ? (task.startsWith("image") || task.includes("segmentation")) : false;
   const isText = task?.startsWith("text.") || false;
 
@@ -782,8 +806,16 @@ function DataStep({ task, dataset, onGenerate, onImport, onApplyPipeline, onSpli
     }
   }, [dataset, isImage]);
   useEffect(()=>{if(!dataset||!task)return;setAnalytics(dataset.analytics);if(!dataset.analytics)backend<DatasetAnalytics>("data.analytics",{dataset,task_id:task}).then(setAnalytics).catch(()=>{})},[dataset?.id,dataset?.revision,task]);
+  useEffect(()=>{
+    if(dataset?.source!=="huggingface")return;
+    backend<{exists:boolean}>("data.exists",{dataset}).then(result=>{if(!result.exists)onChooseAnother()}).catch(()=>onChooseAnother());
+  },[dataset?.id,dataset?.revision]);
+  useEffect(()=>{
+    if(!task||!project){setCatalog([]);return}
+    backend<HuggingFaceDataset[]>("data.catalog",{project,task_id:task}).then(items=>{setCatalog(items);setCatalogError("")}).catch(error=>setCatalogError(translateBackendError(String(error))));
+  },[task,project?.id,dataset?.id]);
 
-  if (!task) return <Blocked message="Selecciona primero una tarea y arquitectura." />;
+  if (!task) return <Blocked message={t("app:blocked.selectTaskArchitecture")} />;
 
   const trainCount = dataset ? Math.round(dataset.samples * dataset.splits.train / 100) : 0;
   const validationCount = dataset ? Math.round(dataset.samples * dataset.splits.validation / 100) : 0;
@@ -803,51 +835,43 @@ function DataStep({ task, dataset, onGenerate, onImport, onApplyPipeline, onSpli
   const browseFolder=async()=>{
     const selectedPath=await pickDatasetDirectory();
     if(selectedPath)setPath(selectedPath);
-    else if(!isTauri()) window.alert("El selector de carpetas está disponible en la aplicación de escritorio. En navegador, escribe una ruta accesible por el servidor local.");
+    else if(!isTauri()) window.alert(t("app:data.browseNotTauri"));
   };
-
-  const handleApplyOptions = () => {
-    if (dataset?.source === "imported" && (path || dataset.sourcePath)) {
-      runLoading("Aplicando propiedades…",()=>onImport(path || dataset.sourcePath!, currentOpts));
-    } else {
-      runLoading("Regenerando datos…",()=>onGenerate(currentOpts));
-    }
-  };
-
-  const reloadData=()=>dataset?.source==="imported"&&(path||dataset.sourcePath)
-    ? runLoading("Volviendo a cargar el dataset…",()=>onImport(path||dataset.sourcePath!,currentOpts))
-    : runLoading("Regenerando el dataset…",()=>onGenerate(currentOpts));
 
   return (
     <div className="page data-page">
       {loading&&<div className="loading-banner"><RefreshCw className="spin"/><span>{loadingLabel}</span><div><i style={{width:`${progress}%`}}/></div><strong>{progress}%</strong></div>}
       <div className="page-intro">
         <div>
-          <span className="eyebrow">PASO 2 DE 5</span>
-          <h2>Prepara los datos</h2>
+          <span className="eyebrow">{t("app:data.stepEyebrow")}</span>
+          <h2>{t("app:data.title")}</h2>
         </div>
       </div>
 
       {!dataset ? (
-        <div className="source-grid">
+        <div className="dataset-source-layout">
+          <section className="hf-catalog">
+            <div className="hf-catalog-heading"><div><Cloud/><span><span className="eyebrow">{t("app:data.hfEyebrow")}</span><h3>{t("app:data.hfTitle")}</h3><p>{t("app:data.hfSubtitle")}</p></span></div></div>
+            {catalogError&&<div className="catalog-error"><AlertCircle/>{catalogError}</div>}
+            <div className="hf-dataset-list">
+              {catalog.map(item=><article className="hf-dataset-card" key={item.id}>
+                <div className="hf-dataset-copy"><div className="hf-dataset-title"><Database/><div><h4>{item.name}</h4><a href={`https://huggingface.co/datasets/${item.repoId}`} target="_blank" rel="noreferrer">{item.repoId}</a></div></div><p>{item.description}</p><div className="hf-dataset-meta"><span>{formatBytes(item.sizeBytes)}</span><span>{item.license}</span>{item.installed?<span className="installed"><CheckCircle2/>{t("app:data.installed")}</span>:item.cached?<span className="cached"><Save/>{t("app:data.cached")}</span>:<span><Cloud/>{t("app:data.remote")}</span>}</div></div>
+                <button className="primary" disabled={loading} onClick={()=>runLoading(item.installed?t("app:data.openingDataset"):item.cached?t("app:data.preparingCached"):t("app:data.downloadingDataset",{name:item.name}),()=>onDownload(item.id,item.defaultOptions))}>{item.installed?<><Check/> {t("app:data.useDataset")}</>:item.cached?<><Database/> {t("app:data.prepareDataset")}</>:<><Download/> {t("app:data.downloadDataset")}</>}</button>
+              </article>)}
+            </div>
+          </section>
+
           <article className="source-card">
             <Upload />
-            <h3>Importar datos propios</h3>
-            <p>Usa el formato compatible y valida cada muestra antes de crear el modelo.</p>
+            <h3>{t("app:data.importTitle")}</h3>
+            <p>{t("app:data.importSubtitle")}</p>
             <label className="app-field">
-              <span>Ruta local</span>
-              <div className="path-picker"><input value={path} onChange={e => setPath(e.target.value)} placeholder="/ruta/al/dataset" /><button type="button" className="secondary" onClick={browseFolder}><FolderOpen size={15}/> Buscar</button></div>
+              <span>{t("app:data.localPathLabel")}</span>
+              <div className="path-picker"><input value={path} onChange={e => setPath(e.target.value)} placeholder={t("app:data.pathPlaceholder")} /><button type="button" className="secondary" onClick={browseFolder}><FolderOpen size={15}/> {t("app:data.browse")}</button></div>
             </label>
-            <button className="secondary" disabled={!path||loading} onClick={() => runLoading("Importando y validando datos…",()=>onImport(path, currentOpts))}>
-              Inspeccionar e importar
+            <button className="secondary" disabled={!path||loading} onClick={() => runLoading(t("app:data.importLoading"),()=>onImport(path, currentOpts))}>
+              {t("app:data.inspectImport")}
             </button>
-          </article>
-
-          <article className="source-card featured">
-            <WandSparkles />
-            <h3>Generar muestra sintética</h3>
-            <p>Dataset reproducible diseñado para esta tarea. Seed 42 y splits 70/15/15.</p>
-            <button className="primary" disabled={loading} onClick={() => runLoading("Generando datos sintéticos…",()=>onGenerate(currentOpts))}>Generar ahora</button>
           </article>
         </div>
       ) : (
@@ -855,14 +879,14 @@ function DataStep({ task, dataset, onGenerate, onImport, onApplyPipeline, onSpli
           <div className="data-main">
             <DataPipelineEditor task={task} dataset={dataset} onApply={onApplyPipeline}/>
             <article className="panel">
-              <div className="data-view-header"><span className="eyebrow">EXPLORADOR DE DATOS</span><div className="data-view-switch" role="tablist" aria-label="Vista del dataset"><button role="tab" aria-selected={dataView==="preview"} className={dataView==="preview"?"active":""} onClick={()=>setDataView("preview")}>Muestras</button><button role="tab" aria-selected={dataView==="charts"} className={dataView==="charts"?"active":""} onClick={()=>setDataView("charts")}>Gráficas</button></div></div>
+              <div className="data-view-header"><span className="eyebrow">{t("app:data.explorerEyebrow")}</span><div className="data-view-switch" role="tablist" aria-label={t("app:data.viewAria")}><button role="tab" aria-selected={dataView==="preview"} className={dataView==="preview"?"active":""} onClick={()=>setDataView("preview")}>{t("app:data.samplesTab")}</button><button role="tab" aria-selected={dataView==="charts"} className={dataView==="charts"?"active":""} onClick={()=>setDataView("charts")}>{t("app:data.chartsTab")}</button></div></div>
 
               {dataView==="charts"?<DataCharts analytics={analytics} task={task}/>:dataset.preview?.type === "image" && dataset.preview.items?.length ? (
                 <div className="preview-image-grid">
                   {dataset.preview.items.slice(0,4).map((item, i) => (
                     <div className="preview-image-card" key={i}>
-                      <div className={`dataset-image-pair ${item.targetUrl ? "with-target" : ""}`}><figure><img src={item.url} alt={item.label || `Muestra ${i + 1}`} /><figcaption>Entrada</figcaption></figure>{item.targetUrl&&<figure><img src={item.targetUrl} alt={item.targetLabel || "Objetivo"} /><figcaption>{item.targetLabel || "Salida"}</figcaption></figure>}</div>
-                      <span className="preview-image-label">Muestra #{i + 1}</span>
+                      <div className={`dataset-image-pair ${item.targetUrl ? "with-target" : ""}`}><figure><img src={item.url} alt={item.label || t("app:data.sampleLabel", { number: i + 1 })} /><figcaption>{t("app:data.inputCaption")}</figcaption></figure>{item.targetUrl&&<figure><img src={item.targetUrl} alt={item.targetLabel || t("app:data.targetCaption")} /><figcaption>{item.targetLabel || t("app:data.outputCaption")}</figcaption></figure>}</div>
+                      <span className="preview-image-label">{t("app:data.sampleLabel", { number: i + 1 })}</span>
                     </div>
                   ))}
                 </div>
@@ -899,24 +923,24 @@ function DataStep({ task, dataset, onGenerate, onImport, onApplyPipeline, onSpli
             </article>
 
             <article className="panel">
-              <span className="eyebrow">PARTICIONES DE DATOS</span>
-              <SplitControl splits={dataset.splits} onChange={onSplitsChange} />
+              <span className="eyebrow">{t("app:data.partitionsEyebrow")}</span>
+              <SplitControl splits={dataset.splits} onChange={onSplitsChange} t={t} />
               <div className="split-legend">
-                <span><i className="cyan" /> Train <strong>{trainCount}</strong></span>
-                <span><i className="amber" /> Validation <strong>{validationCount}</strong></span>
-                <span><i className="green" /> Test <strong>{dataset.samples - trainCount - validationCount}</strong></span>
+                <span><i className="cyan" /> {t("common:train")} <strong>{trainCount}</strong></span>
+                <span><i className="amber" /> {t("common:validation")} <strong>{validationCount}</strong></span>
+                <span><i className="green" /> {t("common:test")} <strong>{dataset.samples - trainCount - validationCount}</strong></span>
               </div>
             </article>
           </div>
 
-          <aside className="data-sidebar"><div className="panel data-config-panel"><span className="eyebrow">PROPIEDADES DEL NODO</span><div id="data-node-inspector"/>{dataset.classes&&<div className="data-classes-section"><span className="eyebrow">CLASES ({dataset.classes.length})</span><div className="class-tags">{dataset.classes.map(c=><span key={c}>{c}</span>)}</div></div>}</div></aside>
+          <aside className="data-sidebar"><div className="panel data-config-panel"><span className="eyebrow">{t("app:data.nodePropertiesEyebrow")}</span>{dataset.source==="huggingface"&&<div className="active-hf-source"><Database/><span><strong>{catalog.find(item=>item.id===dataset.catalogId)?.name||dataset.catalogId}</strong><small>{dataset.repoId}</small><small>{dataset.cacheStatus==="project"?t("app:data.loadedFromProject"):dataset.cacheStatus==="disk"?t("app:data.loadedFromCache"):t("app:data.downloadComplete")}</small></span></div>}<button className="secondary dataset-change-button" onClick={onChooseAnother}><Database/> {t("app:data.changeDataset")}</button><div id="data-node-inspector"/>{dataset.classes&&<div className="data-classes-section"><span className="eyebrow">{t("app:data.classesEyebrow", { count: dataset.classes.length })}</span><div className="class-tags">{dataset.classes.map(c=><span key={c}>{c}</span>)}</div></div>}</div></aside>
         </div>
       )}
     </div>
   );
 }
 
-function SplitControl({ splits, onChange, disabled=false }: { splits: DatasetSummary["splits"]; onChange: (value: DatasetSummary["splits"]) => void; disabled?: boolean }) {
+function SplitControl({ splits, onChange, disabled=false, t }: { splits: DatasetSummary["splits"]; onChange: (value: DatasetSummary["splits"]) => void; disabled?: boolean; t: (key: string, opts?: Record<string, string | number>) => string }) {
   const bar = useRef<HTMLDivElement>(null);
   const dragging = useRef<"train" | "validation" | null>(null);
   const minimum = 5;
@@ -974,7 +998,7 @@ function SplitControl({ splits, onChange, disabled=false }: { splits: DatasetSum
         onPointerDown={event => { if(disabled)return;event.preventDefault(); dragging.current = "train"; }}
         onKeyDown={event => keyboard("train", event)}
         role="slider"
-        aria-label="Límite entre entrenamiento y validación"
+        aria-label={t("app:split.trainValidationAria")}
         aria-valuemin={minimum}
         aria-valuemax={100 - splits.test - minimum}
         aria-valuenow={splits.train}
@@ -986,7 +1010,7 @@ function SplitControl({ splits, onChange, disabled=false }: { splits: DatasetSum
         onPointerDown={event => { if(disabled)return;event.preventDefault(); dragging.current = "validation"; }}
         onKeyDown={event => keyboard("validation", event)}
         role="slider"
-        aria-label="Límite entre validación y prueba"
+        aria-label={t("app:split.validationTestAria")}
         aria-valuemin={splits.train + minimum}
         aria-valuemax={100 - minimum}
         aria-valuenow={splits.train + splits.validation}
@@ -1002,6 +1026,8 @@ function Inference({ task, dataset, run, runName, onInfer }: {
   runName:string;
   onInfer: (payload: { mode: string; values?: string; index?: number }) => Promise<Record<string, unknown>>;
 }) {
+  const { t } = useTranslation(["app", "common", "catalog"]);
+  const taskName = t(`catalog:tasks.${task}.name`);
   const isImageTask = task.startsWith("image") || task.includes("segmentation");
   const isSegmentation = task.includes("segmentation");
   const isTabularTask = task.startsWith("tabular");
@@ -1040,73 +1066,69 @@ function Inference({ task, dataset, run, runName, onInfer }: {
       if (res.trueLabel !== undefined && res.trueLabel !== null) setTrueLabel(String(res.trueLabel));
       else if (mode === "manual") setTrueLabel(null);
     } catch (e) {
-      setResult({ error: String(e) });
+      setResult({ error: translateBackendError(String(e)) });
     } finally {
       setBusy(false);
     }
   };
 
-  if (!run) return <Blocked message="Entrena el modelo o carga un checkpoint compatible antes de inferir." />;
+  if (!run) return <Blocked message={t("app:inference.blockedMessage")} />;
   const prediction=result?.prediction;
   const comparisonAvailable=trueLabel!==null&&prediction!==undefined;
   const predictionCorrect=comparisonAvailable&&String(prediction).trim().toLowerCase()===String(trueLabel).trim().toLowerCase();
-  const manualModeLabel=isImageTask ? "Cargar imagen" : isTextTask ? "Texto" : isTabularTask ? "Valores" : "Secuencia";
-  const manualModeHelp=isImageTask
-    ? `Una imagen se ajustará a ${dataset.inputShape.slice(1).join(" × ") || "la resolución del modelo"}.`
-    : isTextTask
-      ? `Escribe texto libre; se tokenizará con el vocabulario del dataset y se ajustará a ${dataset.inputShape[0]} tokens.`
-      : isTabularTask
-      ? `Escribe ${dataset.inputShape[0]} valores separados por comas.`
-      : `Introduce una secuencia compatible con ${dataset.inputShape.join(" × ")}.`;
+  const manualType=isImageTask ? "image" : isTextTask ? "text" : isTabularTask ? "tabular" : "sequence";
+  const manualModeLabel=t(`app:inference.manualType.${manualType}`);
+  const manualModeHelp=t(`app:inference.manualHelp.${manualType}`, { shape: dataset.inputShape.slice(manualType==="image"?1:0).join(" × "), length: dataset.inputShape[0], count: dataset.inputShape[0] });
   const changeMode=(next:"test"|"manual")=>{setMode(next);setResult(null);setTrueLabel(null);setInputPreview(next==="manual"?manualImageB64:"")};
+  const outputCaption=isSegmentation ? t("app:inference.outputImageCaption.segmentation") : t("app:inference.outputImageCaption.default");
 
   return (
     <div className="page inference-page">
       <div className="page-intro">
         <div>
-          <span className="eyebrow">PASO 5 DE 5</span>
-          <h2>Prueba tu modelo</h2>
-          <p>{TASKS[task].name} · checkpoint de {runName}</p>
+          <span className="eyebrow">{t("app:inference.stepEyebrow")}</span>
+          <h2>{t("app:inference.title")}</h2>
+          <p>{taskName} · {t("app:inference.checkpointOf", { runName })}</p>
         </div>
       </div>
 
       <article className={`panel inference-card ${isSegmentation?"segmentation-inference":""} ${comparisonAvailable?(predictionCorrect?"correct":"incorrect"):""}`}>
         <div className="inference-workbench-header">
-          <div><span className="eyebrow">INFERENCIA</span><h3>Elige una entrada y prueba el modelo</h3></div>
-          <span className="input-shape">Entrada: {dataset.inputShape.join(" × ")}</span>
+          <div><span className="eyebrow">{t("common:inference")}</span><h3>{t("app:inference.chooseInput")}</h3></div>
+          <span className="input-shape">{t("app:inference.inputShape", { shape: dataset.inputShape.join(" × ") })}</span>
         </div>
 
-        <div className="inference-mode-selector" role="tablist" aria-label="Origen de los datos de inferencia">
+        <div className="inference-mode-selector" role="tablist" aria-label={t("app:inference.dataSourceAria")}>
           <button type="button" role="tab" aria-selected={mode === "test"} className={mode === "test" ? "active" : ""} onClick={() => changeMode("test")}>
-            <Database size={15}/><span>Muestra eval.</span><small>Test</small>
+            <Database size={15}/><span>{t("app:inference.mode.test")}</span><small>{t("app:inference.mode.testSmall")}</small>
           </button>
           <button type="button" role="tab" aria-selected={mode === "manual"} className={mode === "manual" ? "active" : ""} onClick={() => changeMode("manual")}>
-            {isImageTask ? <Upload size={15}/> : <Activity size={15}/>}<span>{manualModeLabel}</span><small>Manual</small>
+            {isImageTask ? <Upload size={15}/> : <Activity size={15}/>}<span>{manualModeLabel}</span><small>{t("app:inference.mode.manualSmall")}</small>
           </button>
         </div>
 
         <div className={`inference-work-area ${isImageTask && inputPreview ? "has-image-preview" : ""}`}>
           <div className="inference-middle">
           {result ? <div className="inference-results-inline">
-          <div className="inference-section-heading result-heading"><div><span className="eyebrow">RESULTADO</span><h3>{result?.source ? String(result.source) : "Predicción del modelo"}</h3></div>{result&&<span className={`result-status ${comparisonAvailable?(predictionCorrect?"correct":"incorrect"):""}`}>{comparisonAvailable?(predictionCorrect?"Correcta":"Revisar"):"Calculada"}</span>}</div>
-          {result.error ? <div className="inference-error-state"><AlertCircle/><span><strong>No se pudo calcular la predicción</strong><small>{String(result.error)}</small></span></div> : <>
-              {comparisonAvailable&&<div className={`prediction-feedback ${predictionCorrect?"correct":"incorrect"}`}>{predictionCorrect?<CheckCircle2/>:<AlertCircle/>}<span><strong>{predictionCorrect?"Predicción correcta":"Predicción incorrecta"}</strong><small>{predictionCorrect?"Coincide con la etiqueta esperada.":`Se esperaba ${trueLabel}.`}</small></span></div>}
+          <div className="inference-section-heading result-heading"><div><span className="eyebrow">{t("app:inference.resultEyebrow")}</span><h3>{result?.source ? String(result.source) : t("app:inference.predictionHeading")}</h3></div>{result&&<span className={`result-status ${comparisonAvailable?(predictionCorrect?"correct":"incorrect"):""}`}>{comparisonAvailable?(predictionCorrect?t("app:inference.status.correct"):t("app:inference.status.check")):t("app:inference.status.calculated")}</span>}</div>
+          {result.error ? <div className="inference-error-state"><AlertCircle/><span><strong>{t("app:inference.cannotCalculate")}</strong><small>{String(result.error)}</small></span></div> : <>
+              {comparisonAvailable&&<div className={`prediction-feedback ${predictionCorrect?"correct":"incorrect"}`}>{predictionCorrect?<CheckCircle2/>:<AlertCircle/>}<span><strong>{predictionCorrect?t("app:inference.predictionCorrect"):t("app:inference.predictionIncorrect")}</strong><small>{predictionCorrect?t("app:inference.matchesExpected"):t("app:inference.expectedLabel", { label: trueLabel })}</small></span></div>}
               <div className="prediction">
-                <small>PREDICCIÓN DEL MODELO</small>
-                <strong>{String(result.prediction ?? "Sin resultado")}</strong>
-                {trueLabel && <span className="true-val-subtitle">Etiqueta real esperada: <strong>{trueLabel}</strong></span>}
+                <small>{t("app:inference.predictionLabel")}</small>
+                <strong>{String(result.prediction ?? t("app:inference.noResult"))}</strong>
+                {trueLabel && <span className="true-val-subtitle">{t("app:inference.trueLabel", { label: trueLabel })}</span>}
               </div>
 
               {isImageTask && inputPreview && (
                 result.outputPreview ? (
                   <div className="inference-visual-pair">
-                    <figure><figcaption>Imagen de entrada</figcaption><img src={inputPreview} alt="Entrada usada en la inferencia" /></figure>
-                    <figure><figcaption>{isSegmentation ? "Máscara generada" : "Salida del modelo"}</figcaption><img src={String(result.outputPreview)} alt="Salida generada por el modelo" /></figure>
+                    <figure><figcaption>{t("app:inference.inputImageCaption")}</figcaption><img src={inputPreview} alt={t("app:inference.inputImageCaption")} /></figure>
+                    <figure><figcaption>{outputCaption}</figcaption><img src={String(result.outputPreview)} alt={outputCaption} /></figure>
                   </div>
                 ) : (
                   <figure className="inference-input-visual">
-                    <figcaption>Imagen de entrada</figcaption>
-                    <img src={inputPreview} alt="Entrada usada en la inferencia" />
+                    <figcaption>{t("app:inference.inputImageCaption")}</figcaption>
+                    <img src={inputPreview} alt={t("app:inference.inputImageCaption")} />
                   </figure>
                 )
               )}
@@ -1115,7 +1137,7 @@ function Inference({ task, dataset, run, runName, onInfer }: {
                 <div className="probabilities">
                   {result.probabilities.map((p, i) => (
                     <div key={i}>
-                      <span>{dataset.classes?.[i] || `Clase ${i}`}</span>
+                      <span>{dataset.classes?.[i] || t("app:inference.classFallback", { index: i })}</span>
                       <div>
                         <i style={{ width: `${Number(p) * 100}%` }} />
                       </div>
@@ -1125,9 +1147,9 @@ function Inference({ task, dataset, run, runName, onInfer }: {
                 </div>
               )}
             </>}
-        </div> : mode === "test" ? <div className="inference-preparation"><div className="source-copy"><Database/><span><strong>Conjunto reservado de evaluación</strong><small>Se elegirá una muestra aleatoria que el modelo no utilizó durante el entrenamiento.</small></span></div><div className="awaiting-result"><BarChart3/><span>La entrada y el resultado aparecerán aquí al ejecutar la inferencia.</span></div></div> : <div className="inference-preparation"><div className="source-copy"><Activity/><span><strong>{manualModeLabel}</strong><small>{manualModeHelp}</small></span></div>{isImageTask?<div className="image-upload-box"><label className="input-dropzone"><Upload size={24}/><span>Selecciona o arrastra un archivo</span><small>JPG, PNG, WebP o BMP</small><input type="file" accept="image/*" onChange={handleFileUpload}/></label>{inputPreview&&<div className="image-preview-container"><img src={inputPreview} alt="Imagen a inferir"/></div>}</div>:<label className="manual-values-field"><span>{manualModeHelp}</span><textarea value={manualValues} onChange={e=>setManualValues(e.target.value)} placeholder={isTextTask?"Escribe aquí una frase o párrafo…":"ej. 0.12, 0.45, -0.8, ..."}/></label>}</div>}
+        </div> : mode === "test" ? <div className="inference-preparation"><div className="source-copy"><Database/><span><strong>{t("app:inference.testSourceTitle")}</strong><small>{t("app:inference.testSourceHint")}</small></span></div><div className="awaiting-result"><BarChart3/><span>{t("app:inference.awaitingTitle")}</span></div></div> : <div className="inference-preparation"><div className="source-copy"><Activity/><span><strong>{manualModeLabel}</strong><small>{manualModeHelp}</small></span></div>{isImageTask?<div className="image-upload-box"><label className="input-dropzone"><Upload size={24}/><span>{t("app:inference.uploadHint")}</span><small>{t("app:inference.uploadFormats")}</small><input type="file" accept="image/*" onChange={handleFileUpload}/></label>{inputPreview&&<div className="image-preview-container"><img src={inputPreview} alt={manualModeLabel}/></div>}</div>:<label className="manual-values-field"><span>{manualModeHelp}</span><textarea value={manualValues} onChange={e=>setManualValues(e.target.value)} placeholder={isTextTask?t("app:inference.textPlaceholder"):t("app:inference.tabularPlaceholder")}/></label>}</div>}
           </div>
-          <button className="primary inference-run-button" onClick={execute} disabled={busy || (mode === "manual" && isImageTask && !manualImageB64)}><Play size={16}/> {busy ? "Calculando predicción…" : mode === "test" ? "Elegir muestra y calcular" : "Ejecutar inferencia"}</button>
+          <button className="primary inference-run-button" onClick={execute} disabled={busy || (mode === "manual" && isImageTask && !manualImageB64)}><Play size={16}/> {busy ? t("app:inference.runButton.calculating") : mode === "test" ? t("app:inference.runButton.test") : t("app:inference.runButton.manual")}</button>
         </div>
       </article>
     </div>

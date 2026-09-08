@@ -98,33 +98,29 @@ Por defecto 70/15/15, ajustables arrastrando los límites. Nunca se crean splits
 
 La partición actual es aleatoria con semilla (opcionalmente estratificada para clasificación tabular e imágenes). Los índices exactos se guardan en el manifiesto del dataset para poder reproducir la división.
 
-## 8. Generadores sintéticos por tarea
+## 8. Catálogo público por tarea
 
-Los generadores están ligados a la tarea, no a la familia arquitectónica. El mismo generador de imágenes sirve para `cnn`, `vit` y `autoencoder`; el mismo generador de secuencias sirve para `cnn1d`, `lstm` y `transformer`. Todos guardan `seed` y parámetros en el manifiesto.
+El menú Datos filtra estas fuentes por tarea. Los tamaños son la descarga aproximada mostrada antes de iniciar; la materialización `.pt` puede ocupar otra cantidad por resolución, ventana o límite de muestras. Cada adaptador usa una revisión fijada y no ejecuta código remoto.
 
-| Tarea | Generador y etiqueta correcta | Controles principales |
-| --- | --- | --- |
-| `tabular.classification` | Blobs lineales con 3 clases | N, F, K, separación, ruido, balance |
-| `tabular.regression` | Combinación lineal de 3 features + ruido | N, F, ruido |
-| `tabular.reconstruction` | Mismo generador tabular; target = entrada | N, F |
-| `image.classification` | Formas geométricas (círculo, cuadrado, triángulo) | N, resolución, gris/RGB, K, ruido |
-| `image.regression` | Área del objeto como target | N, resolución, ruido |
-| `image.reconstruction` | Mismo generador de imágenes; target = entrada | N, resolución |
-| `sequence.classification` | Ondas seno/coseno/lineal con 3 frecuencias | N, T, F, clases, ruido |
-| `sequence.regression` | Media absoluta de la primera variable como target | N, T, F, ruido |
-| `sequence.forecast` | Seno desplazado como horizonte | N, T, P, F, ruido |
-| `text.classification` | Tokens aleatorios; clase determinada por primer token | N, max_length, vocab_size |
-| `text.language_model` | Mismo corpus; target = token siguiente | N, max_length, vocab_size |
-| `image.segmentation.binary` | Objeto sobre fondo con máscara 0/1 | N, H/W, objetos, ruido |
-| `image.segmentation.multiclass` | Círculos/cuadrados/triángulos + fondo | N, H/W, K, ruido |
+| Dataset | Descarga | Tareas compatibles |
+| --- | ---: | --- |
+| Iris (`scikit-learn/iris`) | 5 KB | `tabular.classification` |
+| Smart Home Energy | 1.08 MB | `tabular.regression`, `tabular.reconstruction`, `sequence.regression`, `sequence.forecast` |
+| ECG Arrhythmia | 1.96 MB | `sequence.classification` |
+| MNIST | 17.32 MB | `image.classification`, `image.reconstruction` |
+| UTKFace Cropped | 101.69 MB | `image.regression` |
+| Emotion | 1.23 MB | `text.classification` |
+| WikiText-2 | 7.39 MB | `text.language_model` |
+| MoNuSeg | 87.90 MB | `image.segmentation.binary` |
+| MoNuSAC 2020 | 264.61 MB | `image.segmentation.multiclass` |
 
-Los generadores no codifican la etiqueta en el nombre de archivo ni en un ID usado como feature. Los corpus pequeños sirven para verificar el flujo, no para chat de propósito general.
+El backend conserva `data.generate` para compatibilidad con proyectos y pruebas anteriores, pero ya no se ofrece como fuente nueva en la interfaz.
 
 ## 9. Manifiesto de datos
 
-El manifiesto guarda: `dataset_id`, `task_id`, `architecture`, `inputShape`, `targetShape`, `classes`, `columns`, `partitions` (índices train/validation/test), `options` (seed, parámetros del generador o rutas de importación) y la ruta al tensor `dataset.pt`.
+El manifiesto guarda: `id`, `revision`, `task_id`, `source`, `inputShape`, `outputShape`, `classes`, `splits`, `split_indices`, `options`, procedencia (`catalogId`, repositorio, revisión y licencia) y la ruta al tensor `dataset.pt`.
 
-Los datasets se materializan completos como tensores en disco; se cargan por demanda durante el entrenamiento. Si cambian las fuentes externas, hay que reimportar o regenerar el dataset.
+Los datasets se materializan completos como tensores en disco y se cargan por demanda durante el entrenamiento. Antes de descargar, el backend exige tanto un manifiesto compatible como el archivo físico; si falta, reutiliza la caché global cuando exista o vuelve a descargar la revisión fijada.
 
 ## 10. Errores con mensajes específicos
 

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from .errors import BackendError
+
 TASKS = {
     "tabular.classification": {"architectures": ["mlp"], "objective": "classification", "metric": "accuracy"},
     "tabular.regression": {"architectures": ["mlp"], "objective": "regression", "metric": "mse"},
@@ -19,7 +21,7 @@ TASKS = {
 
 def task_spec(task_id: str) -> dict:
     if task_id not in TASKS:
-        raise ValueError(f"Tarea no soportada: {task_id}")
+        raise BackendError("CATALOG_TASK_UNSUPPORTED", task_id)
     return TASKS[task_id]
 
 
@@ -27,4 +29,4 @@ def validate_compatibility(task_id: str, architecture: str) -> None:
     spec = task_spec(task_id)
     if architecture not in spec["architectures"]:
         choices = ", ".join(spec["architectures"])
-        raise ValueError(f"La arquitectura {architecture} no admite {task_id}; opciones: {choices}")
+        raise BackendError("CATALOG_ARCHITECTURE_INCOMPATIBLE", f"{architecture} for {task_id}; options: {choices}")

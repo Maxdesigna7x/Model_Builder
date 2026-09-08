@@ -6,6 +6,7 @@ import torch
 from modelbuilder.catalog import validate_compatibility
 from modelbuilder.data import generate
 from modelbuilder.engine import infer
+from modelbuilder.errors import BackendError
 from modelbuilder.models import build_model
 from modelbuilder.storage import create_project
 from modelbuilder.training import train
@@ -44,7 +45,7 @@ def test_new_architecture_dry_run_and_backward(architecture, task, input_shape, 
 
 def test_architecture_compatibility_is_enforced():
     validate_compatibility("image.classification", "vit")
-    with pytest.raises(ValueError, match="no admite"):
+    with pytest.raises(BackendError, match="CATALOG_ARCHITECTURE_INCOMPATIBLE"):
         validate_compatibility("image.classification", "lstm")
 
 

@@ -13,5 +13,10 @@
     "windows": [{ "title": "ModelBuilder", "width": 1440, "height": 900, "minWidth": 1100, "minHeight": 650, "center": true }],
     "security": { "csp": "default-src 'self'; img-src 'self' asset: http://asset.localhost data:; style-src 'self' 'unsafe-inline'; connect-src ipc: http://ipc.localhost" }
   },
-  "bundle": { "active": true, "targets": "all", "icon": [] }
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "icon": [],
+    "resources": { "../backend": "backend" }
+  }
 }

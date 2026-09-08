@@ -16,11 +16,15 @@ from PIL import Image
 if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
     from modelbuilder.data import apply_pipeline, build_analytics, generate, import_dataset, split_indices
+    from modelbuilder.errors import BackendError
+    from modelbuilder.huggingface_datasets import catalog as huggingface_catalog, download as download_huggingface_dataset
     from modelbuilder.models import build_model
     from modelbuilder.storage import create_project, delete_project, open_project, project_dir, save_project_state, workspace_root
     from modelbuilder.training import train
 else:
     from .data import apply_pipeline, build_analytics, generate, import_dataset, split_indices
+    from .errors import BackendError
+    from .huggingface_datasets import catalog as huggingface_catalog, download as download_huggingface_dataset
     from .models import build_model
     from .storage import create_project, delete_project, open_project, project_dir, save_project_state, workspace_root
     from .training import train
@@ -49,6 +53,10 @@ def handle(request: dict):
         return save_project_state(request["project"], request["state"])
     if action == "data.generate":
         return generate(request["project"], request["task_id"], int(request.get("seed", 42)), request.get("options"))
+    if action == "data.catalog":
+        return huggingface_catalog(request.get("project"), request["task_id"])
+    if action == "data.download":
+        return download_huggingface_dataset(request["project"], request["task_id"], request["dataset_id"], request.get("options"))
     if action == "data.import":
         return import_dataset(request["project"], request["task_id"], request["path"], request.get("options"))
     if action == "data.pipeline.apply":
@@ -56,17 +64,20 @@ def handle(request: dict):
     if action == "data.analytics":
         dataset=request["dataset"];payload=torch.load(dataset["path"],weights_only=True)
         return build_analytics(request["task_id"],payload["inputs"],payload["targets"],payload.get("classes"),dataset.get("options"))
+    if action == "data.exists":
+        path = Path(str(request.get("dataset", {}).get("path", ""))).expanduser()
+        return {"exists": path.is_file()}
     if action == "graph.validate":
         graph = request.get("graph", {})
         types = [n.get("data", {}).get("blockType") for n in graph.get("nodes", [])]
         if "input" not in types or "output" not in types:
-            raise ValueError("El grafo necesita Entrada y Salida")
+            raise BackendError("GRAPH_MISSING_INPUT_OUTPUT")
         model = build_model(request["architecture"], request["dataset"]["inputShape"], request["dataset"]["outputShape"], graph, request["task_id"])
         shape = [2, *request["dataset"]["inputShape"]]
         sample = torch.zeros(shape, dtype=torch.long if request["task_id"].startswith("text.") else torch.float32)
         out = model(sample)
         if not torch.isfinite(out).all():
-            raise ValueError("El dry-run produjo valores no finitos")
+            raise BackendError("GRAPH_DRY_RUN_NON_FINITE")
         return {"valid": True, "message": f"Grafo válido · salida {list(out.shape)} · {sum(p.numel() for p in model.parameters()):,} parámetros", "node_shapes": model.node_shapes}
     if action == "system.gpu":
         if torch.cuda.is_available():
@@ -77,7 +88,7 @@ def handle(request: dict):
         return {"cuda": False, "name": "NVIDIA GeForce RTX 3060", "total_vram": 12487661158, "allocated_vram": 0}
     if action == "inference.run":
         return infer(request)
-    raise ValueError(f"Acción desconocida: {action}")
+    raise BackendError("ENGINE_UNKNOWN_ACTION", action)
 
 
 def tensor_to_b64_png(tensor: torch.Tensor) -> str:
@@ -139,10 +150,10 @@ def infer(request: dict):
     else:
         latest_path = project_dir(project) / "runs" / "latest.json"
         if not latest_path.exists():
-            raise ValueError("No existe un checkpoint entrenado")
+            raise BackendError("INFERENCE_NO_CHECKPOINT")
         checkpoint_path = Path(json.loads(latest_path.read_text())["checkpoint"])
     if not checkpoint_path.exists():
-        raise ValueError("El checkpoint de la corrida activa ya no existe")
+        raise BackendError("INFERENCE_CHECKPOINT_MISSING")
     checkpoint = torch.load(checkpoint_path, weights_only=True)
     dataset = checkpoint["dataset"]
     data = torch.load(dataset["path"], weights_only=True)
@@ -184,13 +195,13 @@ def infer(request: dict):
                 input_preview = tensor_to_b64_png(x[0])
                 source = "Imagen cargada manualmente"
             except Exception as exc:
-                raise ValueError(f"Error procesando la imagen manual: {exc}")
+                raise BackendError("INFERENCE_MANUAL_IMAGE_FAILED", str(exc))
         elif task_id.startswith("text."):
             vocab=dataset.get("options",{}).get("vocab") or data.get("classes") or ["<pad>","<unk>"];lookup={word:i for i,word in enumerate(vocab)};tokens=re.findall(r"\w+|[^\w\s]",values.lower(),flags=re.UNICODE);ids=[lookup.get(token,1) for token in tokens[:input_shape[0]]];ids += [0]*(input_shape[0]-len(ids));x=torch.tensor(ids,dtype=torch.long).unsqueeze(0);source="Texto tokenizado manualmente"
         elif task_id.startswith("tabular"):
             nums = [float(v.strip()) for v in values.split(",") if v.strip()]
             if len(nums) != input_shape[0]:
-                raise ValueError(f"Se esperaban {input_shape[0]} variables y se recibieron {len(nums)}")
+                raise BackendError("INFERENCE_MANUAL_TABULAR_WRONG_FEATURES", f"{input_shape[0]}, got {len(nums)}")
             x = torch.tensor(nums).float().unsqueeze(0)
             source = "Valores tabulares manuales"
         else:

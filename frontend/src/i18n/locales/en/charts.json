@@ -1,0 +1,56 @@
+{
+  "loadingProfile": "Calculating statistical profile…",
+  "chartOf": "{{label}} chart",
+  "labels": {
+    "chart": "Chart",
+    "variable": "Variable",
+    "data": "data"
+  },
+  "choices": {
+    "classes": "Class balance",
+    "target": "Target distribution",
+    "intensity": "Pixel intensity",
+    "channels": "Channel statistics",
+    "features": "Variable distribution",
+    "summary": "Mean and dispersion",
+    "correlation": "Correlation",
+    "series": "Average series",
+    "lengths": "Text length",
+    "tokens": "Frequent tokens",
+    "coverage": "Mask coverage",
+    "pixels": "Classes per pixel"
+  },
+  "help": {
+    "classes": "Helps detect imbalanced classes.",
+    "target": "Shows range, concentration and outliers of the target.",
+    "intensity": "Reveals exposure, contrast and saturation of images.",
+    "channels": "Compares mean and variation per channel.",
+    "features": "Inspects the shape and scale of each variable.",
+    "summary": "Compares center and dispersion across variables.",
+    "correlation": "Detects redundant or strongly related variables.",
+    "series": "Shows the average temporal pattern per variable.",
+    "lengths": "Helps choose padding and maximum length.",
+    "tokens": "Reveals dominant vocabulary and possible artifacts.",
+    "coverage": "Measures how much foreground each mask occupies.",
+    "pixels": "Checks spatial balance between classes."
+  },
+  "axis": {
+    "samples": "Samples",
+    "frequency": "Frequency",
+    "pixels": "Pixels",
+    "step": "Step",
+    "value": "Value",
+    "coverage": "Coverage (%)",
+    "intensity": "Intensity",
+    "texts": "Texts",
+    "occurrences": "Occurrences",
+    "masks": "Masks",
+    "epoch": "epoch"
+  },
+  "series": {
+    "mean": "Mean",
+    "stdDev": "Std. deviation"
+  },
+  "removeBlock": "Remove block",
+  "shapePlaceholder": "shape to validate"
+}

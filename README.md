@@ -11,9 +11,10 @@ La base usa **React + TypeScript + React Flow + ECharts**, un shell **Tauri 2** 
 - Biblioteca y creación de proyectos con recuperación del estado de edición.
 - Selector por Tabla, Señales y series, Visión, Texto y Reconstrucción; una tarea puede ofrecer varias arquitecturas compatibles.
 - Trece tareas: clasificación, regresión, pronóstico, segmentación, reconstrucción y modelado de tokens.
-- Datos sintéticos reales por tarea e importación de CSV, secuencias, corpus TXT/TSV, carpetas de imágenes, `labels.csv` y pares `images/` + `masks/`.
+- Catálogo de datasets públicos de Hugging Face compatible con las trece tareas, descarga bajo demanda, caché física, revisiones fijadas e importación de datos propios.
 - Particiones train/validation/test editables arrastrando sus dos límites; el reparto elegido se persiste y se aplica al entrenamiento real.
 - Constructor drag-and-drop con puertos, conexiones, biblioteca por arquitectura, edición de propiedades e inspector derecho.
+- Modelo inicial compacto para cada combinación arquitectura–tarea, ajustado automáticamente a las dimensiones, clases, vocabulario y horizonte del dataset elegido.
 - Compilación topológica del canvas a módulos PyTorch. Las ramas U-Net/ResNet y `Concat`/`Add` se ejecutan según las conexiones dibujadas.
 - Bloques reales de Conv1D, pooling 1D, padding causal, RNN, GRU, LSTM, embedding, posición, atención encoder/causal, pooling de tokens y patch embedding de ViT.
 - Validación de ciclos, nodos desconectados, shapes de salida y dry-run real.
@@ -27,9 +28,9 @@ VAE y Transformer encoder–decoder permanecen deliberadamente fuera del catálo
 
 ![Constructor de red con bloques](docs/Img1.png)
 
-### Datos de texto
+### Datasets públicos y datos propios
 
-La app puede generar un corpus sintético para verificar el flujo completo sin red. Para datos reales acepta archivos locales: `label<TAB>texto` en clasificación y una muestra por línea en modelado causal. Los datasets públicos pueden descargarse fuera de la app y luego importarse; todavía no se ejecutan descargas automáticas ni código remoto.
+La pantalla Datos ofrece fuentes públicas compatibles para la tarea seleccionada. Antes de usar la red, la app comprueba si el dataset ya está materializado en el proyecto o presente en `workspace_data/cache/huggingface`; si falta, descarga una revisión fijada y la convierte al contrato interno. No se ejecuta código remoto del repositorio. Para datos propios siguen disponibles `label<TAB>texto` en clasificación y una muestra por línea en modelado causal.
 
 ## Instalación de dependencias
 
@@ -70,7 +71,9 @@ pytest
 python3 backend/modelbuilder/engine.py <<<'{"action":"hello"}'
 ```
 
-La suite incluye las rutas originales y pruebas adicionales de forward/backward para cada familia nueva, generación de datasets nuevos y un recorrido real entrenamiento→checkpoint→inferencia de texto.
+La primera descarga de un dataset requiere conexión HTTPS a `huggingface.co`. Las siguientes preparaciones reutilizan la caché física. Los datasets médicos y algunos corpus tienen licencias de uso educativo/no comercial; la app muestra la licencia junto al tamaño antes de descargar.
+
+La suite incluye las rutas originales, cobertura del catálogo público y de su reutilización física, pruebas adicionales de forward/backward para cada familia y un recorrido real entrenamiento→checkpoint→inferencia de texto.
 
 ## Estructura
 

@@ -1,0 +1,791 @@
+{
+  "architectures": {
+    "mlp": {
+      "name": "MLP",
+      "description": "Capas densas para datos tabulares."
+    },
+    "cnn1d": {
+      "name": "CNN 1D",
+      "description": "Convoluciones temporales para señales y series."
+    },
+    "lstm": {
+      "name": "Red recurrente",
+      "description": "RNN, GRU y LSTM para dependencias temporales."
+    },
+    "transformer": {
+      "name": "Transformer encoder",
+      "description": "Atención bidireccional para series y clasificación de texto."
+    },
+    "transformer_causal": {
+      "name": "Transformer causal",
+      "description": "Atención enmascarada para predecir y generar tokens."
+    },
+    "cnn": {
+      "name": "CNN 2D",
+      "description": "Filtros espaciales para imágenes."
+    },
+    "vit": {
+      "name": "Transformer visual (ViT)",
+      "description": "Convierte imágenes en patches y aplica atención."
+    },
+    "unet": {
+      "name": "Encoder–decoder visual",
+      "description": "U-Net con skips editables para segmentación."
+    },
+    "autoencoder": {
+      "name": "Autoencoder",
+      "description": "Codifica un espacio latente y reconstruye la entrada."
+    }
+  },
+  "tasks": {
+    "tabular": {
+      "classification": {
+        "name": "Clasificación tabular",
+        "category": "Tabla",
+        "modality": "Tabla",
+        "input": "Variables numéricas [F]",
+        "output": "Clase y probabilidades [K]",
+        "metric": "Accuracy",
+        "format": "CSV con columna objetivo"
+      },
+      "regression": {
+        "name": "Regresión tabular",
+        "category": "Tabla",
+        "modality": "Tabla",
+        "input": "Variables numéricas [F]",
+        "output": "Uno o varios valores [Q]",
+        "metric": "MSE",
+        "format": "CSV con objetivo(s) numéricos"
+      },
+      "reconstruction": {
+        "name": "Reconstrucción tabular",
+        "category": "Reconstrucción",
+        "modality": "Tabla",
+        "input": "Variables [F]",
+        "output": "Reconstrucción [F]",
+        "metric": "MSE",
+        "format": "CSV numérico sin objetivo obligatorio"
+      }
+    },
+    "image": {
+      "classification": {
+        "name": "Clasificación de imágenes",
+        "category": "Visión",
+        "modality": "Imagen",
+        "input": "Imagen [C,H,W]",
+        "output": "Clase y probabilidades [K]",
+        "metric": "Accuracy",
+        "format": "Carpetas por clase"
+      },
+      "regression": {
+        "name": "Regresión visual",
+        "category": "Visión",
+        "modality": "Imagen",
+        "input": "Imagen [C,H,W]",
+        "output": "Valor(es) [Q]",
+        "metric": "MSE",
+        "format": "Imágenes + labels.csv"
+      },
+      "reconstruction": {
+        "name": "Reconstrucción de imágenes",
+        "category": "Reconstrucción",
+        "modality": "Imagen",
+        "input": "Imagen [C,H,W]",
+        "output": "Imagen [C,H,W]",
+        "metric": "MSE",
+        "format": "Carpeta con imágenes"
+      },
+      "segmentation": {
+        "binary": {
+          "name": "Segmentación binaria",
+          "category": "Visión",
+          "modality": "Imagen + máscara",
+          "input": "Imagen [C,H,W]",
+          "output": "Máscara [1,H,W]",
+          "metric": "Dice",
+          "format": "images/ + masks/"
+        },
+        "multiclass": {
+          "name": "Segmentación multiclase",
+          "category": "Visión",
+          "modality": "Imagen + máscara",
+          "input": "Imagen [C,H,W]",
+          "output": "Máscara [K,H,W]",
+          "metric": "mIoU",
+          "format": "images/ + máscaras indexadas"
+        }
+      }
+    },
+    "sequence": {
+      "classification": {
+        "name": "Clasificación de secuencias",
+        "category": "Señales y series",
+        "modality": "Secuencia",
+        "input": "Serie [T,F]",
+        "output": "Clase [K]",
+        "metric": "Accuracy",
+        "format": "CSV largo por sequence_id"
+      },
+      "regression": {
+        "name": "Regresión de secuencias",
+        "category": "Señales y series",
+        "modality": "Secuencia",
+        "input": "Serie [T,F]",
+        "output": "Valor(es) [Q]",
+        "metric": "MSE",
+        "format": "CSV largo + target por secuencia"
+      },
+      "forecast": {
+        "name": "Pronóstico temporal",
+        "category": "Señales y series",
+        "modality": "Secuencia",
+        "input": "Contexto [T,F]",
+        "output": "Horizonte [P,Q]",
+        "metric": "MSE",
+        "format": "CSV temporal con series"
+      }
+    },
+    "text": {
+      "classification": {
+        "name": "Clasificación de texto",
+        "category": "Texto",
+        "modality": "Texto",
+        "input": "Tokens [T]",
+        "output": "Clase [K]",
+        "metric": "Accuracy",
+        "format": "TXT: label<TAB>texto"
+      },
+      "language_model": {
+        "name": "Predicción del siguiente token",
+        "category": "Texto",
+        "modality": "Texto",
+        "input": "Tokens [T]",
+        "output": "Logits [T,V]",
+        "metric": "Accuracy",
+        "format": "TXT con una muestra por línea"
+      }
+    }
+  },
+  "blockCategories": {
+    "Core": "Core",
+    "Activation": "Activación",
+    "Regularization": "Regularización",
+    "Normalization": "Normalización",
+    "Shape": "Forma",
+    "Convolution": "Convolución",
+    "Pooling": "Pooling",
+    "Recurrent": "Recurrente",
+    "Sequence": "Secuencia",
+    "Input": "Entrada",
+    "Position": "Posición",
+    "Output": "Salida",
+    "Visual input": "Entrada visual",
+    "Upsampling": "Upsampling",
+    "Branches": "Ramas",
+    "Dense": "Denso",
+    "Decoder": "Decoder",
+    "Attention": "Atención"
+  },
+  "blocks": {
+    "linear": {
+      "label": "Densa",
+      "description": "Transformación aprendible que combina todas las características de entrada.",
+      "usage": "Úsala como capa oculta o cabeza de salida después de un vector/Flatten.",
+      "diagram": [
+        "[B, F]",
+        "Densa",
+        "[B, N]"
+      ]
+    },
+    "conv1d": {
+      "label": "Conv 1D",
+      "description": "Aprende filtros temporales sobre señales 1D o secuencias.",
+      "usage": "Conéctala a tensores [B, F, T] o [B, T, F] según el layout.",
+      "diagram": [
+        "[F,T]",
+        "Conv 1D",
+        "[N,T′]"
+      ]
+    },
+    "conv2d": {
+      "label": "Conv 2D",
+      "description": "Aprende filtros espaciales sobre imágenes o mapas de características.",
+      "usage": "Conéctala a tensores [B, C, H, W]; controla canales, kernel, stride y padding.",
+      "diagram": [
+        "[C,H,W]",
+        "Conv 2D",
+        "[N,H′,W′]"
+      ]
+    },
+    "convtranspose2d": {
+      "label": "ConvTranspose 2D",
+      "description": "Aumenta la resolución mediante una convolución transpuesta aprendible.",
+      "usage": "Se usa en decoders, normalmente antes de concatenar un skip de igual tamaño.",
+      "diagram": [
+        "Mapa pequeño",
+        "ConvTranspose",
+        "Mapa grande"
+      ]
+    },
+    "maxpool1d": {
+      "label": "MaxPool 1D",
+      "description": "Reduce la resolución temporal conservando la activación máxima por ventana.",
+      "usage": "Colócala entre bloques convolucionales 1D para comprimir el eje temporal.",
+      "diagram": [
+        "T",
+        "MaxPool",
+        "T/2"
+      ]
+    },
+    "avgpool1d": {
+      "label": "AvgPool 1D",
+      "description": "Reduce la resolución temporal promediando cada ventana.",
+      "usage": "Alternativa suave a MaxPool 1D.",
+      "diagram": [
+        "T",
+        "AvgPool",
+        "T/2"
+      ]
+    },
+    "adaptiveavgpool1d": {
+      "label": "Global AvgPool 1D",
+      "description": "Resume cada característica a un tamaño temporal fijo.",
+      "usage": "Antes de Flatten/Dense evita depender de la longitud exacta de la secuencia.",
+      "diagram": [
+        "[F,T]",
+        "Global Avg",
+        "[F,1]"
+      ]
+    },
+    "maxpool2d": {
+      "label": "MaxPool 2D",
+      "description": "Reduce la resolución conservando la activación máxima por ventana.",
+      "usage": "Colócala entre bloques convolucionales para comprimir información espacial.",
+      "diagram": [
+        "H × W",
+        "MaxPool",
+        "H/2 × W/2"
+      ]
+    },
+    "avgpool2d": {
+      "label": "AvgPool 2D",
+      "description": "Reduce la resolución promediando cada ventana.",
+      "usage": "Alternativa suave a MaxPool cuando importa la respuesta media.",
+      "diagram": [
+        "H × W",
+        "AvgPool",
+        "H/2 × W/2"
+      ]
+    },
+    "adaptiveavgpool2d": {
+      "label": "Global AvgPool",
+      "description": "Resume cada canal a un tamaño de salida fijo.",
+      "usage": "Antes de Flatten/Densa evita depender de la resolución exacta de entrada.",
+      "diagram": [
+        "[C,H,W]",
+        "Global Avg",
+        "[C,1,1]"
+      ]
+    },
+    "rnn": {
+      "label": "RNN",
+      "description": "Celda recurrente clásica con activación tanh.",
+      "usage": "Recibe [B, T, F] y se conecta a una cabeza mediante selección temporal.",
+      "diagram": [
+        "[T,F]",
+        "RNN",
+        "[T,H]"
+      ]
+    },
+    "gru": {
+      "label": "GRU",
+      "description": "Unidad recurrente con menos compuertas que LSTM.",
+      "usage": "Recibe [B, T, F] y se conecta a una cabeza mediante selección temporal.",
+      "diagram": [
+        "[T,F]",
+        "GRU",
+        "[T,H]"
+      ]
+    },
+    "lstm": {
+      "label": "LSTM",
+      "description": "Procesa una secuencia manteniendo un estado con memoria temporal.",
+      "usage": "Recibe [B, T, F] y suele conectarse a Último estado válido.",
+      "diagram": [
+        "[T,F]",
+        "LSTM",
+        "[T,H]"
+      ]
+    },
+    "temporal_select": {
+      "label": "Último estado válido",
+      "description": "Extrae del eje temporal el último estado utilizable.",
+      "usage": "Después de una LSTM convierte la secuencia en un vector para una cabeza Densa.",
+      "diagram": [
+        "[T,H]",
+        "Último",
+        "[H]"
+      ]
+    },
+    "flatten": {
+      "label": "Flatten",
+      "description": "Aplana las dimensiones no batch en un solo vector.",
+      "usage": "Conecta mapas convolucionales con capas Densas.",
+      "diagram": [
+        "[C,H,W]",
+        "Flatten",
+        "[C·H·W]"
+      ]
+    },
+    "reshape": {
+      "label": "Reshape",
+      "description": "Reorganiza el tensor sin cambiar su número de elementos.",
+      "usage": "Úsalo al adaptar una salida vectorial a un horizonte o forma concreta.",
+      "diagram": [
+        "[N]",
+        "Reshape",
+        "[P,Q]"
+      ]
+    },
+    "permute": {
+      "label": "T,F → F,T",
+      "description": "Reordena las dimensiones del tensor.",
+      "usage": "Úsalo para cambiar entre layouts time-first y feature-first.",
+      "diagram": [
+        "[T,F]",
+        "Permute",
+        "[F,T]"
+      ]
+    },
+    "concat": {
+      "label": "Concatenar",
+      "description": "Concatena varias ramas a lo largo del eje indicado.",
+      "usage": "Acepta varias entradas compatibles; es la unión típica de skips en U-Net.",
+      "diagram": [
+        "Rama A + B",
+        "Concat",
+        "Canales A+B"
+      ]
+    },
+    "add": {
+      "label": "Sumar",
+      "description": "Suma elemento a elemento dos o más ramas de igual forma.",
+      "usage": "Úsala para conexiones residuales; todas las entradas deben tener la misma shape.",
+      "diagram": [
+        "Rama A + B",
+        "Sumar",
+        "Misma forma"
+      ]
+    },
+    "resize2d": {
+      "label": "Resize 2D",
+      "description": "Redimensiona mapas de características por interpolación.",
+      "usage": "Upsampling no aprendible para decoders; suele preceder una Conv 2D.",
+      "diagram": [
+        "Mapa pequeño",
+        "Resize",
+        "Mapa grande"
+      ]
+    },
+    "relu": {
+      "label": "ReLU",
+      "description": "Introduce no linealidad dejando pasar valores positivos.",
+      "usage": "Normalmente se coloca después de una capa Densa o Conv 2D.",
+      "diagram": [
+        "x",
+        "max(0,x)",
+        "activación"
+      ]
+    },
+    "leaky_relu": {
+      "label": "LeakyReLU",
+      "description": "Variante de ReLU que conserva una pendiente pequeña en negativos.",
+      "usage": "Útil cuando quieres reducir neuronas inactivas.",
+      "diagram": [
+        "x",
+        "LeakyReLU",
+        "activación"
+      ]
+    },
+    "gelu": {
+      "label": "GELU",
+      "description": "Activación suave que pondera valores según su magnitud.",
+      "usage": "Alternativa a ReLU frecuente en redes modernas.",
+      "diagram": [
+        "x",
+        "GELU",
+        "activación"
+      ]
+    },
+    "silu": {
+      "label": "SiLU / Swish",
+      "description": "Activación suave también conocida como Swish.",
+      "usage": "Buena opción general en bloques densos o convolucionales.",
+      "diagram": [
+        "x",
+        "SiLU",
+        "activación"
+      ]
+    },
+    "sigmoid": {
+      "label": "Sigmoide",
+      "description": "Lleva cada valor al intervalo 0–1.",
+      "usage": "Úsala solo cuando el contrato de la salida o un bloque intermedio lo requiera.",
+      "diagram": [
+        "logit",
+        "Sigmoide",
+        "0…1"
+      ]
+    },
+    "tanh": {
+      "label": "Tanh",
+      "description": "Lleva cada valor al intervalo −1…1.",
+      "usage": "Útil en estados acotados; evita añadirla sin necesidad en la salida.",
+      "diagram": [
+        "x",
+        "Tanh",
+        "−1…1"
+      ]
+    },
+    "softmax": {
+      "label": "Softmax",
+      "description": "Convierte logits en una distribución que suma uno.",
+      "usage": "Para entrenamiento con CrossEntropy normalmente se omite y se aplica al inferir.",
+      "diagram": [
+        "logits",
+        "Softmax",
+        "probabilidades"
+      ]
+    },
+    "dropout": {
+      "label": "Dropout",
+      "description": "Apaga activaciones aleatoriamente durante entrenamiento.",
+      "usage": "Regulariza capas densas; valores de p entre 0.1 y 0.5 son habituales.",
+      "diagram": [
+        "activación",
+        "Dropout",
+        "regularizada"
+      ]
+    },
+    "dropout2d": {
+      "label": "Dropout 2D",
+      "description": "Apaga canales completos durante entrenamiento.",
+      "usage": "Regularización específica para mapas convolucionales.",
+      "diagram": [
+        "mapas",
+        "Dropout 2D",
+        "mapas"
+      ]
+    },
+    "batchnorm1d": {
+      "label": "BatchNorm 1D",
+      "description": "Normaliza características usando estadísticas del lote.",
+      "usage": "Para vectores o señales 1D, normalmente antes de la activación.",
+      "diagram": [
+        "[B,F]",
+        "BatchNorm",
+        "[B,F]"
+      ]
+    },
+    "batchnorm2d": {
+      "label": "BatchNorm 2D",
+      "description": "Normaliza cada canal de mapas 2D usando el lote.",
+      "usage": "Se coloca típicamente entre Conv 2D y activación.",
+      "diagram": [
+        "[B,C,H,W]",
+        "BatchNorm",
+        "misma forma"
+      ]
+    },
+    "layernorm": {
+      "label": "LayerNorm",
+      "description": "Normaliza por muestra sobre la última dimensión.",
+      "usage": "Adecuada para secuencias y lotes pequeños.",
+      "diagram": [
+        "[…,F]",
+        "LayerNorm",
+        "[…,F]"
+      ]
+    },
+    "sequence_projection": {
+      "label": "Proyección de secuencia",
+      "description": "Proyecta cada paso temporal a una dimensión de modelo.",
+      "usage": "Primera capa para secuencias numéricas antes de un Transformer.",
+      "diagram": [
+        "[T,F]",
+        "Proyección",
+        "[T,D]"
+      ]
+    },
+    "embedding": {
+      "label": "Embedding de tokens",
+      "description": "Mapea tokens enteros a vectores densos.",
+      "usage": "Primera capa para texto o entradas categóricas tokenizadas.",
+      "diagram": [
+        "[T]",
+        "Embedding",
+        "[T,D]"
+      ]
+    },
+    "positional_encoding": {
+      "label": "Codificación posicional",
+      "description": "Añade información de posición a embeddings de tokens o patches.",
+      "usage": "Colócala después de Embedding en modelos Transformer.",
+      "diagram": [
+        "[T,D]",
+        "+Posición",
+        "[T,D]"
+      ]
+    },
+    "transformer_encoder": {
+      "label": "Encoder Transformer",
+      "description": "Pila de capas de atención multi-cabeza y feed-forward.",
+      "usage": "Procesa la secuencia completa con atención bidireccional.",
+      "diagram": [
+        "[T,D]",
+        "Encoder",
+        "[T,D]"
+      ]
+    },
+    "causal_transformer": {
+      "label": "Transformer causal",
+      "description": "Atención multi-cabeza enmascarada para modelado autorregresivo.",
+      "usage": "Úsalo para predicción de siguiente token y generación.",
+      "diagram": [
+        "[T,D]",
+        "Causal",
+        "[T,D]"
+      ]
+    },
+    "sequence_pool": {
+      "label": "Pooling de secuencia",
+      "description": "Reduce la dimensión temporal a un solo vector.",
+      "usage": "Conéctala antes de la cabeza Densa final en clasificadores.",
+      "diagram": [
+        "[T,D]",
+        "Pool",
+        "[D]"
+      ]
+    },
+    "patch_embedding": {
+      "label": "Patch embedding",
+      "description": "Divide una imagen en patches y embebe cada uno.",
+      "usage": "Primera capa de un ViT; coloca Posición después.",
+      "diagram": [
+        "Imagen",
+        "Patches",
+        "[N,D]"
+      ]
+    },
+    "causalpad1d": {
+      "label": "Padding causal 1D",
+      "description": "Rellena la entrada para que la salida no dependa de pasos futuros.",
+      "usage": "Usa antes de una Conv 1D causal para mantener el campo receptivo causal.",
+      "diagram": [
+        "[F,T]",
+        "CausalPad",
+        "[F,T′]"
+      ]
+    }
+  },
+  "presets": {
+    "mlp": {
+      "base": {
+        "name": "MLP · Base recomendada",
+        "description": "Capas densas para datos tabulares.",
+        "benefit": "estructura corta y validada para empezar",
+        "tradeoff": "capacidad limitada para problemas complejos"
+      },
+      "regularized": {
+        "name": "MLP · Regularizada",
+        "description": "Dos capas densas con BatchNorm y Dropout para datos tabulares con más variación.",
+        "benefit": "mejor control del sobreajuste",
+        "tradeoff": "entrena algo más lento"
+      },
+      "compact": {
+        "name": "MLP · Compacta",
+        "description": "Una capa oculta pequeña para iterar rápidamente o trabajar con pocos datos.",
+        "benefit": "rápida de entrenar y fácil de interpretar",
+        "tradeoff": "menor capacidad de representación"
+      }
+    },
+    "cnn": {
+      "base": {
+        "name": "CNN 2D · Base recomendada",
+        "description": "Filtros espaciales para imágenes.",
+        "benefit": "estructura corta y validada para empezar",
+        "tradeoff": "capacidad limitada para problemas complejos"
+      },
+      "standard": {
+        "name": "CNN · Clasificador estándar",
+        "description": "Dos bloques Conv–BatchNorm–ReLU con pooling y promedio global. Buen punto de partida para imágenes reales.",
+        "benefit": "combina capacidad, estabilidad y tamaño moderado",
+        "tradeoff": "requiere más datos que la base"
+      },
+      "deep_regularized": {
+        "name": "CNN · Profunda con regularización",
+        "description": "Cuatro convoluciones, dos escalas espaciales y Dropout 2D para clasificación visual más exigente.",
+        "benefit": "detecta patrones visuales más complejos",
+        "tradeoff": "más parámetros y mayor riesgo de sobreajuste"
+      },
+      "resnet": {
+        "name": "CNN · Bloque residual",
+        "description": "Dos convoluciones y una rama identidad completamente visibles.",
+        "benefit": "facilita entrenar redes más profundas",
+        "tradeoff": "las ramas deben conservar shapes compatibles"
+      }
+    },
+    "cnn1d": {
+      "base": {
+        "name": "CNN 1D · Base recomendada",
+        "description": "Convoluciones temporales para señales y series.",
+        "benefit": "estructura corta y validada para empezar",
+        "tradeoff": "capacidad limitada para problemas complejos"
+      },
+      "multiscale": {
+        "name": "CNN 1D · Multiescala",
+        "description": "Dos etapas de convolución temporal capturan patrones de corto y mediano alcance.",
+        "benefit": "representaciones temporales más ricas",
+        "tradeoff": "mayor costo de cómputo"
+      },
+      "causal": {
+        "name": "CNN 1D · Causal",
+        "description": "Convoluciones causales preservan el orden temporal para pronóstico.",
+        "benefit": "evita filtrar información del futuro",
+        "tradeoff": "menos contexto que pilas más profundas"
+      }
+    },
+    "lstm": {
+      "base": {
+        "name": "Red recurrente · Base recomendada",
+        "description": "RNN, GRU y LSTM para dependencias temporales.",
+        "benefit": "estructura corta y validada para empezar",
+        "tradeoff": "capacidad limitada para problemas complejos"
+      },
+      "gru": {
+        "name": "Recurrente · GRU",
+        "description": "Unidad recurrente compacta sin estado de celda separado.",
+        "benefit": "menos parámetros que LSTM",
+        "tradeoff": "puede representar menos memoria"
+      },
+      "rnn": {
+        "name": "Recurrente · RNN simple",
+        "description": "Recurrencia clásica con activación tanh.",
+        "benefit": "estructura educativa y ligera",
+        "tradeoff": "peor memoria de dependencias largas"
+      },
+      "bidirectional": {
+        "name": "LSTM · Bidireccional",
+        "description": "Lee la secuencia en ambos sentidos antes de producir la predicción final.",
+        "benefit": "aprovecha contexto pasado y futuro",
+        "tradeoff": "no es apropiada para predicción estrictamente en tiempo real"
+      },
+      "stacked": {
+        "name": "LSTM · Apilada",
+        "description": "Dos capas recurrentes con Dropout para dinámicas temporales más ricas.",
+        "benefit": "mayor capacidad para dependencias complejas",
+        "tradeoff": "más lenta de entrenar"
+      }
+    },
+    "transformer": {
+      "base": {
+        "name": "Transformer encoder · Base recomendada",
+        "description": "Atención bidireccional para series y clasificación de texto.",
+        "benefit": "estructura corta y validada para empezar",
+        "tradeoff": "capacidad limitada para problemas complejos"
+      },
+      "compact": {
+        "name": "Transformer encoder · Compacto",
+        "description": "Un encoder pequeño para experimentos rápidos y datasets modestos.",
+        "benefit": "entrena rápido y consume poca memoria",
+        "tradeoff": "capacidad de atención limitada"
+      },
+      "deep": {
+        "name": "Transformer encoder · Profundo",
+        "description": "Cuatro capas y ocho cabezas para relaciones temporales o textuales complejas.",
+        "benefit": "mayor capacidad para dependencias complejas",
+        "tradeoff": "requiere más datos y memoria"
+      }
+    },
+    "transformer_causal": {
+      "base": {
+        "name": "Transformer causal · Base recomendada",
+        "description": "Atención enmascarada para predecir y generar tokens.",
+        "benefit": "estructura corta y validada para empezar",
+        "tradeoff": "capacidad limitada para problemas complejos"
+      },
+      "tiny": {
+        "name": "Transformer causal · Tiny",
+        "description": "Modelo causal mínimo para prototipos y pruebas de tokenización.",
+        "benefit": "iteración muy rápida",
+        "tradeoff": "contexto y capacidad reducidos"
+      },
+      "context": {
+        "name": "Transformer causal · Contexto amplio",
+        "description": "Encoder causal profundo con mayor dimensión para modelar dependencias largas.",
+        "benefit": "mejor modelado de contexto",
+        "tradeoff": "entrenamiento más costoso"
+      }
+    },
+    "vit": {
+      "base": {
+        "name": "Transformer visual (ViT) · Base recomendada",
+        "description": "Convierte imágenes en patches y aplica atención.",
+        "benefit": "estructura corta y validada para empezar",
+        "tradeoff": "capacidad limitada para problemas complejos"
+      },
+      "fast": {
+        "name": "ViT · Rápido",
+        "description": "Patches grandes y un encoder compacto para iterar con rapidez.",
+        "benefit": "bajo consumo de memoria",
+        "tradeoff": "pierde detalles visuales pequeños"
+      },
+      "fine": {
+        "name": "ViT · Detalle fino",
+        "description": "Patches pequeños y un encoder profundo para capturar estructuras visuales finas.",
+        "benefit": "mayor resolución de características",
+        "tradeoff": "secuencia más larga y cómputo elevado"
+      }
+    },
+    "unet": {
+      "base": {
+        "name": "Encoder–decoder visual · Base recomendada",
+        "description": "U-Net con skips editables para segmentación.",
+        "benefit": "estructura corta y validada para empezar",
+        "tradeoff": "capacidad limitada para problemas complejos"
+      },
+      "light": {
+        "name": "U-Net · Ligera",
+        "description": "Encoder–decoder compacto para probar rápidamente máscaras y formatos de segmentación.",
+        "benefit": "consume menos memoria",
+        "tradeoff": "pierde detalle en escenas complejas"
+      },
+      "regularized_unet": {
+        "name": "U-Net · Normalizada",
+        "description": "Añade BatchNorm, activación y Dropout al cuello de botella para una segmentación más estable.",
+        "benefit": "mejor generalización en datasets variados",
+        "tradeoff": "entrena más despacio"
+      }
+    },
+    "autoencoder": {
+      "base": {
+        "name": "Autoencoder · Base recomendada",
+        "description": "Codifica un espacio latente y reconstruye la entrada.",
+        "benefit": "estructura corta y validada para empezar",
+        "tradeoff": "capacidad limitada para problemas complejos"
+      },
+      "compact": {
+        "name": "Autoencoder · Compacto",
+        "description": "Cuello de botella pequeño para compresión y experimentos rápidos.",
+        "benefit": "representación latente eficiente",
+        "tradeoff": "puede perder detalles de reconstrucción"
+      },
+      "denoising": {
+        "name": "Autoencoder · Denoising",
+        "description": "Mayor capacidad con Dropout para aprender reconstrucciones robustas.",
+        "benefit": "mejor tolerancia al ruido y al sobreajuste",
+        "tradeoff": "más parámetros y entrenamiento más lento"
+      }
+    }
+  }
+}

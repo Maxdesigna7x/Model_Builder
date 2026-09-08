@@ -27,7 +27,7 @@ La fase 3 usa una vertical mínima de entrenamiento/inferencia para probar el di
 | Similar a imágenes proporcionadas | [02](02-diseno-visual-y-pantallas.md) | QA con referencias: oscuro carbón, cian, densidad y gráficas legibles |
 | Menú de proyectos | [01](01-producto-y-alcance.md), [02](02-diseno-visual-y-pantallas.md) | Crear/abrir/reabrir sin mezcla de datos |
 | Selección de tarea y modelo con datos compatibles | [03](03-tareas-y-datos.md) | Entrada/salida/formato visibles antes de importar; combinaciones inválidas explicadas |
-| Cargar datos o sintéticos específicos | [03](03-tareas-y-datos.md) | Todos los casos A tienen ambos caminos y preview real |
+| Cargar datos propios o públicos compatibles | [03](03-tareas-y-datos.md) | Las trece tareas tienen una fuente pública; la app verifica disco, reutiliza caché y muestra preview real |
 | Constructor drag-and-drop | [04](04-constructor-y-bloques.md) | Grafo modificable, ejecutable y persistente, también operable por teclado |
 | Piezas de cada arquitectura, incluido pooling | [04](04-constructor-y-bloques.md) | Registro de todas las piezas del alcance declarado y pruebas por operador |
 | Menú contextual derecho por bloque | [02](02-diseno-visual-y-pantallas.md), [04](04-constructor-y-bloques.md) | Inspector sigue selección y cada propiedad modifica realmente la capa |
@@ -37,7 +37,7 @@ La fase 3 usa una vertical mínima de entrenamiento/inferencia para probar el di
 
 ## 3. Recorridos de aceptación implementados
 
-Cada fila se ejecuta con dataset sintético. El flujo común es: crear proyecto, seleccionar tarea, generar/importar datos, editar grafo, validar, entrenar, guardar checkpoint e inferir.
+Cada fila se ejecuta con un dataset compatible del catálogo o con datos propios importados. El flujo común es: crear proyecto, seleccionar tarea, descargar/importar datos, editar grafo, validar, entrenar, guardar checkpoint e inferir.
 
 | Caso | Edición de canvas | Comprobación final |
 | --- | --- | --- |

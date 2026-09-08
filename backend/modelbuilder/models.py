@@ -8,6 +8,7 @@ from torch import nn
 from torch.nn import functional as F
 
 from .catalog import validate_compatibility
+from .errors import BackendError
 
 
 class LSTMSequence(nn.Module):
@@ -47,14 +48,14 @@ class PositionalEncoding(nn.Module):
             self.register_buffer("position", value, persistent=False)
 
     def forward(self, x):
-        if x.shape[1] > self.position.shape[1]: raise ValueError("La secuencia supera la longitud posicional máxima")
+        if x.shape[1] > self.position.shape[1]: raise BackendError("MODEL_SEQUENCE_TOO_LONG")
         return x + self.position[:, :x.shape[1]].to(dtype=x.dtype)
 
 
 class TransformerBlock(nn.Module):
     def __init__(self, d_model: int, properties: dict, causal: bool = False):
         super().__init__(); heads = int(properties.get("heads", 4)); layers = int(properties.get("num_layers", 2)); ff = int(properties.get("dim_feedforward", d_model * 4)); dropout = float(properties.get("dropout", .1))
-        if d_model % heads: raise ValueError("d_model debe ser divisible por el número de cabezas")
+        if d_model % heads: raise BackendError("MODEL_D_MODEL_NOT_DIVISIBLE_BY_HEADS")
         layer = nn.TransformerEncoderLayer(d_model, heads, ff, dropout, activation="gelu", batch_first=True, norm_first=True)
         self.encoder = nn.TransformerEncoder(layer, layers, enable_nested_tensor=False); self.causal = causal
 
@@ -158,18 +159,18 @@ def create_operation(block_type: str, properties: dict, samples: list[torch.Tens
     if block_type == "add": return Add()
     if block_type == "reshape": return Reshape(_shape_value(properties.get("shape", [-1])))
     if block_type == "resize2d": return Resize2D(properties.get("scale_factor", 2))
-    raise ValueError(f"Bloque aún no compilable: {block_type}")
+    raise BackendError("MODEL_BLOCK_NOT_SUPPORTED", block_type)
 
 
 class GraphModel(nn.Module):
     def __init__(self, graph: dict, input_shape: list[int], input_dtype=torch.float32):
         super().__init__()
         nodes = {node["id"]: node for node in graph.get("nodes", [])}; edges = graph.get("edges", [])
-        if not nodes: raise ValueError("El grafo está vacío")
+        if not nodes: raise BackendError("GRAPH_EMPTY")
         incoming: dict[str, list[str]] = defaultdict(list); outgoing: dict[str, list[str]] = defaultdict(list); indegree = {node_id: 0 for node_id in nodes}
         for edge in edges:
             source, target = edge["source"], edge["target"]
-            if source not in nodes or target not in nodes: raise ValueError("Hay una conexión a un bloque inexistente")
+            if source not in nodes or target not in nodes: raise BackendError("GRAPH_EDGE_TO_MISSING_NODE")
             incoming[target].append(source); outgoing[source].append(target); indegree[target] += 1
         queue = deque(node_id for node_id, degree in indegree.items() if degree == 0); order = []
         while queue:
@@ -177,30 +178,30 @@ class GraphModel(nn.Module):
             for target in outgoing[current]:
                 indegree[target] -= 1
                 if indegree[target] == 0: queue.append(target)
-        if len(order) != len(nodes): raise ValueError("El grafo contiene un ciclo")
+        if len(order) != len(nodes): raise BackendError("GRAPH_CYCLE")
         inputs = [node_id for node_id, node in nodes.items() if node.get("data", {}).get("blockType") == "input"]
         outputs = [node_id for node_id, node in nodes.items() if node.get("data", {}).get("blockType") == "output"]
-        if len(inputs) != 1 or len(outputs) != 1: raise ValueError("Se requiere exactamente una Entrada y una Salida")
+        if len(inputs) != 1 or len(outputs) != 1: raise BackendError("GRAPH_SINGLE_INPUT_OUTPUT_REQUIRED")
         reachable = {inputs[0]}; frontier = [inputs[0]]
         while frontier:
             current = frontier.pop()
             for target in outgoing[current]:
                 if target not in reachable: reachable.add(target); frontier.append(target)
-        if outputs[0] not in reachable: raise ValueError("No existe una ruta de Entrada a Salida")
+        if outputs[0] not in reachable: raise BackendError("GRAPH_NO_PATH_INPUT_OUTPUT")
         orphans = [node_id for node_id in nodes if node_id not in reachable]
-        if orphans: raise ValueError(f"Hay bloques desconectados de la Entrada: {', '.join(orphans[:3])}")
+        if orphans: raise BackendError("GRAPH_DISCONNECTED_BLOCKS", ", ".join(orphans[:3]))
         self.nodes = nodes; self.incoming = dict(incoming); self.order = order; self.input_id = inputs[0]; self.output_id = outputs[0]; self.operations = nn.ModuleDict()
         values = {self.input_id: torch.zeros(2, *input_shape, dtype=input_dtype)}
         for node_id in order:
             if node_id == self.input_id: continue
             sources = self.incoming.get(node_id, [])
-            if not sources: raise ValueError(f"El bloque {node_id} no tiene entrada")
+            if not sources: raise BackendError("GRAPH_BLOCK_MISSING_INPUT", node_id)
             samples = [values[source] for source in sources]; data = nodes[node_id].get("data", {}); operation = create_operation(data.get("blockType", ""), data.get("properties", {}), samples); self.operations[node_id] = operation
             try:
                 operation.eval()
                 with torch.inference_mode(): values[node_id] = operation(*samples)
                 operation.train()
-            except Exception as exc: raise ValueError(f"{data.get('label', node_id)}: {exc}") from exc
+            except Exception as exc: raise BackendError("GRAPH_BLOCK_EXECUTION_FAILED", f"{data.get('label', node_id)}: {exc}") from exc
         self.output_shape = list(values[self.output_id].shape[1:])
         self.node_shapes = {node_id: list(value.shape[1:]) for node_id, value in values.items()}
 
@@ -216,5 +217,5 @@ def build_model(architecture: str, input_shape: list[int], output_shape: list[in
     input_dtype = torch.long if task_id.startswith("text.") else torch.float32
     model = GraphModel(graph, input_shape, input_dtype)
     expected = [int(value) for value in output_shape]
-    if model.output_shape != expected: raise ValueError(f"La salida del grafo es {model.output_shape}; la tarea requiere {expected}")
+    if model.output_shape != expected: raise BackendError("GRAPH_OUTPUT_SHAPE_MISMATCH", f"{model.output_shape} vs {expected}")
     return model

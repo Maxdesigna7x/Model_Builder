@@ -1,0 +1,157 @@
+{
+  "title": "Data pipeline",
+  "eyebrow": "DATA PIPELINE",
+  "addNode": "Add node",
+  "apply": "Apply",
+  "revision": "Rev. {{revision}}",
+  "unapplied": "unapplied",
+  "revisionUnapplied": "Rev. {{revision}} · {{unappliedText}}",
+  "pipelineValid": "Pipeline valid",
+  "readyToGenerate": "Ready to generate a revision.",
+  "ariaPipeline": "Data preparation pipeline",
+  "dataLibrary": "DATA LIBRARY",
+  "addTransformation": "Add transformation",
+  "compatibleOperations": "Only operations compatible with {{modality}} are shown.",
+  "modality_image": "images",
+  "modality_sequence": "sequences",
+  "modality_text": "text",
+  "modality_tabular": "tables",
+  "scope_train": "Train only",
+  "scope_all": "All splits",
+  "nodeActive": "Active node",
+  "moveBefore": "Move before",
+  "moveAfter": "Move after",
+  "before": "Before",
+  "after": "After",
+  "delete": "Delete",
+  "lockedNodeNote": "This node stays fixed at the {{position}}.",
+  "position_start": "start",
+  "position_end": "end",
+  "categories": {
+    "source": "SOURCE",
+    "inspect": "INSPECTION",
+    "curate": "CURATION",
+    "split": "SPLIT",
+    "transform": "TRANSFORMATION",
+    "augment": "AUGMENTATION",
+    "output": "OUTPUT"
+  },
+  "definitions": {
+    "source": {
+      "importedLabel": "Imported data",
+      "huggingFaceLabel": "Hugging Face dataset",
+      "syntheticLabel": "Synthetic generator",
+      "label": "Source",
+      "description": "Starting point of the data pipeline."
+    },
+    "output": {
+      "label": "Prepared dataset",
+      "description": "Defines how data is delivered to training. The final shape updates when applying the pipeline."
+    },
+    "validate": {
+      "label": "Validate quality",
+      "description": "Checks shapes, targets and invalid values. Serves as an early control before preparing the dataset.",
+      "scope": "Applied deterministically"
+    },
+    "deduplicate": {
+      "label": "Remove duplicates",
+      "description": "Detects identical entries and keeps a single copy. Helps prevent a repeated sample from appearing across different splits.",
+      "scope": "Applied deterministically"
+    },
+    "finite_filter": {
+      "label": "Exclude non-finite",
+      "description": "Discards samples containing NaN or infinity before computing statistics or training.",
+      "scope": "Applied deterministically"
+    },
+    "normalize": {
+      "label": "Normalize variables",
+      "description": "Computes Z-Score or Min-Max using only train and reuses those parameters on validation, test and inference.",
+      "scope": "Applied deterministically"
+    },
+    "clip": {
+      "label": "Limit extremes",
+      "description": "Clips values to quantiles learned on train. Useful when a few outliers dominate the scale.",
+      "scope": "Applied deterministically"
+    },
+    "resize": {
+      "label": "Resize",
+      "description": "Changes the resolution of all images. For segmentation it applies the same change to the mask using nearest neighbor.",
+      "scope": "Applied deterministically"
+    },
+    "center_crop": {
+      "label": "Center crop",
+      "description": "Crops a reproducible central region. Image and mask remain perfectly aligned.",
+      "scope": "Applied deterministically"
+    },
+    "convert_channels": {
+      "label": "Convert channels",
+      "description": "Converts images between RGB and grayscale and automatically updates the input contract.",
+      "scope": "Applied deterministically"
+    },
+    "image_normalize": {
+      "label": "Normalize image",
+      "description": "Makes sense for CNNs: centers each channel and stabilizes optimization. Mean and standard deviation are computed using only train and stored for inference.",
+      "scope": "Applied deterministically"
+    },
+    "random_flip": {
+      "label": "Random flip",
+      "description": "Horizontally flips a proportion of images each epoch. For segmentation and reconstruction it also transforms the target.",
+      "scope": "Runs only on train"
+    },
+    "random_rotate90": {
+      "label": "90° rotation",
+      "description": "Randomly rotates by multiples of 90°. Keeps image and mask aligned and avoids interpolation artifacts.",
+      "scope": "Runs only on train"
+    },
+    "color_jitter": {
+      "label": "Color and contrast",
+      "description": "Varies brightness and contrast only during train. Increases robustness to lighting without changing geometry or labels.",
+      "scope": "Runs only on train"
+    },
+    "random_noise": {
+      "label": "Random noise",
+      "description": "Adds independent noise during train. Useful for robustness and denoising; validation and test remain deterministic.",
+      "scope": "Runs only on train"
+    }
+  },
+  "properties": {
+    "batchSize": "Batch size",
+    "workers": "Workers",
+    "pin_memory": "Pin memory",
+    "mode": "Method",
+    "probability": "Probability",
+    "horizontal": "Horizontal",
+    "std": "Standard deviation",
+    "lower": "Lower quantile",
+    "upper": "Upper quantile",
+    "include_target": "Include target",
+    "fail_on_error": "Block errors",
+    "width": "Width",
+    "height": "Height",
+    "method": "Interpolation",
+    "channels": "Channels",
+    "brightness": "Brightness",
+    "contrast": "Contrast"
+  },
+  "options": {
+    "mode": {
+      "standard": "Z-Score",
+      "minmax": "Min-Max [0,1]",
+      "minmax_sym": "Min-Max [-1,1]"
+    },
+    "method": {
+      "bilinear": "Bilinear",
+      "nearest": "Nearest neighbor",
+      "bicubic": "Bicubic"
+    },
+    "channels": {
+      "3": "RGB · 3",
+      "1": "Grayscale · 1"
+    }
+  },
+  "validation": {
+    "endpoints": "Source and output must remain at the ends.",
+    "outOfOrder": "{{label}} is out of order; move it before applying.",
+    "trainOnly": "{{label}} must be limited to train."
+  }
+}

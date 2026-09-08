@@ -15,6 +15,7 @@ from torch.utils.data import DataLoader, Dataset, TensorDataset
 
 from .catalog import task_spec
 from .data import split_indices
+from .errors import BackendError
 from .models import build_model
 from .storage import atomic_json, iso_now, project_dir
 
@@ -120,7 +121,7 @@ def train(request: dict) -> dict:
             if xb.dtype == torch.uint8: xb = xb.float() / 255.0
             yb = yb.to(device)
             optimizer.zero_grad(set_to_none=True);pred=model(xb);loss=_loss(task_id,pred,yb)
-            if not torch.isfinite(loss): raise RuntimeError("La loss dejó de ser finita")
+            if not torch.isfinite(loss): raise BackendError("TRAINING_LOSS_NON_FINITE")
             loss.backward();torch.nn.utils.clip_grad_norm_(model.parameters(),5.0);optimizer.step();train_sum+=loss.item()*xb.shape[0];seen+=xb.shape[0]
         train_loss=train_sum/max(1,seen);val_loss,metric=_evaluate(model,val_loader,task_id,device);point={"epoch":epoch,"trainLoss":train_loss,"valLoss":val_loss,"metric":metric};history.append(point)
 

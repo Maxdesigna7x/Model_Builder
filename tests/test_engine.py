@@ -9,6 +9,8 @@ from PIL import Image
 
 from modelbuilder.data import apply_pipeline, generate, import_dataset, split_indices
 from modelbuilder.engine import apply_inference_pipeline, infer
+from modelbuilder.errors import BackendError
+from modelbuilder.huggingface_datasets import DATASETS as HF_DATASETS, LOADERS as HF_LOADERS, catalog as hf_catalog, download as hf_download
 from modelbuilder.models import build_model
 from modelbuilder.storage import create_project
 from modelbuilder.training import train
@@ -78,7 +80,7 @@ def test_pipeline_rejects_unsafe_flip_for_visual_regression(project):
         {"id":"split","type":"split","category":"split","scope":"all","enabled":True,"properties":{"train":70,"validation":15,"test":15}},
         {"id":"flip","type":"random_flip","category":"augment","scope":"train","enabled":True,"properties":{}},
     ]}
-    with pytest.raises(ValueError,match="no es seguro"):
+    with pytest.raises(BackendError,match="PIPELINE_RANDOM_FLIP_REGRESSION_TARGET"):
         apply_pipeline(project,dataset,"image.regression",pipeline)
 
 
@@ -156,7 +158,7 @@ def test_train_checkpoint_and_inference(project):
 def test_invalid_disconnected_and_wrong_output():
     graph = sequential(node("input", "input"), node("head", "linear", out_features=2), node("output", "output"))
     graph["nodes"].append(node("orphan", "relu"))
-    with pytest.raises(ValueError, match="desconectados"):
+    with pytest.raises(BackendError, match="GRAPH_DISCONNECTED_BLOCKS"):
         build_model("mlp", [4], [2], graph, "tabular.classification")
 
 
@@ -197,3 +199,45 @@ def test_import_image_classification_and_segmentation(project, tmp_path):
         mask.save(segmented / "masks" / f"{index}.png")
     segmentation = import_dataset(project, "image.segmentation.binary", str(segmented))
     assert segmentation["outputShape"] == [1, 64, 64]
+
+
+def test_every_task_has_a_curated_huggingface_dataset(project):
+    expected = {
+        "tabular.classification", "tabular.regression", "tabular.reconstruction",
+        "image.classification", "image.regression", "image.reconstruction",
+        "sequence.classification", "sequence.regression", "sequence.forecast",
+        "text.classification", "text.language_model",
+        "image.segmentation.binary", "image.segmentation.multiclass",
+    }
+    covered = {task for spec in HF_DATASETS.values() for task in spec["tasks"]}
+    assert expected <= covered
+    for task in expected:
+        assert hf_catalog(project, task)
+
+
+def test_huggingface_download_reuses_physical_project_dataset(project, monkeypatch):
+    calls = []
+
+    def fake_loader(spec, task_id, options, offline):
+        calls.append(offline)
+        x = torch.arange(60, dtype=torch.float32).reshape(15, 4)
+        y = torch.arange(15).remainder(3)
+        return x, y, ["a", "b", "c"]
+
+    monkeypatch.setitem(HF_LOADERS, "iris", fake_loader)
+    first = hf_download(project, "tabular.classification", "iris")
+    second = hf_download(project, "tabular.classification", "iris")
+
+    assert calls == [False]
+    assert first["source"] == "huggingface"
+    assert second["id"] == first["id"] and second["cacheStatus"] == "project"
+    assert Path(second["path"]).is_file()
+    listed = hf_catalog(project, "tabular.classification")[0]
+    assert listed["installed"] is True and listed["cached"] is True
+
+    # A manifest alone is not enough: if the tensor disappeared physically,
+    # materialize it again from the shared Hugging Face cache.
+    Path(second["path"]).unlink()
+    third = hf_download(project, "tabular.classification", "iris")
+    assert calls == [False, True]
+    assert Path(third["path"]).is_file() and third["id"] != first["id"]

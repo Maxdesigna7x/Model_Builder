@@ -2,7 +2,7 @@ use serde_json::{json, Value};
 use std::io::{BufRead, BufReader, Write};
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Emitter, Manager};
 
 fn project_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -15,14 +15,43 @@ fn python_command() -> String {
     std::env::var("MODELBUILDER_PYTHON").unwrap_or_else(|_| "python".into())
 }
 
-fn engine_path() -> PathBuf {
-    project_root().join("backend/modelbuilder/engine.py")
+fn runtime_paths(app: &AppHandle) -> Result<(PathBuf, PathBuf, PathBuf), String> {
+    let bundled_engine = app
+        .path()
+        .resource_dir()
+        .map_err(|e| e.to_string())?
+        .join("backend/modelbuilder/engine.py");
+    let bundled = bundled_engine.is_file();
+    let engine = if bundled {
+        bundled_engine
+    } else {
+        project_root().join("backend/modelbuilder/engine.py")
+    };
+    let workdir = engine
+        .parent()
+        .and_then(|path| path.parent())
+        .ok_or("No se pudo resolver el directorio del backend")?
+        .to_path_buf();
+    let workspace = if bundled {
+        app.path()
+            .app_data_dir()
+            .map_err(|e| e.to_string())?
+            .join("workspace_data")
+    } else {
+        project_root().join("workspace_data")
+    };
+    std::fs::create_dir_all(&workspace).map_err(|e| e.to_string())?;
+    Ok((engine, workdir, workspace))
 }
 
-fn execute(request: Value) -> Result<Value, String> {
-    let mut child = Command::new(python_command())
-        .arg(engine_path())
-        .current_dir(project_root())
+fn execute(app: &AppHandle, request: Value) -> Result<Value, String> {
+    let (engine, workdir, workspace) = runtime_paths(app)?;
+    let mut command = Command::new(python_command());
+    command.arg(engine).current_dir(workdir);
+    if std::env::var_os("MODELBUILDER_WORKSPACE").is_none() {
+        command.env("MODELBUILDER_WORKSPACE", workspace);
+    }
+    let mut child = command
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -46,8 +75,8 @@ fn execute(request: Value) -> Result<Value, String> {
 }
 
 #[tauri::command]
-async fn backend_request(request: Value) -> Result<Value, String> {
-    tauri::async_runtime::spawn_blocking(move || execute(request))
+async fn backend_request(app: AppHandle, request: Value) -> Result<Value, String> {
+    tauri::async_runtime::spawn_blocking(move || execute(&app, request))
         .await
         .map_err(|e| e.to_string())?
 }
@@ -64,9 +93,13 @@ async fn pick_directory() -> Result<Option<String>, String> {
 async fn start_training(app: AppHandle, request: Value) -> Result<Value, String> {
     std::thread::spawn(move || {
         let result = (|| -> Result<(), String> {
-            let mut child = Command::new(python_command())
-                .arg(engine_path())
-                .current_dir(project_root())
+            let (engine, workdir, workspace) = runtime_paths(&app)?;
+            let mut command = Command::new(python_command());
+            command.arg(engine).current_dir(workdir);
+            if std::env::var_os("MODELBUILDER_WORKSPACE").is_none() {
+                command.env("MODELBUILDER_WORKSPACE", workspace);
+            }
+            let mut child = command
                 .stdin(Stdio::piped())
                 .stdout(Stdio::piped())
                 .stderr(Stdio::inherit())

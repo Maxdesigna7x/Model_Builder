@@ -1,0 +1,56 @@
+{
+  "loadingProfile": "Calculando perfil estadístico…",
+  "chartOf": "Gráfica de {{label}}",
+  "labels": {
+    "chart": "Gráfica",
+    "variable": "Variable",
+    "data": "datos"
+  },
+  "choices": {
+    "classes": "Balance de clases",
+    "target": "Distribución del objetivo",
+    "intensity": "Intensidad de píxeles",
+    "channels": "Estadísticas por canal",
+    "features": "Distribución de variables",
+    "summary": "Media y dispersión",
+    "correlation": "Correlación",
+    "series": "Serie promedio",
+    "lengths": "Longitud de textos",
+    "tokens": "Tokens frecuentes",
+    "coverage": "Cobertura de máscaras",
+    "pixels": "Clases por píxel"
+  },
+  "help": {
+    "classes": "Permite detectar clases desbalanceadas.",
+    "target": "Muestra rango, concentración y valores extremos del target.",
+    "intensity": "Revela exposición, contraste y saturación de las imágenes.",
+    "channels": "Compara media y variación de cada canal.",
+    "features": "Inspecciona la forma y escala de cada variable.",
+    "summary": "Compara centro y dispersión entre variables.",
+    "correlation": "Detecta variables redundantes o fuertemente relacionadas.",
+    "series": "Muestra el patrón temporal promedio por variable.",
+    "lengths": "Ayuda a elegir padding y longitud máxima.",
+    "tokens": "Revela vocabulario dominante y posibles artefactos.",
+    "coverage": "Mide cuánto ocupa el foreground en cada máscara.",
+    "pixels": "Comprueba el balance espacial entre clases."
+  },
+  "axis": {
+    "samples": "Muestras",
+    "frequency": "Frecuencia",
+    "pixels": "Píxeles",
+    "step": "Paso",
+    "value": "Valor",
+    "coverage": "Cobertura (%)",
+    "intensity": "Intensidad",
+    "texts": "Textos",
+    "occurrences": "Apariciones",
+    "masks": "Máscaras",
+    "epoch": "época"
+  },
+  "series": {
+    "mean": "Media",
+    "stdDev": "Desv. estándar"
+  },
+  "removeBlock": "Eliminar bloque",
+  "shapePlaceholder": "shape por validar"
+}
