@@ -2,7 +2,9 @@
 
 Aplicación visual local para crear proyectos, elegir una tarea compatible, preparar datos, construir una red mediante bloques, entrenarla con PyTorch y ejecutar inferencia desde un checkpoint.
 
-La base usa **React + TypeScript + React Flow + ECharts**, un shell **Tauri 2** y un motor local **Python/PyTorch**. El catálogo cubre MLP, CNN 1D/2D, RNN/GRU/LSTM, Transformer encoder, Transformer causal, ViT, U-Net, ResNet editable y autoencoders.
+La base usa **React + TypeScript + React Flow + ECharts**, un shell **Tauri 2** y un motor local **Python/PyTorch**. El catálogo cubre MLP, CNN 1D/2D (incluyendo un preset con bloque residual editable), RNN/GRU/LSTM, Transformer encoder, Transformer causal, ViT, U-Net y autoencoders.
+
+![Entrenamiento en tiempo real](docs/img0.png)
 
 ## Funciones implementadas
 
@@ -21,18 +23,35 @@ La base usa **React + TypeScript + React Flow + ECharts**, un shell **Tauri 2** 
 
 VAE y Transformer encoder–decoder permanecen deliberadamente fuera del catálogo disponible: requieren salidas múltiples/pérdida KL y cross-attention/generación respectivamente. No se muestran como funciones parciales. El estado detallado está en [`ARCHITECTURE_TODO.md`](ARCHITECTURE_TODO.md).
 
+![Selector de tarea y arquitectura](docs/img2.png)
+
+![Constructor de red con bloques](docs/Img1.png)
+
 ### Datos de texto
 
 La app puede generar un corpus sintético para verificar el flujo completo sin red. Para datos reales acepta archivos locales: `label<TAB>texto` en clasificación y una muestra por línea en modelado causal. Los datasets públicos pueden descargarse fuera de la app y luego importarse; todavía no se ejecutan descargas automáticas ni código remoto.
 
-## Ejecutar la interfaz web de desarrollo
+## Instalación de dependencias
+
+Frontend:
 
 ```bash
 npm install
+```
+
+Backend (Python >= 3.11):
+
+```bash
+pip install -e .
+```
+
+## Ejecutar la interfaz web de desarrollo
+
+```bash
 ./run-web.sh
 ```
 
-Abrir `http://127.0.0.1:1420`. Este modo permite revisar toda la UI con datos/gráficas demostrativas. El entrenamiento real y la persistencia Python se activan dentro del shell Tauri.
+Abrir `http://127.0.0.1:1420`. Este modo ejecuta el motor Python/PyTorch real a través del proxy de Vite, por lo que generación de datos, entrenamiento, métricas en vivo e inferencia funcionan. Lo que no está disponible en web es la gestión persistente de proyectos en disco (`project.create/open/delete`) y el selector nativo de carpetas; esas operaciones requieren el shell Tauri.
 
 ## Ejecutar como aplicación Tauri en Linux
 
@@ -43,14 +62,12 @@ Tauri necesita las cabeceras nativas de WebKitGTK/GLib. En Ubuntu, Zorin OS o de
 ./run.sh
 ```
 
-En este equipo no se pudo completar esa instalación porque `sudo` solicita la contraseña del usuario. El frontend y el backend sí están compilados/probados; `cargo check` alcanza las dependencias nativas y se detiene al no encontrar `glib-2.0.pc`.
-
 ## Validación
 
 ```bash
 npm run build
 pytest
-python backend/modelbuilder/engine.py <<<'{"action":"hello"}'
+python3 backend/modelbuilder/engine.py <<<'{"action":"hello"}'
 ```
 
 La suite incluye las rutas originales y pruebas adicionales de forward/backward para cada familia nueva, generación de datasets nuevos y un recorrido real entrenamiento→checkpoint→inferencia de texto.
@@ -64,7 +81,7 @@ src-tauri/          shell y puente de procesos
 tests/              validación del motor y recorridos
 docs/               especificación de producto y arquitectura
 references/         referencias visuales conservadas
-workspace_data/     proyectos generados localmente (ignorado por Git)
+workspace_data/     proyectos generados localmente en ejecución (ignorado por Git)
 ```
 
 La especificación completa comienza en [docs/01-producto-y-alcance.md](docs/01-producto-y-alcance.md). El plan y sus criterios están en [docs/07-plan-y-aceptacion.md](docs/07-plan-y-aceptacion.md).
