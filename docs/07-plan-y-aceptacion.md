@@ -1,20 +1,20 @@
 # 07 · Plan de implementación y criterios de aceptación
 
-**Estado actualizado:** implementación de la entrega A realizada el 5 de septiembre de 2026. El build frontend y las pruebas del motor pasan. El build Tauri en este equipo queda pendiente de instalar las cabeceras GLib/WebKitGTK del sistema; las ampliaciones B/C siguen planificadas.
+**Estado actualizado:** 8 de septiembre de 2026. Las fases A, B (familias adicionales) y C-atención (Transformer encoder/causal, ViT, texto) están implementadas y cubiertas por tests. El build frontend y la suite Python pasan. El build nativo de Tauri y el empaquetado multiplataforma siguen pendientes de instalar las cabeceras del sistema y configurar PyInstaller.
 
 ## 1. Orden propuesto
 
-| Fase | Trabajo | Evidencia para cerrar |
+| Fase | Trabajo | Estado |
 | --- | --- | --- |
-| 0 · Viabilidad del stack | Versiones, Tauri/React↔Python, proceso de trabajo y paquete mínimo Linux/Windows | Ejecutable instalado en entorno sin conda, handshake, cálculo PyTorch CPU, evento y cierre limpio; decisión de runtime/paquetes GPU |
-| 1 · Sistema visual y proyectos | Tokens, shell, biblioteca/creación de proyectos, navegación y persistencia | Capturas en ambos temas, apertura/cierre/recuperación, rutas con Unicode y escala del sistema |
-| 2 · Contratos y datos | Catálogo tarea/familia, importadores/generadores, preview, splits y pipeline | Fixtures de cada tarea A, errores accionables y separación sin fuga de información |
-| 3 · Constructor y primer recorrido real | Grafo/compilador, puertos, inspector, undo/redo y plantilla MLP | Crear MLP arrastrando, validar, entrenar, guardar y predecir sin código del usuario |
-| 4 · Catálogo A completo | CNN2D, LSTM y U-Net; ramas, pooling, skips, dimensiones y macros | Todas las piezas A verificadas y todos los recorridos de tareas A ejecutables |
-| 5 · Instrumentos y recuperación | Configuración completa, gráficas loss/métrica, pausa/reanudar, best/last, test e inferencia por lotes | Corrida reproducible recuperada tras interrupción; métricas correctas y exportación |
-| 6 · Entrega A | Optimización, accesibilidad, paquetes y QA real | Matriz de aceptación de A completa en Linux y Windows; dependencias/licencias documentadas |
-| 7 · Entrega B | RNN/GRU/CNN1D/ResNet/AE, denoising y multietiqueta | Datos, bloques, recetas, métricas e inferencia de cada caso completos |
-| 8 · Entrega C | VAE y Transformer pequeño | Loss compuesta, máscaras, tokenización, muestreo y contratos completos |
+| 0 · Viabilidad del stack | Tauri/React↔Python, proceso de trabajo | Parcial: scaffold funcional; empaquetado pendiente |
+| 1 · Sistema visual y proyectos | Tokens, shell, creación de proyectos, navegación | Implementado (modo web y Tauri parcial) |
+| 2 · Contratos y datos | Catálogo, importadores/generadores, splits | Implementado para las 13 tareas activas |
+| 3 · Constructor y primer recorrido real | Grafo/compilador, plantillas, validación | Implementado |
+| 4 · Catálogo A completo | MLP, CNN2D, LSTM, U-Net | Implementado |
+| 5 · Instrumentos y recuperación | Gráficas, best/last, test, inferencia | Implementado; **pausa/reanudación pendiente** |
+| 6 · Entrega A | Paquetes y QA multiplataforma | **Pendiente** |
+| 7 · Entrega B | RNN/GRU/CNN1D, preset residual, autoencoders | Implementado (RNN/GRU como bloques huérfanos; denoising y multietiqueta **pendientes**) |
+| 8 · Entrega C | Transformer encoder/causal, ViT, texto | Implementado; **VAE y Transformer encoder–decoder pendientes** |
 
 La fase 3 usa una vertical mínima de entrenamiento/inferencia para probar el diseño; fase 5 completa sus controles y recuperación. No dejar todas las pruebas de empaquetado para el final. Cada entrega sólo anuncia lo que ya funciona de extremo a extremo.
 
@@ -35,24 +35,26 @@ La fase 3 usa una vertical mínima de entrenamiento/inferencia para probar el di
 | Menú de inferencia | [05](05-entrenamiento-e-inferencia.md) | Checkpoint real, mismo pipeline y visualización apropiada por modalidad |
 | Documentar antes de decidir implementar | [README](../README.md) | Etapa documental completada antes de iniciar esta implementación |
 
-## 3. Recorridos de aceptación de A
+## 3. Recorridos de aceptación implementados
 
-Ejecutar cada fila con dataset sintético y fixture importado equivalente. Incluir crear proyecto, seleccionar tarea, datos/split, editar grafo, validar, entrenar, guardar checkpoint, cerrar/reabrir y predecir con pesos recargados.
+Cada fila se ejecuta con dataset sintético. El flujo común es: crear proyecto, seleccionar tarea, generar/importar datos, editar grafo, validar, entrenar, guardar checkpoint e inferir.
 
-| Caso | Edición de canvas obligatoria | Comprobación final |
+| Caso | Edición de canvas | Comprobación final |
 | --- | --- | --- |
-| MLP binaria | Añadir Linear y cambiar ancho | Dos logits, CE, probabilities coherentes |
-| MLP multiclase | Reordenar capa mediante reconexión | K salidas y mapa de clases estable |
-| MLP regresión multiobjetivo | Cabeza Q explícita | Valores y unidades correctas, sin sigmoid automática |
-| CNN clasificación | Insertar MaxPool y sustituirlo por AvgPool | Shapes correctas y grafo ejecutado distinto |
-| CNN regresión | Editar canales y cabeza Q | Imagen/target asociados correctamente |
-| LSTM clasificación | Apilar recurrentes y seleccionar estado válido | Padding no cambia resultado más allá de tolerancia; caso bidireccional correcto |
-| LSTM regresión | Cambiar hidden_size y LinearQ | Salida `[B,Q]`, target consistente por secuencia |
-| LSTM pronóstico | Cambiar horizonte a través del contrato | `[B,P,Q]`; sin ventanas cruzadas entre splits |
-| U-Net binaria | Conectar skip y cambiar upsampling | Un logit/píxel, máscara y overlay alineados |
-| U-Net multiclase | Editar etapa y alinear shape impar | K logits/píxel, paleta/ignore conservados |
-
-Pruebas de aprendizaje con pequeños datasets deterministas: sobreajustar un conjunto train pequeño debe reducir loss en una receta de prueba definida. No exigir una accuracy arbitraria de generalización tras dos batches ni confundir el smoke con evaluación científica.
+| MLP clasificación | Añadir/quitar Linear, cambiar `out_features` | K salidas, CE, probabilidades coherentes |
+| MLP regresión | Cambiar cabeza a 1 salida | Valor continuo, sin activación terminal |
+| CNN clasificación | Insertar MaxPool/AvgPool, cambiar canales | Shapes correctas, grafo ejecutable |
+| CNN regresión | Ajustar cabeza a 1 salida | Valor continuo asociado a imagen |
+| LSTM clasificación | Cambiar `hidden_size`, añadir `TemporalSelect` | Salida `[B,K]`, padding manejado |
+| LSTM regresión | Cambiar `hidden_size` | Salida `[B,1]` |
+| LSTM pronóstico | Ajustar capas recurrentes | Salida `[B,P]` |
+| U-Net binaria | Conectar skip, cambiar upsampling | Un logit/píxel, máscara alineada |
+| U-Net multiclase | Editar canales de decoder | K logits/píxel |
+| Transformer clasificación de texto | Ajustar `d_model` y cabeza | Salida `[B,K]` |
+| Transformer causal | Cambiar `num_layers` | Logits `[B,T,V]`, predicción greedy |
+| ViT | Usar preset de ViT | Clasificación desde patches |
+| Autoencoder tabular | Construir cuello de botella con Linear | Reconstrucción `[B,F]` |
+| Autoencoder de imagen | Construir encoder/decoder convolucional | Reconstrucción `[B,C,H,W]` |
 
 ## 4. Pruebas de bloques y compilador
 

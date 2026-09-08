@@ -1,6 +1,6 @@
 # 05 · Entrenamiento, evaluación e inferencia
 
-**Estado actualizado:** recorrido base de la entrega A implementado y probado con entrenamiento, métricas por tarea, checkpoints `best`/`last`, evaluación e inferencia. Los controles avanzados de pausa/reanudación, schedulers, AMP y empaquetado multiplataforma continúan como criterios de ampliación.
+**Estado actualizado:** recorrido base implementado y probado con entrenamiento, métricas por tarea, checkpoints `best`/`last`, evaluación e inferencia. Los controles avanzados de pausa/reanudación, schedulers, AMP, acumulación de gradientes y empaquetado multiplataforma continúan como criterios de ampliación.
 
 ## 1. Preparación de una corrida
 
@@ -8,42 +8,39 @@ Requiere tarea/datos confirmados, grafo sin errores, dry-run válido y dispositi
 
 Al iniciar se congela un snapshot. La UI puede editar un borrador nuevo mientras entrena, pero no modifica la corrida en marcha. Los gráficos identifican su run y revisiones para evitar atribuir resultados al grafo que se acaba de editar.
 
-| Control | Propuesta inicial | Validación / efecto |
+| Control | Valor inicial | Estado |
 | --- | --- | --- |
-| Dispositivo | CPU o GPU disponible; selección explícita con recomendación | Mostrar dispositivo real y memoria libre; no cambiar a CPU silenciosamente tras un error |
-| Epochs | 20, entero positivo editable | Cada epoch recorre train; pasos estimados derivados del sampler y batch |
-| Batch size | 32 en MLP, 16 en visión pequeña/secuencias; ajustar preset | Entero positivo; advertencia y dry-run de memoria |
-| Optimizador | AdamW; alternativas Adam y SGD | Parámetros dependientes del tipo |
-| Learning rate | 0.001 como punto de partida | Campo numérico + slider logarítmico; no prometer óptimo universal |
-| Weight decay | 0.0001 sugerido | No negativo; explicar diferencia de AdamW frente a regularización de otros optimizadores |
-| SGD avanzado | Momentum, dampening, Nesterov | Combinaciones legales verificadas |
-| Adam/AdamW avanzado | Betas y eps | Rango válido y eps positivo |
-| Loss | Receta derivada de tarea | Alternativas sólo si aceptan el mismo contrato de salida/target |
-| Métrica secundaria | Siempre configurada por tarea | Visible por defecto; ocultable para ampliar loss |
-| Seed | Valor persistido (42 propuesto) | Python, NumPy si se usa, PyTorch, loaders/generadores |
-| Scheduler | Ninguno por defecto; step, cosine o plateau | Frecuencia explícita por optimizer step/epoch; plateau monitoriza validation |
-| Early stopping | Opcional; patience 5, min_delta configurable | Monitor, dirección y regla visibles; checkpoint best asociado |
-| Gradient clipping | Opcional; norma máxima 1 sugerida para secuencias | Positivo; después de desescalar AMP y antes del optimizer step |
-| Precisión | FP32 garantizada; BF16/FP16 si dispositivo/operadores permiten | AMP con scaler cuando corresponde; indicar fallback antes de iniciar |
-| Acumulación de gradiente | 1 por defecto | Batch efectivo y normalización por muestras/tokens válidos; último grupo incompleto tratado correctamente |
-| DataLoader workers | Configuración conservadora por OS | No saturar CPU ni romper creación de procesos en Windows |
+| Dispositivo | CPU o GPU detectada | Implementado. `system.gpu` devuelve GPU si CUDA está disponible; en ausencia de CUDA informa CPU. |
+| Epochs | 20 | Implementado. |
+| Batch size | 32 (MLP/tabular), 16 (visión/secuencias/texto) | Implementado. |
+| Optimizador | Adam | Implementado. SGD/AdamW no están disponibles. |
+| Learning rate | 0.001 | Implementado. |
+| Loss | Receta fija por tarea | Implementado. No hay alternativas de loss. |
+| Métrica | Fija por tarea | Implementado. No hay métrica secundaria configurable. |
+| Seed | Persistido (42 propuesto) | Implementado para Python, NumPy y PyTorch. |
+| Scheduler | — | *No implementado.* |
+| Early stopping | — | *No implementado.* |
+| Gradient clipping | `max_norm=5.0` fijo | Implementado. No configurable en UI. |
+| Precisión | FP32 | Implementado. AMP/BF16/FP16 *no implementados.* |
+| Acumulación de gradiente | 1 | *No implementada.* |
+| DataLoader workers | 0 | Implementado. |
 
 Los presets son puntos de partida editables. «Rápido para probar» usa muestras/pasos limitados y se etiqueta como smoke experimental; no se confunde con entrenamiento completo.
 
 ## 2. Loss y métrica por tarea
 
-| Tarea | Salida y target | Loss por defecto / alternativas | Gráfica secundaria predeterminada |
+| Tarea / objetivo | Salida y target | Loss | Métrica |
 | --- | --- | --- | --- |
-| Clasificación binaria/multiclase general | Logits `[B,K]`; target entero `[B]` | CrossEntropy; pesos de clase opcionales | Accuracy; alternativas macro-F1 y balanced accuracy |
-| Clasificación multietiqueta · B | Logits `[B,K]`; target 0/1 flotante mismo shape | BCEWithLogits; `pos_weight` opcional | Micro-F1; macro-F1 opcional |
-| Regresión tabular/imagen/secuencia | Valores `[B,Q]`; target mismo shape | MSE; MAE o Huber opcionales | MSE en unidades originales; MAE/RMSE opcionales |
-| Pronóstico | `[B,P,Q]`; target mismo shape | MSE; MAE/Huber opcionales | MSE, con detalle por horizonte/variable |
-| Segmentación binaria | Logits `[B,1,H,W]`; target float 0/1 y máscara válida | BCEWithLogits + soft Dice (pesos 1 y 1 inicialmente) | Dice; IoU opcional |
-| Segmentación multiclase | Logits `[B,K,H,W]`; target entero `[B,H,W]` | CE; CE + soft Dice opcional | Mean IoU; Dice opcional |
-| Reconstrucción / denoising | Reconstrucción del mismo shape y dominio que target | MSE; MAE opcional | MAE; PSNR opcional en imágenes con rango definido |
-| VAE | Reconstrucción, mu y logvar | Reconstrucción MSE + beta×KL para prior normal | MSE de reconstrucción; KL también visible como componente |
-| Texto clasificación | Logits `[B,K]`; etiqueta `[B]` | CrossEntropy | Accuracy o macro-F1 |
-| Texto causal | Logits `[B,T,V]`; IDs desplazados `[B,T]` | CE ignorando padding | Perplejidad `exp(CE media por token válido)` |
+| Clasificación (binaria/multiclase) | Logits `[B,K]`; target entero `[B]` | `F.cross_entropy` | Accuracy |
+| Regresión | Valores `[B,Q]`; target mismo shape | `F.mse_loss` | MSE |
+| Pronóstico | `[B,P]`; target mismo shape | `F.mse_loss` | MSE |
+| Segmentación binaria | Logit `[B,1,H,W]`; target 0/1 | `BCEWithLogits` + soft Dice | Dice |
+| Segmentación multiclase | Logits `[B,K,H,W]`; target entero `[B,H,W]` | `F.cross_entropy` | Mean IoU (sin fondo) |
+| Reconstrucción | Mismo shape que entrada | `F.mse_loss` | MSE |
+| Texto clasificación | Logits `[B,K]`; etiqueta `[B]` | `F.cross_entropy` | Accuracy |
+| Texto causal | Logits `[B,T,V]`; IDs desplazados `[B,T]` | `F.cross_entropy` ignorando `padding_idx=0` | Accuracy por token válido |
+
+*Ampliaciones futuras:* pesos de clase, MAE/Huber, métricas secundarias, macro-F1, balanced accuracy, perplejidad, PSNR, pesos `pos_weight` y VAE con pérdida compuesta.
 
 CE y BCEWithLogits reciben scores sin softmax/sigmoid terminal. La conversión a probabilidades pertenece a métricas/inferencia. El validador detecta una activación terminal incompatible. Esto coincide con los contratos de [CrossEntropyLoss](https://docs.pytorch.org/docs/main/generated/torch.nn.CrossEntropyLoss.html) y [BCEWithLogitsLoss](https://docs.pytorch.org/docs/main/generated/torch.nn.BCEWithLogitsLoss.html).
 
@@ -53,16 +50,13 @@ Para VAE, reconstrucción promedia elementos por muestra y luego batch; KL suma 
 
 ## 3. Definición de métricas y agregación
 
-- Loss de epoch ponderada por el denominador real de la receta: muestras, píxeles válidos o tokens válidos. No promediar promedios de batches de tamaños diferentes sin ponderación.
-- Accuracy = aciertos / muestras válidas. Macro-F1 y balanced accuracy derivadas de conteos globales de la partición, no promedio de valores por batch.
-- MSE/MAE globales por elementos objetivo válidos; RMSE = raíz del MSE global. En multiobjetivo, mostrar agregación y detalle por objetivo, sobre todo si tienen unidades diferentes.
-- Dice/IoU por clase desde conteos acumulados. Por defecto excluir fondo del promedio y mostrarlo por separado; opciones de fondo y umbral quedan persistidas.
-- Clase sin presencia en target ni predicción: métrica por clase «N/A» y exclusión del promedio; si hay falso positivo o falso negativo se calcula el valor correspondiente. Si no quedan clases evaluables, el agregado también es N/A.
-- En segmentación los píxeles `ignore` no contribuyen. Un batch sin elementos válidos se omite con registro; una partición sin elementos válidos es error.
-- Umbrales binarios/multietiqueta por defecto 0.5; si se optimizan, usar validation y guardar el resultado, nunca test.
-- Los pesos de clase o `pos_weight` se calculan sólo con train o se proporcionan explícitamente. No cambiar silenciosamente los pesos entre train/validation/test.
+- Loss de epoch: promedio de la loss por batch.
+- Accuracy: aciertos / muestras válidas (en texto, ignora padding 0).
+- MSE: error cuadrático medio sobre el batch.
+- Dice: coeficiente Dice sobre el foreground en segmentación binaria.
+- Mean IoU: IoU promediado sobre las clases > 0 en segmentación multiclase.
 
-La UI debe distinguir loss normalizada, MSE con unidades originales y objetivos compuestos. Si loss=MSE y métrica=MSE en el mismo espacio, explicar que son la misma magnitud; sugerir MAE como vista alternativa sin inventar una métrica nueva.
+*Ampliaciones futuras:* ponderación por tamaño de batch, métricas por clase, pesos de clase, umbrales optimizables y métricas secundarias.
 
 ## 4. Telemetría y gráficas en vivo
 
@@ -76,35 +70,27 @@ Indicadores: epoch actual, batch/optimizer step, muestras o tokens por segundo, 
 
 El backend puede agrupar eventos de progreso a 2–5 Hz como objetivo inicial; persistir todos los resúmenes de epoch y puntos configurados. La UI usa buffers y reducción de puntos para historiales largos, conservando picos y rangos. No repintar todo el canvas con cada evento de entrenamiento.
 
-## 5. Ciclo de vida y controles reales
+## 5. Ciclo de vida
 
-| Estado | Acción disponible | Resultado esperado |
-| --- | --- | --- |
-| Preparada | Iniciar | Snapshot, preflight, worker |
-| Preparando | Cancelar | Cancelación cooperativa antes de optimizar |
-| Entrenando / validando | Solicitar pausa; cancelar | Estado pendiente hasta respuesta del worker |
-| Pausa solicitada | Esperar; cancelar | Completar unidad de trabajo segura y guardar estado |
-| Pausada | Reanudar; cancelar | Cargar estado preservado o finalizar sin más pasos |
-| Reanudando | Cancelar | Validar hashes/configuración y restaurar worker |
-| Cancelando | Esperar; forzar cierre si no responde | Guardar checkpoint válido si se alcanza límite seguro |
-| Completada | Inferir, evaluar test, nueva corrida | Corrida inmutable con best/last |
-| Fallida / interrumpida | Diagnóstico; reanudar desde checkpoint válido | No inventar progreso ni marcar finalizada |
+El entrenamiento corre hasta completar las epochs configuradas o fallar. No hay pausa/reanudación ni cancelación cooperativa en esta versión.
 
-Pausa cooperativa en el siguiente límite de optimizer step, tras completar la acumulación; en validation, al terminar un batch. Estado persistido debe incluir cursor de datos, acumuladores de métricas, RNG, optimizador, scheduler y AMP. Para reanudación reproducible, orden y aumentaciones se derivan de epoch/sample ID/seed, no de un prefetched RNG imposible de reconstruir.
+| Estado | Descripción |
+| --- | --- |
+| Preparada | Configuración válida; al iniciar se congela el snapshot del grafo y dataset. |
+| Entrenando | Se ejecuta train + validation por epoch; se emiten eventos de progreso. |
+| Completada | Se guardan `best.pt` y `last.pt`; se evalúa test si existe. |
+| Fallida | Error reportado (OOM, shapes, NaN, etc.); se conserva el último checkpoint válido si lo hubo. |
 
-Al pausar se libera el worker y sus recursos después del checkpoint; Reanudar lo reconstruye. El motor permanece disponible. Cancelar finaliza la corrida como cancelada y conserva lo recuperable; una continuación posterior se presenta como corrida derivada. «Forzar cierre» es un último recurso y avisa que se perderá lo posterior al último checkpoint durable.
+## 6. Checkpoints
 
-La UI no presenta pausado/completado hasta recibir confirmación. Un proceso detenido a mitad de escritura no crea un checkpoint válido: archivo temporal y publicación atómica del manifiesto. Cierre normal de la ventana con trabajo activo propone pausar y cerrar, cancelar y cerrar o volver. Ejecución en segundo plano tras cerrar la aplicación queda fuera de A; cambiar de pantalla/proyecto dentro de la app sí mantiene el trabajo.
+Cada corrida guarda dos checkpoints:
 
-## 6. Checkpoints y recuperación
+- `best.pt`: pesos con la mejor métrica de validation.
+- `last.pt`: pesos del final del entrenamiento.
 
-`last` para continuidad; `best` según monitor de validation y dirección explícita. Guardar periódicamente, al terminar epoch, al pausar y al finalizar; límite configurable de históricos sin eliminar best/last ni checkpoints referenciados por predicciones.
+Contenido guardado: `model_state`, `optimizer_state`, `epoch`, `history`, `task_id`, `architecture`, `graph`, `dataset` (referencia) y metadatos del proyecto.
 
-Contenido lógico: pesos y buffers, snapshot de grafo, contrato/pipeline de datos, clases/columnas, loss/métricas, configuración, optimizador, scheduler, AMP, seeds/RNG, cursor/epoch/step, versión del runtime, historial hasta el punto durable, hashes y estado de completitud. Pesos de inferencia exportados no necesitan todo el estado de reanudación.
-
-Al reiniciar tras apagado se detecta la ausencia del worker para una corrida marcada activa y se registra «Interrumpida». Se ofrece último checkpoint íntegro y punto hasta el que se recupera. Si no existe, se ofrece nueva corrida desde cero, no «Reanudar». Historial posterior al checkpoint queda marcado como no reanudable; no repetir steps con IDs ambiguos.
-
-Reproducibilidad se promete como trazabilidad y restauración del estado en un entorno compatible; no igualdad bit a bit entre CPU/GPU, sistemas o versiones. Esta limitación está documentada por [PyTorch sobre reproducibilidad](https://docs.pytorch.org/docs/main/notes/randomness.html).
+*Limitación actual:* el checkpoint no incluye scheduler, AMP, seeds ni cursor de datos, por lo que **no se soporta reanudación** de una corrida interrumpida. Si falla, se puede reiniciar una nueva corrida desde cero o desde `last.pt` como pesos iniciales (sin garantía de reproducibilidad exacta).
 
 ## 7. Evaluación final
 
@@ -116,29 +102,26 @@ Explorar repetidamente test puede influir en decisiones humanas: la UI lo presen
 
 ## 8. Inferencia común
 
-Elegir checkpoint; cargar su grafo y pipeline congelados; verificar entrada; ejecutar `eval` y modo de inferencia sin gradientes; transformar y presentar resultado; registrar latencia y artefacto. No usar pesos aleatorios como si fueran un modelo entrenado.
+Elegir checkpoint; cargar su grafo y pipeline; ejecutar `model.eval()` sin gradientes; transformar y presentar el resultado.
 
-Fuentes: archivo propio, entrada manual cuando corresponda, muestra de una partición elegida o lote. La selección de partición es visible; muestra aleatoria no consume ni cambia el dataset. La salida puede existir sin etiqueta real: en tal caso no se muestra accuracy/error por muestra.
+Fuentes: entrada manual (tabla, texto, serie) o muestra aleatoria de una partición. La muestra aleatoria no consume ni cambia el dataset. Si hay etiqueta real, se muestra comparación; si no, solo la predicción.
 
-La predicción registra checkpoint/hash, fuente/ID de entrada, pipeline, parámetros, salida y timestamp. Una entrada con columnas reorganizadas se mapea por nombre si es inequívoco; incompatible produce diagnóstico, no una conversión silenciosa. Un checkpoint histórico usa su contrato incluso si el proyecto actual cambió.
+La predicción usa el contrato del checkpoint, incluso si el proyecto actual cambió después de guardarlo.
 
 ## 9. Experiencia por familia/tarea
 
-| Caso | Entrada y controles | Resultado / exportación |
+| Caso | Entrada | Resultado |
 | --- | --- | --- |
-| MLP clasificación | Formulario de variables tipadas o filas CSV | Clase y probabilidades; CSV/JSON con IDs |
-| MLP regresión | Formulario/CSV con esquema congelado | Valores desnormalizados y unidades; error sólo con objetivo |
-| CNN/ResNet | Imagen o lote; preview del resize/canales | Probabilidades o valores; opcional galería de errores etiquetados |
-| LSTM/RNN/GRU | CSV/serie manual, orden y T visibles | Clase/valor/horizonte; gráfico alineado con tiempo |
-| U-Net | Imagen, umbral binario, opacidad, clases visibles | Máscara indexada sin pérdida, paleta/JSON y overlay PNG separado |
-| Autoencoder | Vector/imagen; ruido de prueba explícito si denoising | Reconstrucción y mapa/resumen de error |
-| VAE | Reconstruir por mu o muestrear con seed; explorar z | Resultado estocástico etiquetado, interpolación entre z compatibles |
-| Transformer clasificación | Texto y tokens/preprocesamiento visibles bajo demanda | Probabilidades por clase |
-| Transformer causal | Prompt, greedy o sampling; temperatura, top-k, top-p, seed, máximo tokens | Tokens en streaming, detener, texto/JSON |
+| MLP clasificación | Formulario de variables | Clase y probabilidades |
+| MLP regresión | Formulario de variables | Valor y residual si hay etiqueta |
+| CNN/ViT | Imagen | Probabilidades o valor |
+| LSTM/CNN1D/Transformer | Formulario de serie o muestra de partición | Clase/valor/horizonte |
+| U-Net | Imagen | Máscara predicha y overlay |
+| Autoencoder | Vector/imagen | Reconstrucción y error |
+| Transformer clasificación de texto | Texto libre | Probabilidades por clase |
+| Transformer causal | Texto libre | Tokens predichos (greedy `argmax`; sin sampling todavía) |
 
-Segmentación restaura geometría original según pipeline; probabilidad y máscara dura usan interpolación apropiada y la máscara discreta siempre vecino más cercano. El overlay no sustituye la máscara exportada. En pronóstico, no permitir más horizonte que el contrato directo del checkpoint; generar recursivamente exige otra receta explícita.
-
-En texto, greedy no aplica temperatura; sampling exige temperatura positiva, top-k válido y 0<top-p≤1. Límite de contexto incluye prompt y continuación; mostrar política de truncado antes de ejecutarla. No introducir chat con roles si sólo se entrenó siguiente token sobre texto plano. Probabilidades de tokens no se describen como confianza calibrada.
+*Ampliaciones futuras:* controles de sampling (temperatura, top-k, top-p), restauración de geometría original en segmentación y exportación de resultados.
 
 ## 10. Recursos y errores
 

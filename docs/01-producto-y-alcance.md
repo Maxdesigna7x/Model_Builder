@@ -1,6 +1,6 @@
 # 01 · Producto y alcance
 
-**Fecha:** 7 de septiembre de 2026. **Estado actualizado:** núcleo A, familias B y atención encoder/causal de C implementados. VAE y Transformer encoder–decoder siguen pendientes.
+**Fecha:** 8 de septiembre de 2026. **Estado actualizado:** núcleo A, ampliaciones B (RNN/GRU/CNN1D, preset residual en CNN 2D y autoencoders) y atención encoder/causal de C (Transformer encoder, Transformer causal y ViT) implementados. VAE y Transformer encoder–decoder siguen pendientes.
 
 ## 1. Decisión de producto
 
@@ -30,11 +30,11 @@ La UI usará React + TypeScript; Tauri proporcionará la aplicación de escritor
 
 La biblioteca no puede prometer representar toda operación posible de PyTorch o toda arquitectura publicada. El contrato es cubrir todas las piezas de las familias declaradas aquí, con extensibilidad explícita y sin componentes decorativos que no se ejecuten.
 
-| Entrega propuesta | Familias | Resultado exigido |
+| Entrega propuesta | Familias | Estado |
 | --- | --- | --- |
-| A · Núcleo completo | MLP, CNN 2D, LSTM, U-Net 2D | Todos los pasos y todas sus piezas iniciales, incluida construcción libre compatible |
-| B · Ampliación de familias | RNN, GRU, CNN 1D, ResNet 2D, autoencoder denso/convolucional | Mismo flujo; nuevas plantillas, adaptadores, métricas y bloques probados |
-| C · Generativas y atención | Transformer encoder, decoder causal y ViT implementados; VAE pendiente | Tokenización/atención operativas; VAE requerirá salidas múltiples y pérdida compuesta |
+| A · Núcleo completo | MLP, CNN 2D, LSTM, U-Net 2D | Implementado |
+| B · Ampliación de familias | RNN, GRU, CNN 1D, preset residual en CNN 2D, autoencoder denso/convolucional | Implementado (RNN/GRU como bloques; el preset residual usa `Add`/`identity` dentro de CNN 2D) |
+| C · Generativas y atención | Transformer encoder, Transformer causal y ViT implementados; VAE y Transformer encoder–decoder pendientes | Atención implementada; VAE y encoder–decoder requieren contratos adicionales |
 
 El catálogo sólo muestra combinaciones ejecutables. El detalle verificado y las exclusiones actuales se mantienen en [`../ARCHITECTURE_TODO.md`](../ARCHITECTURE_TODO.md).
 

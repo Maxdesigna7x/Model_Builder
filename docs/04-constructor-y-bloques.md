@@ -1,6 +1,6 @@
 # 04 · Constructor visual y catálogo de bloques
 
-**Estado actualizado:** constructor y compilador de la entrega A implementados. Las piezas B/C de este catálogo se conservan como ampliaciones planificadas. Las entregas A/B/C se definen en [01](01-producto-y-alcance.md) y los tensores siguen la convención de [03](03-tareas-y-datos.md).
+**Estado actualizado:** constructor y compilador implementados para las tareas y bloques del catálogo activo. Las entregas A/B/C se definen en [01](01-producto-y-alcance.md) y los tensores siguen la convención de [03](03-tareas-y-datos.md). Los bloques que aparecen en este documento pero no en el código están marcados explícitamente como *ampliaciones futuras*.
 
 ## 1. Qué representa el canvas
 
@@ -60,168 +60,130 @@ Un `PortSpec` declara ID estable, dirección, tipo (`tensor`, `mask`, `lengths`,
 
 Las categorías filtran la biblioteca de la familia seleccionada. «Avanzado» revela piezas compatibles menos comunes; no desactiva validaciones. Operaciones compartidas se reutilizan entre familias. Un híbrido permitido se etiqueta «Personalizado basado en…» y deja de afirmar que es una U-Net/ResNet canónica si rompe su estructura, aunque siga cumpliendo el contrato de tarea.
 
-## 5. Catálogo común de A
+## 5. Catálogo común implementado
 
-Los defaults concretos se derivan de una plantilla; los límites duros corresponden a semántica válida, no a recomendaciones de capacidad. Valores grandes generan estimación/advertencia de recursos. Todas las dimensiones deben ser enteras positivas salvo batch simbólico y ejes autorizados.
+Los defaults concretos se derivan de una plantilla; los límites duros corresponden a semántica válida. Valores grandes generan advertencia de recursos. Todas las dimensiones deben ser enteras positivas salvo batch simbólico y ejes autorizados.
 
 | Bloque / ID | Propiedades editables | Puertos, regla y uso |
 | --- | --- | --- |
-| Entrada · `input` | Nombre y referencia al contrato | Shape/dtype/columnas/clases derivados de Datos; una entrada principal en A |
-| Salida · `output` | Nombre semántico y referencia de tarea | Valida shape final; no introduce una proyección oculta |
-| Densa · `linear` | `out_features` (default 64), bias | Actúa sobre último eje; `in_features` derivado. La biblioteca exige adaptar layout si el último eje no representa features |
-| Identidad · `identity` | Ninguna numérica | Conserva tensor; útil para rama residual y bypass explícito |
-| ReLU / LeakyReLU | Tipo, pendiente negativa de Leaky (0.01) | Conservan shape; sin operaciones in-place expuestas |
-| GELU / SiLU / ELU | Aproximación GELU, alpha ELU (1) | Activaciones alternativas con ayuda sobre saturación/coste |
-| Tanh / Sigmoid / Softplus | Tipo; beta/threshold de Softplus en avanzado | Conservan shape; advertir dominio acotado de Tanh/Sigmoid |
-| Softmax / LogSoftmax | Eje semántico obligatorio | No aceptarlas antes de la salida logits de CE/BCE; reservadas para atención u operaciones internas compatibles |
-| Dropout | `p` (0.1), 0≤p<1 | Aleatorio en entrenamiento; inactivo en evaluación |
-| Dropout espacial 2D | `p` (0.1) | Entrada imagen/features `[B,C,H,W]`; regulariza canales |
-| BatchNorm1D / 2D | eps, momentum, affine, estadísticas acumuladas | 1D: `[B,F]` o `[B,C,L]`; 2D: `[B,C,H,W]`. No aplicar 1D directamente a `[B,T,F]` |
-| LayerNorm | Ejes finales normalizados, eps, affine | Verificar tamaño de ejes; útil para secuencias, features y atención |
-| GroupNorm | Grupos, eps, affine | C divisible por grupos; layout con canal en eje 1 |
-| InstanceNorm2D | eps, momentum, affine, track stats | Features de imagen; mostrar diferencias frente a BatchNorm |
-| Flatten | Eje inicial/final (default 1…último) | No colapsar B; calcula producto de dimensiones |
-| Reshape / Unflatten | Dimensiones objetivo sin B; un único `-1` inferible | Conserva número de elementos por muestra; no reordena datos |
-| Permute | Orden de ejes semánticos | Mantiene B primero; transforma layout de forma explícita |
-| Squeeze / Unsqueeze | Eje no batch | Squeeze sólo dimensión 1; no elimina ejes por accidente |
-| Concat | Eje no batch, orden de entradas | Iguales en todos los otros ejes; suma el eje seleccionado |
-| Add / Multiply | Dos o más entradas ordenadas | Shapes idénticos en A; sin broadcasting implícito que oculte un error |
-| Split | Eje no batch, tamaños de partes | Suma de partes igual al tamaño del eje; salidas nombradas |
-| Slice | Eje no batch, inicio/fin/paso positivo | Rango no vacío y conocido; no introducir indexación Python libre |
-| ReduceMean / ReduceMax | Ejes no batch, keepdim | Usa variante masked para tiempo con padding |
-| Selección temporal | `last_valid`, `mean_masked`, `max_masked` | `[B,T,D]` + máscara/longitudes → `[B,D]`; no confundir padding con observación |
+| Entrada · `input` | Ninguna | Shape/dtype derivados del contrato de datos |
+| Salida · `output` | Ninguna | Valida shape final; no introduce proyección oculta |
+| Densa · `linear` | `out_features`, bias | Actúa sobre último eje; `in_features` derivado |
+| Identidad · `identity` | Ninguna | Conserva tensor; útil para rama residual |
+| ReLU / LeakyReLU / GELU / SiLU / Tanh / Sigmoid | Ninguna (tipo elegido al insertar) | Activaciones que conservan shape |
+| Softmax | `dim` | Softmax sobre eje; no usar antes de CE |
+| Dropout | `p` | Aleatorio en train; inactivo en eval |
+| Dropout2D | `p` | Para `[B,C,H,W]` |
+| BatchNorm1D / BatchNorm2D | `eps`, `momentum`, `affine` | 1D: `[B,F]`/`[B,C,L]`; 2D: `[B,C,H,W]` |
+| LayerNorm | `normalized_shape`, `eps`, `affine` | Útil para secuencias y atención |
+| Flatten | `start_dim`, `end_dim` | No colapsar batch |
+| Reshape | `shape` | Dimensiones sin batch; un `-1` permitido |
+| Permute | `dims` | Permutación de ejes |
+| Concat | `dim` | Suma el eje seleccionado; resto iguales |
+| Add | Ninguna | Suma elemento a elemento de entradas con shape idéntico |
+| Resize2D | `size`, `mode` | `nearest` o `bilinear`; para `[B,C,H,W]` |
 
-Constantes y operaciones elementales necesarias dentro de macro-bloques de C tendrán tipos/rangos explícitos. No se ofrece `eval`, `Lambda` ni un bloque de código arbitrario como atajo para un catálogo incompleto.
+*Ampliaciones futuras:* `ELU`, `Softplus`, `LogSoftmax`, `GroupNorm`, `InstanceNorm`, `Unflatten`, `Squeeze`, `Unsqueeze`, `Split`, `Slice`, `ReduceMean/Max`, selección temporal con máscara, `Multiply`.
 
-## 6. CNN 2D: todas las piezas de la familia A
+## 6. CNN 2D
 
-| Bloque | Propiedades principales / avanzadas | Restricciones |
+| Bloque | Propiedades principales | Restricciones |
 | --- | --- | --- |
-| Conv2D | Filtros (32), kernel (3×3), stride (1), padding (1), dilation (1), groups (1), bias, padding mode | Canales de entrada derivados; grupos divide C de entrada y salida; dimensiones resultantes positivas |
-| DepthwiseConv2D | Kernel, stride, padding, dilation, multiplicador de canales | Variante visible de Conv2D con groups=C; salida C×multiplicador |
-| PointwiseConv2D | Canales salida, bias, stride | Conv2D de kernel 1; se muestra como operación real |
-| SeparableConv2D | Filtros y parámetros depthwise | Compuesto expandible Depthwise→Pointwise, con sus dos operaciones |
-| MaxPool2D | Kernel (2), stride (2), padding (0), dilation (1), ceil_mode, devolver índices | Puerto tensor y puerto opcional de índices; índices no son features |
-| AvgPool2D | Kernel, stride, padding, ceil_mode, count_include_pad, divisor_override opcional | Exponer cómo se calcula el promedio en bordes |
-| AdaptiveAvgPool2D | Tamaño objetivo H/W | Global Average Pool es preset 1×1; no elimina B/C |
-| AdaptiveMaxPool2D | Tamaño objetivo, devolver índices | Misma convención de dimensiones, salida de índices opcional |
-| Padding2D | Izquierda/derecha/arriba/abajo, modo, valor constante | Validar restricciones del modo reflect; operación explícita |
-| Crop2D | Márgenes o tamaño central | Salida positiva; no deformar ni escalar implícitamente |
-| Resize2D / ResizeLike | Tamaño o escala; nearest/bilinear; align_corners aplicable | ResizeLike recibe referencia sólo para H/W; registra transformación |
-| ConvTranspose2D | Canales, kernel, stride, padding, output_padding, dilation, groups, bias | Dimensión resultante validada; no se describe como inversa exacta de Conv2D |
-| MaxUnpool2D | Kernel, stride, padding, output_size de referencia | Requiere índices de un MaxPool compatible, mismos canales y procedencia |
+| Conv2D | `out_channels`, `kernel_size`, `stride`, `padding`, `dilation`, `groups`, `bias` | Canales de entrada derivados; `groups` divide C de entrada y salida |
+| MaxPool2D | `kernel_size`, `stride`, `padding` | Dimensiones resultantes positivas |
+| AvgPool2D | `kernel_size`, `stride`, `padding` | Idem |
+| AdaptiveAvgPool2D | `output_size` | Global Average Pool como preset 1×1 |
+| ConvTranspose2D | `out_channels`, `kernel_size`, `stride`, `padding`, `output_padding`, `bias` | Dimensión resultante validada |
 
-Conv, pooling, normalización, activación, dropout, flatten/global pool y proyección final se pueden combinar libremente dentro de sus contratos. Una capa de pooling no se añade automáticamente tras cada convolución.
+Conv, pooling, normalización, activación, dropout, flatten/global pool y proyección final se combinan libremente dentro de sus contratos.
 
-Las restricciones de grupos y padding se basan en [Conv2D de PyTorch](https://docs.pytorch.org/docs/main/generated/torch.nn.Conv2d.html). MaxPool permite gestionar índices y redondeo de salida; su validación debe contemplar las reglas de borde, no sólo una división entera simplificada. Véase [MaxPool2D](https://docs.pytorch.org/docs/main/generated/torch.nn.MaxPool2d.html). La fórmula de salida del upsampling aprendido y `output_padding` se validan contra [ConvTranspose2D](https://docs.pytorch.org/docs/main/generated/torch.nn.ConvTranspose2d.html).
+*Ampliaciones futuras:* `DepthwiseConv2D`, `PointwiseConv2D`, `SeparableConv2D`, `AdaptiveMaxPool2D`, `Padding2D`, `Crop2D`, `ResizeLike`, `MaxUnpool2D`.
 
 ## 7. LSTM, RNN, GRU y CNN 1D
 
-| Bloque | Entrega | Propiedades / semántica |
-| --- | --- | --- |
-| LSTM | A | hidden_size (64), num_layers (1), bidirectional (false), bias, dropout entre capas (0), proj_size (0); input_size derivado, batch_first fijo true |
-| Selector de estado LSTM | A | Última capa o capa concreta; dirección forward/backward/ambas concatenadas; selecciona `h`, no confundir con `c` |
-| RNN | B | hidden_size, capas, no linealidad tanh/relu, dirección, dropout, bias |
-| GRU | B | hidden_size, capas, dirección, dropout, bias; estado h, sin estado c |
-| Conv1D / Depthwise / Pointwise | B | Análogos 1D de convolución; adaptador `[B,T,F]`↔`[B,F,T]` visible |
-| MaxPool1D / AvgPool1D / AdaptivePool1D | B | Kernel/stride/padding o longitud objetivo; se recalculan longitudes y máscara |
-| Dropout1D / InstanceNorm1D | B | Contrato channel-first; control de p o normalización |
-| CausalPad1D | B | Padding sólo pasado; dependiente de kernel y dilatación |
-| ConvTranspose1D / Resize1D | B | Recuperación de longitud para subgrafos compatibles; no habilita automáticamente tareas no declaradas |
+| Bloque | Propiedades / semántica |
+| --- | --- |
+| LSTM | `hidden_size`, `num_layers`, `bidirectional`, `bias`, `dropout`; `batch_first=true` |
+| RNN | `hidden_size`, `num_layers`, `nonlinearity`, `bidirectional`, `bias` |
+| GRU | `hidden_size`, `num_layers`, `bidirectional`, `bias` |
+| Conv1D | `out_channels`, `kernel_size`, `stride`, `padding`, `dilation`, `groups`, `bias` |
+| MaxPool1D / AvgPool1D / AdaptiveAvgPool1D | Análogos 1D del pooling 2D |
+| CausalPad1D | Padding izquierdo para convolución causal |
+| TemporalSelect | Toma el último paso temporal; `[B,T,D]` → `[B,D]` |
 
-LSTM expone `sequence`, `h_n`, `c_n`; acepta longitudes/máscara y estados iniciales opcionales tipados. Sin estados conectados usa ceros por batch; no conserva estado entre muestras independientes. Forma de sequence: `[B,T,directions×H_out]`; estados: `[layers×directions,B,H_out]` y c con hidden_size sin proyección. Para pronóstico, el preset usa dirección única; bidireccional se permite sólo al codificar una ventana enteramente observada, con advertencia si se pretende interpretación causal por timestep. No se conecta futuro a contexto.
+LSTM produce `sequence` de shape `[B,T,directions×H_out]` y se usa con `TemporalSelect` para clasificación/regresión. RNN y GRU existen como bloques atómicos pero no están asignados a ninguna tarea del catálogo todavía.
 
-`hidden_size>0`; proyección 0 o menor que hidden_size; dropout entre capas sólo tiene efecto con varias capas. El inspector no ofrecerá un dropout aparentemente activo en una LSTM de una capa. La selección final bidireccional concatena estados finales de ambas direcciones, no toma ingenuamente el último vector temporal. Estas diferencias se verifican contra [LSTM de PyTorch](https://docs.pytorch.org/docs/main/generated/torch.nn.LSTM.html).
+La recurrencia está encapsulada en el operador PyTorch; el grafo exterior permanece acíclico.
 
-La recurrencia temporal está encapsulada en el operador, por lo que el grafo exterior permanece acíclico. «Inspeccionar celda» representa las compuertas de entrada/olvido/salida, candidato, estado c y estado h; en GRU representa reset/update y candidato. Esa vista educativa muestra operaciones reales y parámetros derivados, pero A–C no permite rediseñar arbitrariamente la ecuación interna del operador PyTorch. Un editor de celdas recurrentes personalizadas requeriría un contrato adicional de bucle/estado.
+## 8. U-Net
 
-## 8. U-Net: conexiones y bloques editables
+La familia `unet` no añade bloques compuestos al catálogo; se construye a partir de las piezas CNN 2D existentes (`conv2d`, `maxpool2d`, `convtranspose2d`, `concat`, `add`, `identity`, activaciones, normalización). El preset inicial genera un encoder–decoder con skips editables.
 
-Usa las piezas CNN2D; añade presets compuestos, sin operaciones escondidas:
+El usuario puede modificar el grafo libremente: cambiar canales, agregar o quitar skips, sustituir `ConvTranspose2D` por `Resize2D` + `Conv2D`, etc. La validación verifica que las formas de `Concat` coincidan fuera del eje de canales.
 
-| Compuesto | Operaciones expandibles | Propiedades de alto nivel |
-| --- | --- | --- |
-| DoubleConv | Conv→Norm opcional→Activación→Conv→Norm opcional→Activación | Canales, kernels, normalización, activación |
-| EncoderStage | DoubleConv; rama de skip antes del descenso; MaxPool o Conv stride 2 | Canales, método de descenso |
-| Bottleneck | DoubleConv y dropout opcional | Canales, p |
-| DecoderStage | ConvTranspose o Resize+Conv→Concat con skip→DoubleConv | Canales, upsampling, estrategia explícita de alineación |
-| SegmentationHead | Conv2D 1×1→Salida logits | 1 canal para binaria, K para multiclase, derivados de tarea |
+*Ampliación futura:* compuestos `DoubleConv`, `EncoderStage`, `DecoderStage` y `SegmentationHead` expandibles.
 
-Cada etapa tiene una salida de features y, donde procede, un puerto skip. Las conexiones skip se dibujan de encoder a decoder correspondiente; conectar niveles diferentes requiere resolver tamaños explícitamente. Concat concatena canales, no suma. Ofrecer Add es válido para una variante, pero cambia el modelo y su etiqueta de plantilla.
+## 9. Autoencoders y preset residual · B
 
-Resoluciones impares: error accionable con propuesta de Crop/Pad/ResizeLike; nada se recorta silenciosamente. Elegir «Insertar alineación» añade el nodo al grafo y al snapshot. Alternativa en Datos: política de padding a múltiplo de 2^profundidad y restauración a tamaño original en inferencia. Fondo y máscaras ignoradas se resuelven en el contrato de datos/loss, no como canales mágicos.
+**Preset residual dentro de CNN 2D:** el catálogo no expone `resnet` como familia independiente, pero el preset de CNN 2D llamado "CNN · Bloque residual" coloca dos convoluciones 3×3 con una rama `identity` + `Add`, editable como cualquier otro grafo.
 
-## 9. ResNet y autoencoders · B
+**Autoencoder denso (`tabular.reconstruction`):** se construye con `linear`, activaciones y una capa intermedia que actúa como cuello de botella. La salida debe tener el mismo número de features que la entrada.
 
-**ResNet:** bloque básico expandible Conv3×3→BN→ReLU→Conv3×3→BN; rama identidad o proyección Conv1×1→BN; Add→ReLU. Si cambia resolución o canales, la proyección debe ser explícita. Bottleneck: Conv1×1→BN→ReLU→Conv3×3→BN→ReLU→Conv1×1→BN, más rama y suma. Inspector: canales internos/salida, stride, expansión, normalización y activación. Stem, etapas, global pooling y cabeza son piezas del canvas. Editar fuera de la receta estándar crea una variante personalizada.
+**Autoencoder convolucional (`image.reconstruction`):** encoder con `conv2d` + `maxpool2d`, decoder con `convtranspose2d` (o `resize2d` + `conv2d`) y salida con el mismo número de canales/resolución que la entrada.
 
-**Autoencoder denso:** Input→capas Linear/activación→Latent→capas Linear/activación→Output de reconstrucción. `Latent` es una identidad nombrada con dimensión visible, no una compresión oculta.
+*Ampliaciones futuras:* familia `resnet` independiente, autoencoder con pares ruido/limpio (`image.denoising`) y VAE con salidas múltiples.
 
-**Autoencoder convolucional:** Conv/Pool→cuello de botella→ConvTranspose o Resize+Conv→Output. Flatten y Reshape son explícitos si se usa un vector latente. Puede usar MaxPool con índices y MaxUnpool: la UI muestra esa dependencia y advierte que el decoder ya no se puede ejecutar desde z solo sin índices. «Espejar encoder» propone un subgrafo que se puede inspeccionar; no afirma invertir matemáticamente la convolución.
+## 10. Transformer y texto · C implementado; VAE pendiente
 
-Salida lineal para variables no acotadas; Sigmoid sólo cuando la receta reconstruye datos [0,1] y la loss espera ese dominio. El ruido de denoising pertenece al pipeline; la salida objetivo es limpia. Anomalía mediante error de reconstrucción es exploratoria; sin etiquetas y calibración no se reporta accuracy de detección.
-
-## 10. VAE y Transformer · C
+Los bloques de atención están implementados como operaciones monolíticas (no desplegables en Q/K/V individualmente):
 
 | Bloque | Propiedades | Contrato |
 | --- | --- | --- |
-| Cabeza latente VAE | Dimensión z; proyecciones independientes | Features→mu y logvar de igual shape |
-| Reparameterize | Política train/eval; límite numérico logvar documentado | mu, logvar→z; train mu+exp(0.5 logvar)×epsilon; reconstrucción determinista usa mu |
-| GaussianSample | Cantidad y seed de inferencia | Muestreo z desde prior normal; habilitado sólo para decoder compatible |
-| Embedding | Vocabulario derivado, D, padding_idx, max_norm opcional | Tokens enteros `[B,T]`→`[B,T,D]`; IDs dentro de vocabulario |
-| PositionalEncoding | Sinusoidal o aprendida, longitud máxima, dropout | Mantiene `[B,T,D]`; valida contexto |
-| MultiHeadAttention | D, cabezas, dropout, bias; modo self/cross | q/k/v tipados, máscara de padding y atención; D divisible por cabezas |
-| FeedForward | D_ff (default 4D), activación, dropout | Compuesto Linear→GELU/SiLU→Dropout→Linear |
-| TransformerEncoderBlock | Pre/post norm, D, heads, D_ff, dropout | Atención no causal→residual→FFN→residual, con normas visibles |
-| CausalDecoderBlock | Pre-norm inicial, D, heads, D_ff, dropout | Self-attention causal→residual→FFN→residual |
-| SequencePooling / CLSSelect | Mean masked o token CLS | `[B,T,D]`→`[B,D]`; CLS requiere token introducido por pipeline |
-| LanguageHead | V derivado, bias, compartir con embedding opcional | `[B,T,D]`→logits `[B,T,V]`; pesos compartidos sólo con shapes/IDs compatibles |
-| MaskBuilder | Causal, padding o combinación | Máscaras con tipo y semántica explícitos, no features flotantes arbitrarias |
+| `embedding` | `vocab_size`, `d_model`, `padding_idx` | Tokens `[B,T]` → embeddings `[B,T,D]` |
+| `sequence_projection` | `d_model` | Proyección de secuencias numéricas a `[B,T,D]` |
+| `positional_encoding` | `max_length`, `learned`, `dropout` | Suma posiciones a `[B,T,D]` |
+| `transformer_encoder` | `d_model`, `heads`, `num_layers`, `dim_feedforward`, `dropout` | Encoder Transformer no causal |
+| `causal_transformer` | `d_model`, `heads`, `num_layers`, `dim_feedforward`, `dropout` | Decoder causal con máscara automática |
+| `sequence_pool` | `mode` (`mean` o `last`) | `[B,T,D]` → `[B,D]` |
+| `patch_embedding` | `patch_size`, `d_model` | Imagen `[B,C,H,W]` → patches `[B,T,D]` para ViT |
 
-VAE expone salidas `reconstruction`, `mu`, `logvar`; la receta aplica reconstrucción+beta×KL. El control beta y sus schedules pertenecen a Entrenamiento. El grafo tiene un subgrafo decoder identificable para muestreo independiente. No ofrecer generación desde z si depende de skips/índices de una imagen de entrada.
+**ViT:** se construye con `patch_embedding` + `positional_encoding` + `transformer_encoder` + `sequence_pool` + `linear`.
 
-La atención se puede expandir a proyecciones Q/K/V, partición de cabezas, QKᵀ, escalado, máscara, softmax, dropout, producto por V, unión de cabezas y proyección de salida. Esos operadores internos tendrán IDs tipados (`split_heads`, `merge_heads`, `matmul`, `scale`, `apply_mask`, etc.) y propiedades derivadas D/head_dim; no usar cambios de eje implícitos. El modo de inspección puede solicitar mapas de atención con límites de tamaño; no los almacena siempre.
+**VAE:** no implementado. Requiere salidas múltiples (`reconstruction`, `mu`, `logvar`) y pérdida compuesta (reconstrucción + β×KL), que el compilador actual no soporta.
 
-El bloque MHA estándar y su expansión deben tener forward/backward equivalentes con mismos pesos y semilla apropiada. Se usará una convención interna de máscara `true=permitido`; el adapter la convierte a la semántica de cada API de PyTorch. Validar filas con todas las posiciones enmascaradas. Las restricciones de dimensiones y puertos parten de [MultiheadAttention](https://docs.pytorch.org/docs/main/generated/torch.nn.MultiheadAttention.html).
-
-Texto causal requiere que cada posición vea sólo el pasado y su token actual; targets desplazados y padding ignorado se definen en Datos/Entrenamiento. Cross-attention queda en catálogo avanzado, pero traducción encoder–decoder no se anuncia como tarea soportada en C. La generación autoregresiva ocurre en el runner de inferencia, no mediante un ciclo dibujado de Output a Input.
+*Ampliaciones futuras:* bloques desplegables de atención (`MultiHeadAttention`, `FeedForward`, `MaskBuilder`), generación autoregresiva con sampling (temperatura, top-k, top-p) y VAE completo.
 
 ## 11. Plantillas de referencia y shapes verificables
 
-Las siguientes recetas son especificaciones de pruebas futuras; no resultados ya ejecutados. Normas/activaciones son nodos distintos aunque se abrevien en la cadena. B permanece variable.
-
 | Plantilla | Grafo y dimensiones clave |
 | --- | --- |
-| MLP clasificación | Input `[B,F]`→Linear64→ReLU→Dropout0.1→Linear32→ReLU→LinearK→Output `[B,K]` |
-| MLP regresión | Misma base, cabeza LinearQ→Output `[B,Q]`, sin activación restrictiva |
-| CNN clasificación | `[B,3,32,32]`→Conv16 k3 p1→ReLU→MaxPool2→`[B,16,16,16]`→Conv32 k3 p1→ReLU→AdaptiveAvgPool1→Flatten→LinearK |
-| CNN regresión | Misma base con LinearQ; no softmax |
-| LSTM clasificación | `[B,T,F]`+lengths→LSTM64→selector h última capa→LinearK |
-| LSTM regresión | Mismo encoder→LinearQ |
-| LSTM pronóstico | `[B,T,F]`→LSTM64→h→Linear(P×Q)→Reshape(P,Q) |
-| U-Net pequeña | `[B,3,64,64]`→DoubleConv16 (skip64)→Pool→DoubleConv32 (skip32)→Pool→DoubleConv64→Up32→Concat(skip32)=64 canales→DoubleConv32→Up16→Concat(skip64)=32 canales→DoubleConv16→Conv1×1(1 o K) |
-| ResNet pequeña | Stem Conv16→dos bloques básicos16→bloque32 stride2 con proyección→bloque32→GlobalAvgPool→Flatten→LinearK/Q |
-| AE denso | `[B,F]`→Linear64→ReLU→Linear8 (z)→Linear64→ReLU→LinearF |
-| AE imagen | `[B,1,32,32]`→Conv16 stride2 k4 p1→ReLU→Conv32 stride2 k4 p1→ReLU→ConvTranspose16 k4 s2 p1→ReLU→ConvTranspose1 k4 s2 p1→Sigmoid |
-| VAE denso | Encoder64→Linear mu8 y logvar8→Reparameterize→decoder64→LinearF; salidas reconstrucción/mu/logvar |
-| Transformer clasificación | Tokens→Embedding64+posición→2 bloques encoder (4 heads, D_ff256)→masked mean→LinearK |
-| Transformer causal | Tokens→Embedding64+posición→2 bloques causales (4 heads, D_ff256)→LayerNorm→LinearV |
+| MLP clasificación | Input `[B,F]` → Linear64 → ReLU → Dropout0.1 → Linear32 → ReLU → LinearK → Output `[B,K]` |
+| MLP regresión | Misma base, cabeza Linear1 → Output `[B,1]` |
+| CNN clasificación | `[B,3,32,32]` → Conv16 k3 p1 → ReLU → MaxPool2 → Conv32 k3 p1 → ReLU → AdaptiveAvgPool1 → Flatten → LinearK |
+| CNN regresión | Misma base con Linear1 |
+| LSTM clasificación | `[B,T,F]` → LSTM64 → TemporalSelect → LinearK |
+| LSTM regresión | Mismo encoder → Linear1 |
+| LSTM pronóstico | `[B,T,F]` → LSTM64 → TemporalSelect → LinearP |
+| U-Net binaria/multiclase | Encoder Conv/MaxPool con skips → bottleneck → Decoder ConvTranspose/Concat → Conv1×1(1 o K) |
+| AE denso | `[B,F]` → Linear64 → ReLU → Linear8 → Linear64 → ReLU → LinearF |
+| AE imagen | `[B,C,H,W]` → Conv/MaxPool → bottleneck → ConvTranspose → `[B,C,H,W]` |
+| ViT clasificación | `[B,C,H,W]` → PatchEmbedding → PositionalEncoding → TransformerEncoder → SequencePool → LinearK |
+| Transformer clasificación de texto | Tokens `[B,T]` → Embedding → PositionalEncoding → TransformerEncoder → SequencePool → LinearK |
+| Transformer causal | Tokens `[B,T]` → Embedding → PositionalEncoding → CausalTransformer → LinearV |
 
-Cambiar el input real actualiza dimensiones derivadas. U-Net de esta plantilla exige forma compatible o nodos explícitos de alineación. Las variantes binarias de clasificación general usan dos logits y CE por defecto; sólo segmentación binaria usa una salida logit por píxel en A.
+Cambiar el input real actualiza dimensiones derivadas. Las variantes binarias de clasificación general usan dos logits y CE; la segmentación binaria usa un logit por píxel.
 
-## 12. Validación en tres niveles
+## 12. Validación
 
-1. **Interacción:** conexión de puerto, cardinalidad y ciclo; feedback inmediato en frontend.
-2. **Semántica autoritativa Python:** versiones/propiedades, shapes/dtypes, rutas, máscaras, contrato de tarea y recursos estimados. Se ejecuta con revisión/ID de solicitud para descartar respuestas viejas.
-3. **Prueba de batch:** construir modelo real, forward, loss y backward en un worker aislado con datos válidos; comprobar finitud, tamaño de salida y gradientes de parámetros entrenables alcanzables. Usa modelo efímero para no alterar estadísticas BatchNorm, RNG o pesos de una corrida.
+El backend ejecuta una validación semántica autoritativa (`graph.validate`) y un *dry-run* real: construye el modelo, hace forward, calcula loss y backward con un batch sintético, y verifica que las salidas y los gradientes sean finitos.
 
-Reglas obligatorias: sin ciclos exteriores; sin puertos requeridos vacíos; al menos una ruta Input→Output; sin dimensiones ≤0; sin mezcla batch/canales; número de clases/targets exacto; Concat compatible fuera de su eje; Add de shapes iguales; estados/máscaras consistentes; parámetros enteros/rangos válidos. Nodos huérfanos pueden existir en borrador, pero deben conectarse, eliminarse o marcarse «borrador excluido» antes de entrenar. La exclusión se muestra claramente.
+Reglas obligatorias verificadas: sin ciclos; sin puertos requeridos vacíos; al menos una ruta `input`→`output`; sin dimensiones ≤0; número de clases/targets exacto; `Concat` compatible fuera de su eje; `Add` de shapes iguales; parámetros enteros/rangos válidos. Nodos huérfanos pueden existir en borrador, pero deben conectarse o eliminarse antes de entrenar.
 
-Fórmula de Conv por eje: `out=floor((in+2p-d(k-1)-1)/s+1)`. ConvTranspose: `out=(in-1)s-2p+d(k-1)+output_padding+1`. Pooling con ceil y bordes utiliza las reglas específicas de su operador. Reshape conserva producto; Concat suma su eje; Linear sólo modifica el último eje. Estas reglas se contrastan con PyTorch en pruebas, incluyendo valores impares y casos límite.
+Fórmula de Conv por eje: `out = floor((in + 2p - d(k-1) - 1)/s + 1)`. ConvTranspose: `out = (in-1)s - 2p + d(k-1) + output_padding + 1`. `Reshape` conserva producto; `Concat` suma su eje; `Linear` sólo modifica el último eje.
 
-Un error incluye código, node_id, port_id/property, esperado, recibido y corrección propuesta. Ejemplo: «Concat decoder_2: altura 31 frente a 32; añade Pad/Crop/ResizeLike o cambia el upsampling». Las reparaciones sugeridas muestran el cambio antes de aplicarlo y se pueden deshacer.
+Un error incluye `code`, `message` y, cuando es posible, el `node_id` afectado. Ejemplo: «Concat: shapes [B,C1,H,W] y [B,C2,H,W] no coinciden en el eje 1».
 
-Estimación de memoria distingue pesos, gradientes, optimizador, activaciones, batch y margen runtime. Atención incluye el posible coste cuadrático en T. No se promete que la estimación evite toda falta de memoria; el dry-run y manejo de OOM siguen siendo necesarios.
+*Ampliaciones futuras:* estimación de memoria detallada, validación de máscaras/longitudes y reparaciones sugeridas aplicables con un clic.
 
 ## 13. Compilación y fidelidad del modelo
 

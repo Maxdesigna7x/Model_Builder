@@ -1,6 +1,6 @@
 # 06 · Arquitectura técnica y distribución
 
-**Estado actualizado:** scaffold React/Tauri/Python, protocolo por pipes, persistencia y motor PyTorch implementados. El empaquetado Tauri en este Linux necesita instalar las cabeceras WebKitGTK/GLib indicadas en el README.
+**Estado actualizado:** scaffold React/Tauri/Python, motor PyTorch y persistencia básica implementados. El transporte real difiere de la propuesta inicial: no hay sidecar Python persistente ni worker separado; cada comando spawnea `backend/modelbuilder/engine.py` y usa `stdin/stdout` con JSON por líneas (Tauri) o HTTP via Vite (modo web de desarrollo). El empaquetado multiplataforma y la distribución siguen pendientes.
 
 ## 1. Stack y responsabilidad
 
@@ -25,195 +25,165 @@ No se exige Next.js, SSR, servidor remoto ni cuenta del usuario. Un navegador pu
 
 ```mermaid
 flowchart TD
-    UI[React / TypeScript en WebView] <-->|comandos y eventos tipados| SHELL[Tauri / Rust]
-    SHELL <-->|JSONL por stdin y stdout| ENGINE[Motor local Python / supervisor]
-    ENGINE --> IO[Jobs de datos / índices / previews]
-    ENGINE <-->|control y telemetría| WORKER[Worker PyTorch por trabajo]
-    WORKER --> DEVICE[CPU o GPU]
-    ENGINE --> PROJECT[Manifiestos / snapshots / artefactos]
-    WORKER --> RUN[Checkpoint y journal de corrida]
-    SHELL --> ASSET[Lectura acotada de artefactos para la UI]
+    UI[React / TypeScript en WebView] <-->|comandos y eventos| SHELL[Tauri / Rust o Vite dev server]
+    SHELL <-->|stdin/stdout JSONL| ENGINE[backend/modelbuilder/engine.py]
+    ENGINE --> PROJECT[Manifiestos / datasets / checkpoints]
 ```
 
-Tauri inicia un sidecar Python conocido, verifica handshake y lo supervisa. El motor atiende comandos sin ejecutar un train loop dentro del lector del protocolo. Operaciones largas como importación, dry-run, entrenamiento e inferencia usan jobs cancelables.
+En **modo Tauri**, Rust ejecuta `python backend/modelbuilder/engine.py` como subproceso por cada comando, escribe el JSON por `stdin`, lee la última línea de `stdout` y devuelve el resultado al frontend mediante IPC. Para entrenamiento, el subproceso se lanza en un hilo aparte y su `stdout` se reenvía como eventos Tauri.
 
-Worker usa `spawn` o un subproceso explícito portable, sin asumir fork ni heredar un contexto CUDA. Una cola administra el dispositivo; A limita a un trabajo pesado por dispositivo y conserva responsividad. DataLoader workers pertenecen al worker y se cierran con él.
+En **modo web de desarrollo**, un plugin de Vite expone tres endpoints HTTP:
+- `POST /api/backend` — lanza `engine.py` y devuelve la última línea de `stdout`.
+- `POST /api/start-training` — lanza `engine.py` y reenvía cada línea como SSE.
+- `GET /api/training-events` — Server-Sent Events con el progreso.
 
-El motor carga registros ligeros al arrancar; la carga de PyTorch/dispositivos puede ser asíncrona y mostrar «Preparando motor». No marcar GPU disponible antes de detectar runtime y driver. Fallar una corrida no cierra toda la UI.
+No hay sidecar persistente, handshake, worker separado ni jobs cancelables en la versión actual. Cada llamada al backend crea un proceso Python efímero.
 
-## 3. Transporte decidido para la primera versión
+## 3. Transporte
 
-**Comandos UI→Tauri→Python y eventos de vuelta mediante JSON por líneas sobre pipes locales.** No abrir puertos HTTP como requisito de A. Esta decisión concreta el transporte que quedó abierto en la nota de stack anterior.
+- **Tauri:** JSON por líneas sobre `stdin/stdout` de un subproceso Python efímero. No se abren puertos HTTP.
+- **Modo web de desarrollo:** HTTP/1.1 via Vite, con JSON para comandos y Server-Sent Events para progreso de entrenamiento.
 
-UTF-8; una línea completa por mensaje; `stdout` sólo protocolo, `stderr` para logs técnicos. Rust reensambla chunks de bytes y conserva caracteres UTF-8 que crucen lecturas. Flush en respuestas/eventos. Límite inicial propuesto de 1 MiB por mensaje; grafos o contenidos mayores usan un artefacto referenciado.
+Mensajes planos: `{ action, ...payload }`. Respuesta: `{ ok, result }` o `{ ok: false, error: { code, message } }`. Eventos de entrenamiento: `{ type, epoch, train_loss, val_loss, metric, ... }`.
 
-Imágenes, tensores, datasets y checkpoints no circulan como grandes cadenas base64. El motor publica un `artifact_id`, tipo, dimensiones y checksum; Tauri lo resuelve dentro de ubicaciones autorizadas y expone lectura local acotada a la UI. No aceptar rutas arbitrarias enviadas por contenido del canvas.
-
-El adapter de comunicación se mantiene independiente para permitir HTTP/WebSocket en una futura edición remota. No implementar ambos transportes antes de necesitarlos.
+Imágenes y previews circulan como base64 PNG en las respuestas de inferencia y análisis de datos. Los datasets y checkpoints se guardan en disco como tensores `.pt` y se referencian por ruta.
 
 ## 4. Envelope y semántica de mensajes
 
-Comando ilustrativo:
+Mensaje de comando actual:
 
 ```json
-{
-  "protocol_version": 1,
-  "kind": "request",
-  "request_id": "req-42",
-  "method": "graph.validate",
-  "project_id": "project-1",
-  "experiment_id": "experiment-1",
-  "expected_revision": 7,
-  "payload": {"graph_revision": 7, "dataset_revision": 3}
-}
+{ "action": "graph.validate", "project_id": "...", "graph": {...}, "dataset": {...} }
 ```
 
-Respuesta con `request_id`, `ok`, resultado o error estructurado. Error contiene `code`, `message`, `details`, `recoverable` y referencia de campo/nodo si aplica. No serializar NaN/Infinity como JSON inválido: usar null + estado/razón explícita.
-
-Evento ilustrativo:
+Respuesta:
 
 ```json
-{
-  "protocol_version": 1,
-  "kind": "event",
-  "event": "run.metrics",
-  "event_id": "run-1:128",
-  "run_id": "run-1",
-  "seq": 128,
-  "timestamp": "2026-09-05T20:00:00Z",
-  "payload": {
-    "phase": "validation",
-    "epoch": 3,
-    "optimizer_step": 96,
-    "metrics": {"loss": 0.41, "accuracy": 0.84},
-    "aggregation": "epoch",
-    "count": 150
-  }
-}
+{ "ok": true, "result": {...} }
 ```
 
-Handshake: versión de protocolo, versión app/backend, versiones de esquemas, catálogo de bloques/tareas y capacidades de dispositivo. Un desacuerdo incompatible bloquea acciones con explicación; no intentar interpretar datos con otra versión silenciosamente.
+o
 
-Comandos largos devuelven aceptación y `job_id`/`run_id`; la terminación llega como evento. Timeout del request no significa que el trabajo no haya empezado. `run.start`, importación y creación incluyen clave de idempotencia persistida: reintentar tras desconexión consulta la misma operación, no duplica el trabajo.
+```json
+{ "ok": false, "error": { "code": "validation_failed", "message": "..." } }
+```
 
-`expected_revision` evita guardar sobre cambios nuevos. Validación asíncrona devuelve revisión; el frontend descarta resultados viejos. Eventos durables tienen secuencia monótona por run; la UI deduplica por run+seq. Tras reconnect consulta snapshot y recupera eventos desde cursor, luego sigue en vivo. Progreso efímero puede consolidarse; estados terminales y checkpoints nunca se pierden por backpressure.
+Evento de entrenamiento:
 
-## 5. API de aplicación propuesta
+```json
+{ "type": "epoch", "epoch": 3, "train_loss": 0.41, "val_loss": 0.38, "metric": 0.84 }
+```
 
-| Grupo | Operaciones mínimas | Resultado |
-| --- | --- | --- |
-| Motor | `hello`, `capabilities`, `health`, `shutdown` | Estado y capacidades reales |
-| Proyectos | `project.create/open/save/list_recent`, `experiment.create/duplicate/select` | Manifiesto y revisión |
-| Catálogos | `catalog.tasks`, `catalog.blocks`, `catalog.templates` | Esquemas/versiones y disponibilidad |
-| Datos | `data.inspect/import/generate/preview/configure/split/commit/relink` | Job, diagnóstico o revisión de dataset |
-| Grafo | `graph.save/validate/dry_run`, `graph.template.save` | Snapshot/errores/shapes/coste |
-| Recursos | `resources.estimate/status` | Estimado separado de medido |
-| Corridas | `run.start/pause/resume/cancel/status/list/events` | Acuse, estado, historial |
-| Checkpoints | `checkpoint.list/inspect/export` | Contrato, integridad y artefactos |
-| Evaluación | `evaluation.start/status/export` | Métricas ligadas a checkpoint/split |
-| Inferencia | `inference.start/cancel/status/history/export` | Trabajo y resultados |
-| Artefactos | `artifact.describe/read` | Metadata y contenido acotado |
+*Diferencias respecto a la propuesta inicial:* no hay `protocol_version`, `request_id`, `kind`, `method`, `expected_revision`, `seq` ni `timestamp` estructurado. El protocolo es plano y suficiente para la funcionalidad actual.
 
-Diálogos de selección se gestionan por Tauri, que entrega referencias aprobadas al motor. El motor confirma validez de archivo, esquema y pertenencia al proyecto. No aceptar comandos shell construidos con nombres de archivos del usuario.
+## 5. API implementada
 
-## 6. Dominio desacoplado
+| Acción | Descripción |
+| --- | --- |
+| `hello` / `system.gpu` | Handshake mínimo y detección de dispositivo. |
+| `project.create` / `project.open` / `project.delete` / `project.state.save` | Gestión de proyectos en disco (solo Tauri). |
+| `data.generate` / `data.import` / `data.pipeline.apply` / `data.analytics` | Generación, importación y análisis de datasets. |
+| `graph.validate` | Validación semántica y dry-run del grafo. |
+| `train` | Inicio de entrenamiento; devuelve aceptación y emite eventos. |
+| `inference.run` | Predicción desde un checkpoint. |
+| `pick_directory` | Diálogo nativo de selección de carpeta (Tauri). |
 
-`TaskSpec`: modalidad, input/target, familias compatibles, salida, losses, métricas, postprocesador y UI de resultados. `BlockSpec`: contrato de [04](04-constructor-y-bloques.md). `DatasetAdapter`: inspección/importación/indexado/preview y schema. `TrainingRecipe`: batches, forward, loss, métricas, evaluación y checkpoint. `InferenceAdapter`: preparación, ejecución y postproceso.
+*Pendientes respecto a la propuesta:* `catalog.*`, `graph.save`, `graph.dry_run`, `resources.*`, `run.pause/resume/cancel`, `checkpoint.*`, `evaluation.*`, `artifact.*`, idempotencia y versionado de protocolo.
 
-Para añadir una familia se requiere registro + bloques faltantes + plantillas + compatibilidad + generador/importador + receta + inferencia + pruebas. No editar un gran condicional repartido por cinco pantallas. Frontend usa esquemas para propiedades comunes y componentes especializados para previews que lo necesitan.
+## 6. Dominio actual
 
-JSON Schema es el contrato publicado versionado. Los tipos TS se generan y el backend valida en runtime; no mantener manualmente dos catálogos distintos. Las reglas numéricas profundas permanecen en Python; TS sólo realiza prechecks rápidos y renderiza diagnóstico autoritativo.
+El backend es monolítico: `engine.py` enruta acciones a `storage.py`, `data.py`, `models.py` y `training.py`. No existe la separación en `TaskSpec`, `BlockSpec`, `DatasetAdapter`, `TrainingRecipe` ni `InferenceAdapter`.
 
-## 7. Persistencia del proyecto nuevo
+Para añadir una tarea o familia hay que modificar:
+- `backend/modelbuilder/catalog.py` — tareas y compatibilidades.
+- `frontend/src/catalog.ts` — catálogo duplicado para la UI.
+- `backend/modelbuilder/data.py` — generador/importador y pipeline.
+- `backend/modelbuilder/models.py` — bloques y compilación.
+- `backend/modelbuilder/training.py` — loss y métrica.
+- `backend/modelbuilder/engine.py` — inferencia y rutas de datos.
+- `tests/` — pruebas de forward/backward y recorridos.
 
-Estructura propuesta, todavía no creada:
+*Ampliación futura:* unificar catálogos de frontend y backend mediante un contrato JSON Schema y tipos TypeScript generados.
+
+## 7. Persistencia actual
+
+Estructura real generada en `workspace_data/projects/<project-id>/`:
 
 ```text
-mi-proyecto/
-├── project.json
-├── experiments/<experiment-id>/
-│   ├── experiment.json
-│   ├── draft/graph.json
-│   ├── draft/layout.json
-│   └── revisions/<graph-revision>/graph.json
+<project-id>/
+├── project.json              # nombre, task_id, architecture, timestamps
+├── state.json                # estado de la UI (borrador)
 ├── datasets/<dataset-id>/<revision>/
 │   ├── manifest.json
-│   ├── splits.json
-│   ├── pipeline.json
-│   ├── pipeline-state/
-│   ├── index/
-│   └── sources/                   # sólo si se eligió copiar/generar
+│   └── dataset.pt
 ├── runs/<run-id>/
-│   ├── run.json
-│   ├── snapshot/                  # grafo, contratos, hashes y receta
-│   ├── events.jsonl
-│   ├── checkpoints/<checkpoint-id>/
-│   │   ├── manifest.json
-│   │   ├── weights.pt
-│   │   └── training-state.pt
-│   └── evaluations/<evaluation-id>/
-├── predictions/<prediction-id>/
-├── exports/
-└── cache/                         # derivable; nunca única copia de pesos
+│   ├── run.json              # config e hiperparámetros
+│   ├── events.jsonl          # métricas por epoch
+│   ├── result.json           # resumen final
+│   ├── best.pt               # mejores pesos
+│   └── last.pt               # últimos pesos
+└── latest.json               # puntero a corrida más reciente
 ```
 
-`project.json`: ID, nombre, schema_version, timestamps y experimento activo. `graph.json`: IDs/versiones de nodos, propiedades, puertos, edges ordenadas, outputs y contratos; `layout.json`: posiciones, viewport y grupos visuales. Mover nodos no cambia el hash de modelo.
+`state.json` guarda el grafo completo (nodos, edges, propiedades y layout) como un único objeto; no hay revisiones ni separación entre `graph.json` y `layout.json`. Los checkpoints guardan `model_state`, `optimizer_state`, `epoch`, `history` y referencias al grafo/dataset; no incluyen scheduler, AMP ni cursor de datos, por lo que no se soporta reanudación exacta.
 
-Revisiones y corridas inmutables; borrador con autosave y escritura atómica. Rutas relativas dentro del proyecto, referencias externas etiquetadas y relocalizables. Locks de escritura por proyecto; segunda instancia abre de sólo lectura o explica el bloqueo. Sólo el backend escribe manifiestos de dominio; el worker publica sus checkpoints/journal a través del contrato de corrida, sin carreras con guardado de la UI.
-
-La publicación de checkpoint se realiza en directorio temporal: escribir pesos/estado, vaciar buffers, verificar hashes, publicar manifiesto completo y actualizar puntero best/last atómicamente. En recuperación se ignoran temporales y se valida integridad. JSONL truncado por apagado conserva líneas completas previas; se reconstruye estado desde journal y checkpoint, no desde la última etiqueta de la UI.
-
-El formato de pesos propuesto es `state_dict` tensorial; no se serializa una instancia Python de modelo. Estado de entrenamiento contiene sólo tensores y primitivas soportadas; estado RNG de bibliotecas externas se convierte explícitamente. Carga restrictiva `weights_only=True` donde aplique, más validación de esquema/hash. No importar pickle/código externo ni permitir fallback automático a carga irrestricta. Referencia: [serialización de PyTorch](https://docs.pytorch.org/docs/main/notes/serialization.html).
-
-Un paquete de inferencia contiene grafo, versión de bloques, pesos, pipeline, mapa de clases/columnas y postprocesado. No prometer que un archivo de pesos aislado reconstruye el modelo. ONNX/TorchScript/importación universal no forman parte de A; se agregarían sólo para operadores y dispositivos verificados.
+*Ampliaciones futuras:* separar grafo semántico de layout, versionar revisiones, publicar checkpoints con hashes y soportar reanudación completa.
 
 ## 8. Estado del frontend y rendimiento
 
-Separar estado de navegación, borrador del grafo, datos de backend, telemetría y preferencias. Un store pequeño por área o equivalente; no un único objeto global que fuerce re-render de cada nodo al llegar una métrica. Suscripciones por node_id y por run_id, memoización y listas virtualizadas.
+Todo el estado vive en `frontend/src/App.tsx` mediante `useState`, `useEffect` y `localStorage` para preferencias de tema/acento. No hay store central ni separación en `stores/`, `features/` ni listas virtualizadas.
 
-Objetivos de aceptación propuestos, a medir en el equipo de referencia y en WebViews Linux/Windows:
+Objetivos de rendimiento propuestos en la especificación original (FPS, latencia, memoria, manejo de 100.000 puntos) **no han sido medidos ni reportados** todavía.
 
-- Edición/pan/zoom fluida con 200 nodos y 300 aristas; objetivo aproximado 60 FPS, registrar percentiles de frame y hardware.
-- Respuesta visual a selección/edición <100 ms en el caso de referencia.
-- Validación local inmediata y validación semántica usual <500 ms para grafos pequeños, excluyendo cold start y dry-run; operaciones largas muestran actividad y cancelación.
-- Telemetría percibida en menos de 1 s bajo carga de referencia; no crecimiento sin límite de memoria con historial largo.
-- Gráficas de 100.000 puntos almacenados usando una vista reducida a unos pocos miles por serie; exportación mantiene datos originales.
-- Arranque muestra ventana/estado temprano, sin esperar en blanco a importar PyTorch. Medir tiempo de UI y tiempo del motor por separado.
+*Ampliaciones futuras:* refactorizar a stores por área, memoización por node/run y mediciones de rendimiento reales.
 
-No son mediciones logradas ni garantías universales. Dry-run, auto-layout grande, indexación, thumbnails y lectura de archivos trabajan fuera de la interacción principal. El motor limita memoria y cachés de previews; la UI solicita muestras, no datasets enteros.
+## 9. Distribución
 
-## 9. Distribución real Linux y Windows
+La distribución todavía no está implementada. Solo existen scripts de desarrollo:
 
-Tauri utiliza UI web dentro de una ventana de escritorio y puede incluir ejecutables auxiliares. Rust se compila; el frontend se construye como assets; Python se empaqueta con runtime/dependencias. No todo se transforma en un único binario nativo sin runtime. Véanse [sidecars de Tauri](https://v2.tauri.app/develop/sidecar/) y [distribución](https://v2.tauri.app/distribute/).
+- `run-web.sh` — modo web via Vite.
+- `run.sh` — `npm run tauri dev`.
 
-Objetivo de paquetes: Linux x86_64, primero un paquete para la distribución soportada y después AppImage; Windows x86_64 mediante instalador. Construir y probar cada OS con sus dependencias nativas. Definir matriz exacta de distribución/versión Windows durante fase 0; «Linux» no significa cualquier distribución arbitraria. macOS no es requisito inicial y necesitaría build, firma, pruebas WebView y validación de PyTorch/MPS propios.
+Pendientes:
 
-Linux depende de bibliotecas del sistema/WebKitGTK compatibles; Windows del runtime WebView2. El instalador debe comprobar/proveer lo necesario según política soportada. Los [prerrequisitos de Tauri](https://v2.tauri.app/start/prerequisites/) son la referencia para fijar la matriz, no una razón para depender del entorno conda de desarrollo.
+- Empaquetado del runtime Python (PyInstaller u otra opción).
+- Configuración de `externalBin` / sidecar en Tauri.
+- Builds Linux (AppImage/deb) y Windows (instalador .msi/.exe).
+- Matriz de SO/versiones y pruebas de instalación desde cero.
+- Licencias de dependencias y assets locales.
 
-Primera prueba de empaquetado Python: PyInstaller en modo carpeta, con binario sidecar y recursos/dependencias preservados. La integración de `externalBin` y directorio runtime se verificará en el instalador; no asumir que copiar sólo el ejecutable empaqueta todas las bibliotecas. PyInstaller describe sus modos y la necesidad de construir para el entorno destino en [su documentación](https://pyinstaller.org/en/stable/operating-mode.html).
+Tauri requiere WebKitGTK/GLib en Linux y WebView2 en Windows. Ver [prerrequisitos de Tauri](https://v2.tauri.app/start/prerequisites/).
 
-Una distribución CPU debe funcionar sin Python/Node/conda instalados por el usuario. La variante CUDA incluye el runtime de librerías necesario y verifica driver compatible; no instala drivers silenciosamente. PyTorch/CUDA puede dominar el tamaño del paquete: Tauri ligero no implica instalador total pequeño. La selección final entre paquete CPU y variante GPU descargable/separada se resuelve en fase 0 con tamaños medidos; offline después de instalar todos los componentes requeridos.
-
-Probar nombres/rutas con espacios, acentos y Unicode, permisos de escritura, rutas largas, procesos hijos, cierre, reanudación y relocalización. Fuente y assets estáticos empaquetados localmente; no depender de un CDN para el flujo básico. Versiones de Node/Rust/Python/librerías bloqueadas y licencias registradas al implementar; ninguna instalación se realiza en esta fase documental.
-
-## 10. Estructura futura del código
-
-Propuesta, sin crear estos directorios todavía:
+## 10. Estructura real del código
 
 ```text
 frontend/src/
-  app/ components/ theme/ contracts/
-  features/projects/ task-selection/ data/ builder/ training/ inference/
-  bridge/ stores/
+  App.tsx            # estado global y pantallas
+  bridge.ts          # adaptador Tauri / HTTP
+  catalog.ts         # catálogo de tareas y bloques (duplicado con backend)
+  types.ts           # tipos TypeScript manuales
+  Chart.tsx          # componente de gráficas ECharts
+  DataCharts.tsx     # visualizaciones de datos
+  DataPipelineEditor.tsx
+  ModelNode.tsx
+  styles.css, ui-polish.css, inference-layout.css
+  main.tsx
 src-tauri/src/
-  app.rs engine_process.rs protocol.rs artifacts.rs
+  lib.rs             # comandos Rust y spawn de Python
+  main.rs
 backend/modelbuilder/
-  domain/ catalog/ graph/ datasets/ training/ inference/
-  persistence/ protocol/ workers/
-schemas/
-tests/                         # contratos, integración, UI y paquetes
+  catalog.py         # tareas y compatibilidades
+  data.py            # importadores y generadores
+  engine.py          # router de acciones
+  models.py          # bloques y compilación del grafo
+  storage.py         # persistencia de proyectos
+  training.py        # entrenamiento
+schemas/             # no existe; los tipos están manuales
+tests/
+  test_engine.py
+  test_new_architectures.py
 docs/
 references/
 ```
 
-Se empieza desde esta especificación, sin portar widgets Qt ni arrastrar una dependencia del código anterior. El respaldo sirve de referencia de comportamiento y datos históricos. Su formato de proyecto no se presenta como compatible automáticamente con el formato nuevo; importación legacy sería una herramienta separada y no bloquea la reconstrucción.
+La estructura actual es plana y funcional. La propuesta modular de `features/`, `stores/`, `domain/` y `schemas/` queda como deuda técnica documentada para futuras iteraciones.
