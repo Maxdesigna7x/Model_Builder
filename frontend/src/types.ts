@@ -52,6 +52,7 @@ export interface DatasetPreviewItem {
   targetLabel?: string;
   label?: string;
   features?: number[];
+  text?: string;
   target?: number | string;
 }
 
@@ -65,7 +66,7 @@ export interface ProjectModel {
 }
 
 export interface DatasetPreview {
-  type: "image" | "tabular";
+  type: "image" | "tabular" | "text";
   items?: DatasetPreviewItem[];
   columns?: string[];
 }
@@ -82,6 +83,8 @@ export interface DatasetOptions {
   window?: number;
   horizon?: number;
   stride?: number;
+  inputTransform?: { mode: "standard"; center: number[]; scale: number[] } | { mode: "minmax" | "minmax_sym"; low: number[]; high: number[] };
+  targetTransform?: { center: number[]; scale: number[] };
 }
 
 export interface HuggingFaceDataset {
@@ -137,6 +140,8 @@ export interface DatasetSummary {
   classes?: string[];
   description: string;
   splits: { train: number; validation: number; test: number };
+  splitCounts?: { train: number; validation: number; test: number };
+  splitSource?: "generated" | "official" | "temporal";
   preview?: DatasetPreview;
   options?: DatasetOptions;
   sourcePath?: string;

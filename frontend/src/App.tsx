@@ -4,7 +4,7 @@ import {
   ReactFlow, Background, Controls, MiniMap, addEdge, useEdgesState, useNodesState,
   type Connection, type NodeMouseHandler, type ReactFlowInstance
 } from "@xyflow/react";
-import { Activity, AlertCircle, ArrowLeft, BarChart3, Box, BrainCircuit, Check, CheckCircle2, ChevronRight, Clock3, Cloud, Cpu, Database, Download, FolderOpen, GitBranch, Info, Layers3, Moon, Palette, Play, Plus, RefreshCw, Save, Sparkles, Sun, Upload, WandSparkles, X } from "lucide-react";
+import { Activity, AlertCircle, ArrowLeft, ArrowUpDown, BarChart3, Binary, Box, BrainCircuit, Check, CheckCircle2, ChevronRight, Clock3, Cloud, Cpu, Database, Download, FileText, FolderOpen, GitBranch, GitFork, Grid2X2, Image, LayoutGrid, Layers3, List, Network, Info, Moon, Palette, Play, Plus, RefreshCw, Repeat2, ScanLine, Search, Shield, Shrink, SlidersHorizontal, Save, Sparkles, Split, Sun, Table2, Upload, WandSparkles, Waves, Waypoints, X, Zap } from "lucide-react";
 import { ARCHITECTURES, BLOCK_INFO, BLOCKS, TASKS, presetsFor, syncOutputContract, templateFor } from "./catalog";
 import { getPresetBenefit, getPresetDescription, getPresetName, getPresetTradeoff } from "./catalog-i18n";
 import { backend, isTauri, onTrainingEvent, pickDatasetDirectory, startTraining } from "./bridge";
@@ -14,6 +14,18 @@ import DataPipelineEditor from "./DataPipelineEditor";
 import DataCharts from "./DataCharts";
 import { translateBackendError } from "./i18n/errors";
 import type { Architecture, DataPipeline, DatasetAnalytics, DatasetOptions, DatasetPreview, DatasetSummary, GpuInfo, HuggingFaceDataset, MetricPoint, ModelEdge, ModelNode as ModelNodeT, Project, ProjectModel, RunResult, Step, TaskId, TrainingRun } from "./types";
+
+const ARCHITECTURE_ICONS: Record<Architecture, typeof BrainCircuit> = {
+  mlp: Binary,
+  cnn1d: Waves,
+  lstm: Repeat2,
+  transformer: Waypoints,
+  transformer_causal: GitFork,
+  cnn: ScanLine,
+  vit: LayoutGrid,
+  unet: Split,
+  autoencoder: Shrink,
+};
 
 const nodeTypes = { modelNode: ModelNode };
 
@@ -193,7 +205,6 @@ export default function App() {
   };
 
   const deleteProject = async (p: Project) => {
-    if (!window.confirm(t("app:deleteProject.confirm", { name: p.name }))) return;
     if (isTauri()) {
       try {
         await backend("project.delete", { project: p });
@@ -297,7 +308,7 @@ export default function App() {
     if(step==="training"){if(!run){setNotice(t("app:notice.completeRun"));return}setStep("inference")}
   };
 
-  if (!project) return <ProjectHub projects={projects} onCreate={createProject} onOpen={openProject} onDelete={deleteProject} onOpenPath={openPath} theme={theme} setTheme={setTheme} accent={accent} setAccent={setAccent} />;
+  if (!project) return <ProjectHub projects={projects} onCreate={createProject} onOpen={openProject} onDelete={deleteProject} theme={theme} setTheme={setTheme} accent={accent} setAccent={setAccent} />;
 
   return <div className="app-shell">
     <Sidebar step={step} setStep={setStep} completed={completed} onHome={() => setProject(null)} gpuInfo={gpuInfo} nodes={nodes} dataset={dataset} theme={theme} setTheme={setTheme} accent={accent} setAccent={setAccent} />
@@ -305,7 +316,7 @@ export default function App() {
       {notice && <div className="notice"><span>{notice}</span><button onClick={() => setNotice("")}><X size={14}/></button></div>}
       <section className={`content ${step === "training" ? "no-scroll" : ""}`}>
         <div className={`stage-nav ${step==="builder"?"on-toolbar":""}`}><button className="secondary" onClick={goPrevious} disabled={stepIndex===0}><ArrowLeft/> {t("common:previous")}</button>{stepIndex<steps.length-1&&<button className="primary" onClick={goNext}>{t("common:next")} <ChevronRight/></button>}</div>
-        {step === "model" && <ModelTask architecture={architecture} task={task} onChoose={choose} />}
+        {step === "model" && <ModelTask architecture={architecture} task={task} onChoose={choose} onContinue={goNext} />}
         {step === "data" && <DataStep project={project} task={task} dataset={dataset} onDownload={downloadData} onImport={importData} onChooseAnother={()=>setDataset(null)} onApplyPipeline={applyDataPipeline} onSplitsChange={splits => setDataset(current => current ? { ...current, splits } : current)} />}
         {step === "builder" && architecture && task && <Builder architecture={architecture} task={task} dataset={dataset} models={models} activeModelId={activeModelId} onSelectModel={switchModel} onAddModel={addModel} theme={theme} nodes={nodes} edges={edges} setNodes={setNodes} setEdges={setEdges} onNodesChange={(changes: Parameters<typeof onNodesChange>[0]) => { setGraphValid(false); onNodesChange(changes); }} onEdgesChange={(changes: Parameters<typeof onEdgesChange>[0]) => { setGraphValid(false); onEdgesChange(changes); }} onDirty={()=>setGraphValid(false)} selected={selected} setSelectedId={setSelectedId} onValidate={validateGraph} />}
         {step === "training" && task && <Training task={task} dataset={dataset} models={models} activeModelId={activeModelId} onSelectModel={switchModel} runs={trainingRuns} activeRunId={activeRunId} training={training} accent={accent} onSelectRun={setActiveRunId} onAddRun={addTrainingRun} onTrain={train} />}
@@ -543,15 +554,17 @@ function Training({ task, dataset, models, activeModelId, onSelectModel, runs, a
   const activeRun=runs.find(item=>item.id===activeRunId) || runs[0];
   const history=activeRun?.history || [];
   const run=activeRun?.result || null;
-  const [epochs, setEpochs] = useState(20);
+  const defaultEpochs=task==="text.language_model"?10:task.startsWith("image.segmentation")?40:20;
+  const defaultBestCriterion="val_loss";
+  const [epochs, setEpochs] = useState(defaultEpochs);
   const [lr, setLr] = useState(0.001);
   const [batch, setBatch] = useState(Number(dataset?.options?.batchSize||32));
   const [optimizer, setOptimizer] = useState("adamw");
-  const [bestModelCriterion, setBestModelCriterion] = useState("none");
+  const [bestModelCriterion, setBestModelCriterion] = useState(defaultBestCriterion);
   useEffect(()=>{
     const config=activeRun?.config || {};
-    setEpochs(Number(config.epochs || 20));setLr(Number(config.learning_rate || .001));setBatch(Number(config.batch_size || dataset?.options?.batchSize || 32));setOptimizer(String(config.optimizer || "adamw"));setBestModelCriterion(String(config.best_model_criterion || "none"));
-  },[activeRunId,dataset?.options?.batchSize]);
+    setEpochs(Number(config.epochs || defaultEpochs));setLr(Number(config.learning_rate || .001));setBatch(Number(config.batch_size || dataset?.options?.batchSize || 32));setOptimizer(String(config.optimizer || "adamw"));setBestModelCriterion(String(config.best_model_criterion || defaultBestCriterion));
+  },[activeRunId,dataset?.options?.batchSize,defaultEpochs,defaultBestCriterion]);
   const currentEpoch=history.at(-1)?.epoch || 0;
   const targetEpochs=Number(activeRun?.config.epochs || epochs || 1);
   const progress=Math.min(100,Math.round(currentEpoch/targetEpochs*100));
@@ -674,15 +687,32 @@ function AppearanceMenu({ theme, setTheme, accent, setAccent }: { theme:Theme; s
   </div>;
 }
 
-function ProjectHub({ projects, onCreate, onOpen, onDelete, onOpenPath, theme, setTheme, accent, setAccent }: { projects: Project[]; onCreate: (n:string,d:string)=>void; onOpen:(p:Project)=>void; onDelete:(p:Project)=>void; onOpenPath:()=>void; theme:Theme; setTheme:(v:Theme)=>void; accent:Accent; setAccent:(v:Accent)=>void }) {
-  const { t } = useTranslation(["app", "common"]);
+function ProjectHub({ projects, onCreate, onOpen, onDelete, theme, setTheme, accent, setAccent }: { projects: Project[]; onCreate: (n:string,d:string)=>void; onOpen:(p:Project)=>void; onDelete:(p:Project)=>void; theme:Theme; setTheme:(v:Theme)=>void; accent:Accent; setAccent:(v:Accent)=>void }) {
+  const { t } = useTranslation(["app", "common", "catalog"]);
   const [creating, setCreating] = useState(false); const [name, setName] = useState(""); const [description, setDescription] = useState("");
+  const [projectPendingDeletion,setProjectPendingDeletion]=useState<Project|null>(null);
+  const [query,setQuery]=useState("");
+  const [modelFilter,setModelFilter]=useState("all");
+  const [projectView,setProjectView]=useState<"list"|"grid">("list");
+  const filteredProjects=projects.filter(item=>(modelFilter==="all"||item.architecture===modelFilter)&&`${item.name} ${item.description}`.toLowerCase().includes(query.toLowerCase()));
+  const modelCounts=projects.reduce<Record<string,number>>((counts,item)=>{const key=item.architecture||"unconfigured";counts[key]=(counts[key]||0)+1;return counts},{});
+  const maxCount=Math.max(1,...Object.values(modelCounts));
+  const recentActivity=projects.slice().sort((a,b)=>new Date(b.updatedAt).getTime()-new Date(a.updatedAt).getTime()).slice(0,4);
   return <div className="hub"><header className="hub-header"><div className="brand" title={t("common:appName")} aria-label={t("common:appName")}><span className="brand-mark"><BrainCircuit /></span></div><AppearanceMenu theme={theme} setTheme={setTheme} accent={accent} setAccent={setAccent}/></header>
-    <div className="hub-content"><div className="hero"><span className="eyebrow">{t("app:hub.heroEyebrow")}</span><h1>{t("app:hub.heroTitle")}<br/><em>{t("app:hub.heroTitleEmphasis")}</em></h1><p>{t("app:hub.heroSubtitle")}</p><button className="primary" onClick={() => setCreating(true)}><Plus size={17}/> {t("app:hub.newProjectButton")}</button></div>
-      <div className="section-head"><div><h2>{t("app:hub.recentProjects")}</h2><p>{projects.length ? t("app:hub.projectCount", { count: projects.length }) : t("app:hub.noProjects")}</p></div><button className="secondary" onClick={onOpenPath}><FolderOpen size={16}/> {t("app:hub.openFolder")}</button></div>
-      {projects.length ? (
-        <div className="project-table">
-          {projects.map(p => (
+    <div className="hub-content">
+      <section className="hub-dashboard-top">
+        <div className="hub-hero-card"><div className="hero"><span className="eyebrow">{t("app:hub.heroEyebrow")}</span><h1>{t("app:hub.heroTitle")}<br/><em>{t("app:hub.heroTitleEmphasis")}</em></h1><p>{t("app:hub.heroSubtitle")}</p><div className="hero-actions"><button className="primary" onClick={() => setCreating(true)}><Plus size={17}/> {t("app:hub.newProjectButton")}</button></div></div><div className="hub-cubes" aria-hidden="true"><i/><i/><i/></div><div className="hub-benefits"><span><Box/><b>{t("app:hub.flexible")}</b><small>{t("app:hub.flexibleHint")}</small></span><span><Zap/><b>{t("app:hub.local")}</b><small>{t("app:hub.localHint")}</small></span><span><Shield/><b>{t("app:hub.open")}</b><small>{t("app:hub.openHint")}</small></span></div></div>
+        <div className="hub-summary-stack">
+          <article className="hub-summary-card"><h2>{t("app:hub.recentModelTypes")}</h2><div className="model-usage-list">{Object.entries(modelCounts).sort((a,b)=>b[1]-a[1]).slice(0,4).map(([id,count])=><div key={id}><span>{id==="unconfigured"?t("app:hub.unconfigured"):t(`catalog:architectures.${id}.name`)}</span><i><b style={{width:`${Math.max(12,count/maxCount*100)}%`}}/></i><strong>{count}</strong></div>)}{!Object.keys(modelCounts).length&&<p>{t("app:hub.noModelStats")}</p>}</div></article>
+          <article className="hub-summary-card activity-card"><div className="summary-title"><h2>{t("app:hub.recentActivity")}</h2><small>{t("app:hub.viewAll")}</small></div><div className="activity-list">{recentActivity.map(item=><button key={item.id} onClick={()=>onOpen(item)}><span><CheckCircle2/></span><b>{item.name}</b><time>{new Date(item.updatedAt).toLocaleDateString()}</time></button>)}{!recentActivity.length&&<p>{t("app:hub.noActivity")}</p>}</div></article>
+        </div>
+      </section>
+      <section className="projects-card">
+        <div className="projects-toolbar"><div><h2>{t("app:hub.recentProjects")}</h2><p>{projects.length ? t("app:hub.projectCount", { count: projects.length }) : t("app:hub.noProjects")}</p></div><div className="project-controls"><label><Search/><input value={query} onChange={event=>setQuery(event.target.value)} placeholder={t("app:hub.searchProjects")}/></label><select value={modelFilter} onChange={event=>setModelFilter(event.target.value)} aria-label={t("app:hub.filterModels")}><option value="all">{t("app:hub.allModels")}</option>{Object.keys(modelCounts).filter(id=>id!=="unconfigured").map(id=><option value={id} key={id}>{t(`catalog:architectures.${id}.name`)}</option>)}</select><div className="view-toggle"><button className={projectView==="list"?"active":""} onClick={()=>setProjectView("list")} aria-label={t("app:hub.listView")}><List/></button><button className={projectView==="grid"?"active":""} onClick={()=>setProjectView("grid")} aria-label={t("app:hub.gridView")}><Grid2X2/></button></div></div></div>
+      {filteredProjects.length ? (
+        <div className={`project-table ${projectView}`}>
+          <div className="project-table-head"><span>{t("app:hub.nameColumn")}</span><span>{t("app:hub.modelColumn")}</span><span>{t("app:hub.lastOpenedColumn")}</span><span>{t("app:hub.actionsColumn")}</span></div>
+          <div className="project-table-scroll">{filteredProjects.map(p => (
             <div className="project-row-wrap" key={p.id}>
               <button className="project-row" onClick={() => onOpen(p)}>
                 <span className="project-icon"><Box/></span>
@@ -690,17 +720,19 @@ function ProjectHub({ projects, onCreate, onOpen, onDelete, onOpenPath, theme, s
                 <span className="pill">{p.architecture?.toUpperCase() || t("app:hub.unconfigured")}</span>
                 <time>{new Date(p.updatedAt).toLocaleDateString()}</time>
               </button>
-              <button className="project-delete-btn" onClick={(e) => { e.stopPropagation(); onDelete(p); }} title={t("app:hub.deleteProjectTitle")} aria-label={t("app:hub.deleteProjectTitle")}>
+              <button className="project-delete-btn" onClick={(e) => { e.stopPropagation(); setProjectPendingDeletion(p); }} title={t("app:hub.deleteProjectTitle")} aria-label={t("app:hub.deleteProjectTitle")}>
                 <Trash2 size={16} />
               </button>
             </div>
-          ))}
+          ))}</div>
         </div>
       ) : (
-        <div className="empty-state"><Sparkles/><h3>{t("app:hub.emptyTitle")}</h3><p>{t("app:hub.emptyHint")}</p></div>
+        <div className="empty-state"><Sparkles/><h3>{t("app:hub.emptyTitle")}</h3><p>{query||modelFilter!=="all"?t("app:hub.noSearchResults"):t("app:hub.emptyHint")}</p></div>
       )}
+      </section>
     </div>
     {creating && <div className="modal-backdrop"><form className="modal" onSubmit={e => { e.preventDefault(); if(name.trim()) { onCreate(name.trim(), description.trim()); setCreating(false); } }}><button type="button" className="modal-close" onClick={() => setCreating(false)}><X/></button><span className="eyebrow">{t("app:hub.createProjectEyebrow")}</span><h2>{t("app:hub.createProjectTitle")}</h2><label>{t("app:hub.projectNameLabel")}<input autoFocus value={name} onChange={e=>setName(e.target.value)} placeholder={t("app:hub.projectNamePlaceholder")}/></label><label>{t("app:hub.projectDescriptionLabel")}<textarea value={description} onChange={e=>setDescription(e.target.value)} placeholder={t("app:hub.projectDescriptionPlaceholder")}/></label><div className="modal-actions"><button type="button" className="secondary" onClick={()=>setCreating(false)}>{t("common:cancel")}</button><button className="primary" disabled={!name.trim()}>{t("app:hub.createProjectButton")} <ChevronRight size={16}/></button></div></form></div>}
+    {projectPendingDeletion&&<div className="modal-backdrop" onMouseDown={()=>setProjectPendingDeletion(null)}><section className="modal delete-project-modal" role="dialog" aria-modal="true" aria-labelledby="delete-project-title" onMouseDown={event=>event.stopPropagation()}><button type="button" className="modal-close" onClick={() => setProjectPendingDeletion(null)} aria-label={t("common:close")}><X/></button><span className="eyebrow">{t("app:deleteProject.eyebrow")}</span><h2 id="delete-project-title">{t("app:deleteProject.title")}</h2><p>{t("app:deleteProject.confirm", { name: projectPendingDeletion.name })}</p><div className="modal-actions"><button type="button" className="secondary" onClick={()=>setProjectPendingDeletion(null)}>{t("common:cancel")}</button><button type="button" className="danger-button" onClick={()=>{const target=projectPendingDeletion;setProjectPendingDeletion(null);void onDelete(target);}}><Trash2 size={15}/>{t("common:delete")}</button></div></section></div>}
   </div>;
 }
 
@@ -751,16 +783,32 @@ function Sidebar({ step, setStep, completed, onHome, gpuInfo, nodes, dataset, th
   </aside>;
 }
 
-function ModelTask({ architecture, task, onChoose }: { architecture:Architecture|null; task:TaskId|null; onChoose:(a:Architecture,t:TaskId)=>void }) {
+function ModelTask({ architecture, task, onChoose, onContinue }: { architecture:Architecture|null; task:TaskId|null; onChoose:(a:Architecture,t:TaskId)=>void; onContinue:()=>void }) {
   const { t } = useTranslation(["app", "catalog"]);
-  const [filter,setFilter]=useState("all");
-  const categories = ["all", "Table", "Signals and series", "Vision", "Text", "Reconstruction"];
-  return <div className="page model-page"><div className="page-intro"><div><span className="eyebrow">{t("app:modelTask.stepEyebrow")}</span><h2>{t("app:modelTask.title")}</h2><p>{t("app:modelTask.subtitle")}</p></div></div>
-    <div className="filter-tabs">{categories.map(f=><button className={filter===f?"selected":""} onClick={()=>setFilter(f)} key={f}>{t(`app:taskCategory.${f}`)}</button>)}</div>
-    <div className="architecture-grid">{(Object.entries(ARCHITECTURES) as [Architecture,typeof ARCHITECTURES[Architecture]][]).map(([id,a]) => {
-      const visible=a.tasks.filter(taskId=>filter==="all"||t(`catalog:tasks.${taskId}.category`)===t(`app:taskCategory.${filter}`)); if(!visible.length)return null;
-      return <article className={`architecture-card ${architecture===id?"chosen":""}`} key={id}><div className="arch-icon"><BrainCircuit/></div><div><span className="eyebrow">{t("app:modelTask.architectureEyebrow")}</span><h3>{t(`catalog:architectures.${id}.name`)}</h3><p>{t(`catalog:architectures.${id}.description`)}</p></div><div className="task-list">{visible.map(taskId=><button key={taskId} className={task===taskId?"selected":""} onClick={()=>onChoose(id,taskId)}><span><strong>{t(`catalog:tasks.${taskId}.name`)}</strong><small>{t(`catalog:tasks.${taskId}.input`)} → {t(`catalog:tasks.${taskId}.output`)}</small></span><ChevronRight size={15}/></button>)}</div></article>;
-    })}</div>{task && <div className="contract-panel"><div><small>{t("app:contract.compatibleInput")}</small><strong>{t(`catalog:tasks.${task}.format`)}</strong></div><div><small>{t("app:contract.mainMetric")}</small><strong>{t(`catalog:tasks.${task}.metric`)}</strong></div><div><small>{t("app:contract.modality")}</small><strong>{t(`catalog:tasks.${task}.modality`)}</strong></div></div>}
+  const [family,setFamily]=useState("all");
+  const [query,setQuery]=useState("");
+  const [preview,setPreview]=useState<Architecture>(architecture||"mlp");
+  const families:Array<{id:string;label:string;hint:string;icon:typeof BrainCircuit;architectures:Architecture[]}>=useMemo(()=>[
+    {id:"all",label:t("app:modelTask.familyAll"),hint:t("app:modelTask.familyAllHint"),icon:SlidersHorizontal,architectures:Object.keys(ARCHITECTURES) as Architecture[]},
+    {id:"tabular",label:t("app:modelTask.familyTabular"),hint:t("app:modelTask.familyTabularHint"),icon:Table2,architectures:["mlp","autoencoder"]},
+    {id:"series",label:t("app:modelTask.familySeries"),hint:t("app:modelTask.familySeriesHint"),icon:Activity,architectures:["cnn1d","lstm","transformer"]},
+    {id:"vision",label:t("app:modelTask.familyVision"),hint:t("app:modelTask.familyVisionHint"),icon:Image,architectures:["cnn","vit","unet"]},
+    {id:"text",label:t("app:modelTask.familyText"),hint:t("app:modelTask.familyTextHint"),icon:FileText,architectures:["transformer","transformer_causal"]},
+    {id:"generative",label:t("app:modelTask.familyGenerative"),hint:t("app:modelTask.familyGenerativeHint"),icon:Sparkles,architectures:["autoencoder"]},
+    {id:"causal",label:t("app:modelTask.familyCausal"),hint:t("app:modelTask.familyCausalHint"),icon:Network,architectures:["transformer_causal"]}
+  ],[t]);
+  const allowed=families.find(item=>item.id===family)?.architectures||families[0].architectures;
+  const visibleArchitectures=(Object.entries(ARCHITECTURES) as [Architecture,typeof ARCHITECTURES[Architecture]][]).filter(([id])=>allowed.includes(id)).filter(([id])=>`${t(`catalog:architectures.${id}.name`)} ${t(`catalog:architectures.${id}.description`)}`.toLowerCase().includes(query.toLowerCase()));
+  const detail=ARCHITECTURES[preview];
+  const DetailIcon=ARCHITECTURE_ICONS[preview];
+  const activeTask=architecture===preview?task:null;
+  return <div className="page model-page model-catalog-page">
+    <div className="model-catalog-header"><div><span className="eyebrow">{t("app:modelTask.stepEyebrow")}</span><h2>{t("app:modelTask.catalogTitle")}</h2><p>{t("app:modelTask.catalogSubtitle")}</p></div><div className="catalog-tools"><label><Search/><input value={query} onChange={event=>setQuery(event.target.value)} placeholder={t("app:modelTask.searchPlaceholder")}/><kbd>⌘ K</kbd></label><button><ArrowUpDown/>{t("app:modelTask.popularFirst")}<ChevronRight/></button></div></div>
+    <div className="model-catalog-layout">
+      <section className="family-panel"><header><h3>{t("app:modelTask.familiesTitle")}</h3><p>{t("app:modelTask.familiesSubtitle")}</p></header><div className="family-list">{families.map(item=>{const Icon=item.icon;return <button key={item.id} className={family===item.id?"active":""} onClick={()=>{setFamily(item.id);if(!item.architectures.includes(preview))setPreview(item.architectures[0])}}><span><Icon/></span><div><strong>{item.label}</strong><small>{item.hint}</small></div><b>{item.architectures.length}</b></button>})}</div></section>
+      <section className="architecture-list-panel"><header><h3>{t("app:modelTask.architecturesTitle")}</h3><p>{t("app:modelTask.architectureCount",{count:visibleArchitectures.length})}</p></header><div className="catalog-architecture-list">{visibleArchitectures.map(([id,a],index)=>{const Icon=ARCHITECTURE_ICONS[id];return <button key={id} className={preview===id?"active":""} onClick={()=>setPreview(id)}><span><Icon/></span><div><strong>{t(`catalog:architectures.${id}.name`)}</strong><small>{t(`catalog:architectures.${id}.description`)}</small><em>{t(`catalog:tasks.${a.tasks[0]}.modality`)}</em></div>{index===0&&<b>◆ {t("app:modelTask.popular")}</b>}<ChevronRight/></button>})}</div></section>
+      <section className="architecture-detail-panel"><div className="detail-scroll"><header><span className="detail-arch-icon"><DetailIcon/></span><div><h2>{t(`catalog:architectures.${preview}.name`)}</h2><span className="eyebrow">{t("app:modelTask.architectureEyebrow")}</span><p>{t(`catalog:architectures.${preview}.description`)}</p></div><b>◆ {t("app:modelTask.popular")}</b></header><nav><button className="active">{t("app:modelTask.overview")}</button><button>{t("app:modelTask.tasks")}</button><button>{t("app:modelTask.details")}</button></nav><div className="architecture-overview"><div><p>{t("app:modelTask.overviewText",{architecture:t(`catalog:architectures.${preview}.name`)})}</p><div className="detail-tags"><span>{t(`catalog:tasks.${detail.tasks[0]}.modality`)}</span><span>{t("app:modelTask.scalable")}</span><span>{t("app:modelTask.localReady")}</span></div></div><div className="mini-architecture-diagram"><small>{t("app:modelTask.inputSequence")}</small><i/><b>{t(`catalog:architectures.${preview}.name`)}</b><i/><small>{t("app:modelTask.representation")}</small><div>{[1,2,3,4,5,6].map(n=><span key={n}/>)}</div></div></div><div className="available-tasks"><h3>{t("app:modelTask.availableTasks")}</h3><p>{t("app:modelTask.availableTasksHint")}</p><div>{detail.tasks.map(taskId=><button key={taskId} className={activeTask===taskId?"selected":""} onClick={()=>onChoose(preview,taskId)}><span><FileText/></span><div><strong>{t(`catalog:tasks.${taskId}.name`)}</strong><small>{t(`catalog:tasks.${taskId}.input`)} → {t(`catalog:tasks.${taskId}.output`)}</small></div><ChevronRight/></button>)}</div></div>{activeTask&&<div className="detail-contract"><div><small>{t("app:contract.compatibleInput")}</small><strong>{t(`catalog:tasks.${activeTask}.format`)}</strong></div><div><small>{t("app:contract.mainMetric")}</small><strong>{t(`catalog:tasks.${activeTask}.metric`)}</strong></div><div><small>{t("app:contract.modality")}</small><strong>{t(`catalog:tasks.${activeTask}.modality`)}</strong></div></div>}</div><footer><span>{activeTask?t(`catalog:tasks.${activeTask}.name`):t("app:modelTask.chooseTaskHint")}</span><button className="primary" disabled={!activeTask} onClick={onContinue}>{t("app:modelTask.continueWith",{task:activeTask?t(`catalog:tasks.${activeTask}.name`):t("app:modelTask.taskFallback")})}<ChevronRight/></button></footer></section>
+    </div>
   </div>;
 }
 
@@ -817,8 +865,9 @@ function DataStep({ project, task, dataset, onDownload, onImport, onChooseAnothe
 
   if (!task) return <Blocked message={t("app:blocked.selectTaskArchitecture")} />;
 
-  const trainCount = dataset ? Math.round(dataset.samples * dataset.splits.train / 100) : 0;
-  const validationCount = dataset ? Math.round(dataset.samples * dataset.splits.validation / 100) : 0;
+  const trainCount = dataset ? (dataset.splitCounts?.train ?? Math.round(dataset.samples * dataset.splits.train / 100)) : 0;
+  const validationCount = dataset ? (dataset.splitCounts?.validation ?? Math.round(dataset.samples * dataset.splits.validation / 100)) : 0;
+  const testCount = dataset ? (dataset.splitCounts?.test ?? dataset.samples - trainCount - validationCount) : 0;
 
   const currentOpts: DatasetOptions = {
     ...(isImage ? { channels, resolution } : isText ? {max_length:maxLength,vocab_size:vocabSize} : { normalization }),
@@ -890,6 +939,13 @@ function DataStep({ project, task, dataset, onDownload, onImport, onChooseAnothe
                     </div>
                   ))}
                 </div>
+              ) : dataset.preview?.type === "text" && dataset.preview.items?.length ? (
+                <div className="preview-table-wrap preview-text-wrap">
+                  <table className="preview-table preview-text-table">
+                    <thead><tr><th>{t("app:data.samplesTab")}</th></tr></thead>
+                    <tbody>{dataset.preview.items.map((item, i) => <tr key={i}><td>{item.text}</td></tr>)}</tbody>
+                  </table>
+                </div>
               ) : dataset.preview?.type === "tabular" && dataset.preview.items?.length ? (
                 <div className="preview-table-wrap">
                   <table className="preview-table">
@@ -924,16 +980,18 @@ function DataStep({ project, task, dataset, onDownload, onImport, onChooseAnothe
 
             <article className="panel">
               <span className="eyebrow">{t("app:data.partitionsEyebrow")}</span>
-              <SplitControl splits={dataset.splits} onChange={onSplitsChange} t={t} />
+              <SplitControl splits={dataset.splits} onChange={onSplitsChange} disabled={dataset.splitSource==="official"||dataset.splitSource==="temporal"} t={t} />
+              {dataset.splitSource==="official"&&<small className="locked-node-note"><GitBranch/> {t("app:split.officialLocked")}</small>}
+              {dataset.splitSource==="temporal"&&<small className="locked-node-note"><Clock3/> {t("app:split.temporalLocked")}</small>}
               <div className="split-legend">
                 <span><i className="cyan" /> {t("common:train")} <strong>{trainCount}</strong></span>
                 <span><i className="amber" /> {t("common:validation")} <strong>{validationCount}</strong></span>
-                <span><i className="green" /> {t("common:test")} <strong>{dataset.samples - trainCount - validationCount}</strong></span>
+                <span><i className="green" /> {t("common:test")} <strong>{testCount}</strong></span>
               </div>
             </article>
           </div>
 
-          <aside className="data-sidebar"><div className="panel data-config-panel"><span className="eyebrow">{t("app:data.nodePropertiesEyebrow")}</span>{dataset.source==="huggingface"&&<div className="active-hf-source"><Database/><span><strong>{catalog.find(item=>item.id===dataset.catalogId)?.name||dataset.catalogId}</strong><small>{dataset.repoId}</small><small>{dataset.cacheStatus==="project"?t("app:data.loadedFromProject"):dataset.cacheStatus==="disk"?t("app:data.loadedFromCache"):t("app:data.downloadComplete")}</small></span></div>}<button className="secondary dataset-change-button" onClick={onChooseAnother}><Database/> {t("app:data.changeDataset")}</button><div id="data-node-inspector"/>{dataset.classes&&<div className="data-classes-section"><span className="eyebrow">{t("app:data.classesEyebrow", { count: dataset.classes.length })}</span><div className="class-tags">{dataset.classes.map(c=><span key={c}>{c}</span>)}</div></div>}</div></aside>
+          <aside className="data-sidebar"><div className="panel data-config-panel"><span className="eyebrow">{t("app:data.nodePropertiesEyebrow")}</span>{dataset.source==="huggingface"&&<div className="active-hf-source"><Database/><span><strong>{catalog.find(item=>item.id===dataset.catalogId)?.name||dataset.catalogId}</strong><small>{dataset.repoId}</small><small>{dataset.cacheStatus==="project"?t("app:data.loadedFromProject"):dataset.cacheStatus==="disk"?t("app:data.loadedFromCache"):t("app:data.downloadComplete")}</small></span></div>}<button className="secondary dataset-change-button" onClick={onChooseAnother}><Database/> {t("app:data.changeDataset")}</button><div id="data-node-inspector"/>{dataset.classes&&<div className="data-classes-section"><div className="data-classes-heading"><span className="eyebrow">{t("app:data.classesEyebrow", { count: dataset.classes.length })}</span><small>{t("common:samples")}: <strong>{dataset.samples.toLocaleString()}</strong></small></div><div className="class-tags">{dataset.classes.slice(0,20).map(c=><span key={c}>{c}</span>)}{dataset.classes.length>20&&<span className="class-tags-more" aria-label={`${dataset.classes.length-20} more classes`}>...</span>}</div></div>}</div></aside>
         </div>
       )}
     </div>
@@ -1024,7 +1082,7 @@ function Inference({ task, dataset, run, runName, onInfer }: {
   dataset: DatasetSummary;
   run: RunResult | null;
   runName:string;
-  onInfer: (payload: { mode: string; values?: string; index?: number }) => Promise<Record<string, unknown>>;
+  onInfer: (payload: { mode: string; values?: string; index?: number; max_new_tokens?: number }) => Promise<Record<string, unknown>>;
 }) {
   const { t } = useTranslation(["app", "common", "catalog"]);
   const taskName = t(`catalog:tasks.${task}.name`);
@@ -1032,6 +1090,7 @@ function Inference({ task, dataset, run, runName, onInfer }: {
   const isSegmentation = task.includes("segmentation");
   const isTabularTask = task.startsWith("tabular");
   const isTextTask = task.startsWith("text.");
+  const isCausalText = task === "text.language_model";
 
   const [mode, setMode] = useState<"test" | "manual">("test");
   const [manualValues, setManualValues] = useState(isTabularTask ? Array.from({ length: dataset.inputShape[0] }, () => "0.5").join(", ") : "");
@@ -1040,6 +1099,7 @@ function Inference({ task, dataset, run, runName, onInfer }: {
   const [trueLabel, setTrueLabel] = useState<string | null>(null);
   const [result, setResult] = useState<Record<string, unknown> | null>(null);
   const [busy, setBusy] = useState(false);
+  const [maxNewTokens,setMaxNewTokens]=useState(16);
 
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -1058,7 +1118,8 @@ function Inference({ task, dataset, run, runName, onInfer }: {
     try {
       const payload = {
         mode,
-        values: mode === "manual" ? (isImageTask ? manualImageB64 : manualValues) : ""
+        values: mode === "manual" ? (isImageTask ? manualImageB64 : manualValues) : "",
+        ...(isCausalText ? {max_new_tokens:maxNewTokens} : {})
       };
       const res = await onInfer(payload);
       setResult(res);
@@ -1147,7 +1208,7 @@ function Inference({ task, dataset, run, runName, onInfer }: {
                 </div>
               )}
             </>}
-        </div> : mode === "test" ? <div className="inference-preparation"><div className="source-copy"><Database/><span><strong>{t("app:inference.testSourceTitle")}</strong><small>{t("app:inference.testSourceHint")}</small></span></div><div className="awaiting-result"><BarChart3/><span>{t("app:inference.awaitingTitle")}</span></div></div> : <div className="inference-preparation"><div className="source-copy"><Activity/><span><strong>{manualModeLabel}</strong><small>{manualModeHelp}</small></span></div>{isImageTask?<div className="image-upload-box"><label className="input-dropzone"><Upload size={24}/><span>{t("app:inference.uploadHint")}</span><small>{t("app:inference.uploadFormats")}</small><input type="file" accept="image/*" onChange={handleFileUpload}/></label>{inputPreview&&<div className="image-preview-container"><img src={inputPreview} alt={manualModeLabel}/></div>}</div>:<label className="manual-values-field"><span>{manualModeHelp}</span><textarea value={manualValues} onChange={e=>setManualValues(e.target.value)} placeholder={isTextTask?t("app:inference.textPlaceholder"):t("app:inference.tabularPlaceholder")}/></label>}</div>}
+        </div> : mode === "test" ? <div className="inference-preparation"><div className="source-copy"><Database/><span><strong>{t("app:inference.testSourceTitle")}</strong><small>{t("app:inference.testSourceHint")}</small></span></div><div className="awaiting-result"><BarChart3/><span>{t("app:inference.awaitingTitle")}</span></div></div> : <div className="inference-preparation"><div className="source-copy"><Activity/><span><strong>{manualModeLabel}</strong><small>{manualModeHelp}</small></span></div>{isImageTask?<div className="image-upload-box"><label className="input-dropzone"><Upload size={24}/><span>{t("app:inference.uploadHint")}</span><small>{t("app:inference.uploadFormats")}</small><input type="file" accept="image/*" onChange={handleFileUpload}/></label>{inputPreview&&<div className="image-preview-container"><img src={inputPreview} alt={manualModeLabel}/></div>}</div>:<><label className="manual-values-field"><span>{manualModeHelp}</span><textarea value={manualValues} onChange={e=>setManualValues(e.target.value)} placeholder={isTextTask?t("app:inference.textPlaceholder"):t("app:inference.tabularPlaceholder")}/></label>{isCausalText&&<label className="app-field"><span>{t("app:inference.maxNewTokens")}</span><input type="number" min="1" max="128" value={maxNewTokens} onChange={event=>setMaxNewTokens(Math.max(1,Math.min(128,Number(event.target.value)||1)))}/></label>}</>}</div>}
           </div>
           <button className="primary inference-run-button" onClick={execute} disabled={busy || (mode === "manual" && isImageTask && !manualImageB64)}><Play size={16}/> {busy ? t("app:inference.runButton.calculating") : mode === "test" ? t("app:inference.runButton.test") : t("app:inference.runButton.manual")}</button>
         </div>
@@ -1166,6 +1227,7 @@ function generateMockImageSvg(clsName: string, color: string): string {
 function mockDataset(task: TaskId, options?: DatasetOptions): DatasetSummary {
   const image = task.startsWith("image") || task.includes("segmentation");
   const seq = task.startsWith("sequence");
+  const text = task.startsWith("text.");
   const segmentation = task.includes("segmentation");
   const multi = task.endsWith("multiclass");
 
@@ -1185,6 +1247,16 @@ function mockDataset(task: TaskId, options?: DatasetOptions): DatasetSummary {
       label: classes ? classes[i % classes.length] : `Muestra #${i + 1}`
     }));
     preview = { type: "image", items };
+  } else if (text) {
+    const samples = [
+      "El modelo aprende patrones a partir de ejemplos de texto.",
+      "Los datos bien preparados mejoran cada predicción.",
+      "Una secuencia conserva el contexto de sus palabras.",
+      "La evaluación confirma si el modelo generaliza.",
+      "Los tokens representan fragmentos de lenguaje natural.",
+      "El entrenamiento ajusta los parámetros gradualmente."
+    ];
+    preview = { type: "text", items: samples.map(value => ({ text: value })) };
   } else {
     const cols = Array.from({ length: 8 }, (_, k) => `var_${k + 1}`);
     const items = Array.from({ length: 6 }, (_, i) => ({

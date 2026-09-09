@@ -113,6 +113,11 @@ def test_starter_models_use_enough_depth_for_public_visual_and_temporal_data():
 def test_every_builtin_preset_is_compatible_with_the_default_public_dataset():
     for case in _frontend_presets():
         try:
-            build_model(case["architecture"], case["inputShape"], case["outputShape"], case["graph"], case["task"])
+            model = build_model(case["architecture"], case["inputShape"], case["outputShape"], case["graph"], case["task"])
+            sample = torch.randint(0, 4096, (2, *case["inputShape"])) if case["task"].startswith("text.") else torch.randn(2, *case["inputShape"])
+            prediction = model(sample)
+            assert list(prediction.shape[1:]) == case["outputShape"]
+            prediction.float().square().mean().backward()
+            assert any(parameter.grad is not None for parameter in model.parameters())
         except Exception as error:
             pytest.fail(f"{case['architecture']} / {case['task']} / {case['preset']}: {error}")

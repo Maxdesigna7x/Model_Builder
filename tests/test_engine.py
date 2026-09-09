@@ -8,12 +8,12 @@ import torch
 from PIL import Image
 
 from modelbuilder.data import apply_pipeline, generate, import_dataset, split_indices
-from modelbuilder.engine import apply_inference_pipeline, infer
+from modelbuilder.engine import apply_inference_pipeline, generate_causal_tokens, infer
 from modelbuilder.errors import BackendError
 from modelbuilder.huggingface_datasets import DATASETS as HF_DATASETS, LOADERS as HF_LOADERS, catalog as hf_catalog, download as hf_download
 from modelbuilder.models import build_model
 from modelbuilder.storage import create_project
-from modelbuilder.training import train
+from modelbuilder.training import default_epochs, train
 
 
 def node(node_id, block_type, **properties):
@@ -150,9 +150,24 @@ def test_train_checkpoint_and_inference(project):
     assert result["status"] == "completed"
     assert len(result["history"]) == 2
     assert Path(result["checkpoint"]).is_file()
-    prediction = infer({"project": project, "values": ",".join(["0"] * 12)})
+    prediction = infer({"project": project, "mode": "manual", "values": ",".join(["0"] * 12)})
     assert len(prediction["probabilities"]) == 3
     assert abs(sum(prediction["probabilities"]) - 1) < 1e-5
+
+    # Test inference must use the concrete saved indices, rather than creating
+    # another percentage-based split that could cross an official boundary.
+    payload=torch.load(dataset["path"],weights_only=True)
+    payload["splits"]={"train":list(range(2,len(payload["inputs"]))),"validation":[0],"test":[1]}
+    torch.save(payload,dataset["path"])
+    sampled=infer({"project":project,"checkpoint":result["checkpoint"],"mode":"test"})
+    assert sampled["source"]=="Muestra #1 (Split Test)"
+
+
+def test_task_aware_mvp_epoch_defaults():
+    assert default_epochs("text.language_model") == 10
+    assert default_epochs("image.segmentation.binary") == 40
+    assert default_epochs("image.segmentation.multiclass") == 40
+    assert default_epochs("image.classification") == 20
 
 
 def test_invalid_disconnected_and_wrong_output():
@@ -241,3 +256,43 @@ def test_huggingface_download_reuses_physical_project_dataset(project, monkeypat
     third = hf_download(project, "tabular.classification", "iris")
     assert calls == [False, True]
     assert Path(third["path"]).is_file() and third["id"] != first["id"]
+
+
+def test_huggingface_download_preserves_official_splits(project, monkeypatch):
+    def fake_loader(spec, task_id, options, offline):
+        x=torch.arange(240,dtype=torch.long).reshape(15,16).remainder(31)
+        y=x.roll(-1,dims=1);y[:,-1]=0
+        official={"train":list(range(10)),"validation":[10,11],"test":[12,13,14]}
+        return x,y,[f"t{i}" for i in range(32)],official
+
+    monkeypatch.setitem(HF_LOADERS,"wikitext",fake_loader)
+    result=hf_download(project,"text.language_model","wikitext-2",{"max_length":16,"vocab_size":32,"max_samples":15})
+    payload=torch.load(result["path"],weights_only=True)
+    assert result["splitSource"]=="official"
+    assert result["splitCounts"]=={"train":10,"validation":2,"test":3}
+    assert result["splits"]=={"train":67,"validation":13,"test":20}
+    assert payload["splits"]=={"train":list(range(10)),"validation":[10,11],"test":[12,13,14]}
+    revised=apply_pipeline(project,result,"text.language_model",{"schemaVersion":1,"revision":1,"nodes":[
+        {"id":"source","type":"source","category":"source","enabled":True},
+        {"id":"validate","type":"validate","category":"inspect","enabled":True,"properties":{"fail_on_error":True}},
+        {"id":"output","type":"output","category":"output","enabled":True,"properties":{"batchSize":8}},
+    ]})
+    revised_payload=torch.load(revised["path"],weights_only=True)
+    assert revised["splitSource"]=="official"
+    assert revised["splitCounts"]==result["splitCounts"]
+    assert revised_payload["splits"]==payload["splits"]
+
+
+def test_causal_generation_feeds_each_prediction_back_into_context():
+    class CountingModel(torch.nn.Module):
+        def __init__(self):
+            super().__init__();self.anchor=torch.nn.Parameter(torch.zeros(()));self.seen=[]
+        def forward(self,x):
+            length=int((x[0]!=0).sum());self.seen.append(x[0,:length].tolist())
+            logits=torch.zeros(1,x.shape[1],8);logits[0,length-1,min(7,length+2)]=1
+            return logits
+
+    model=CountingModel()
+    generated=generate_causal_tokens(model,torch.tensor([[2,0,0,0]]),4,3)
+    assert generated==[3,4,5]
+    assert model.seen==[[2],[2,3],[2,3,4]]

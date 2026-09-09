@@ -38,6 +38,8 @@
     "prompt": "Ruta de la carpeta del proyecto:"
   },
   "deleteProject": {
+    "eyebrow": "GESTIÓN DEL PROYECTO",
+    "title": "¿Eliminar proyecto?",
     "confirm": "¿Estás seguro de que deseas eliminar el proyecto \"{{name}}\"?"
   },
   "model": {
@@ -99,6 +101,7 @@
     "uploadHint": "Selecciona o arrastra un archivo",
     "uploadFormats": "JPG, PNG, WebP o BMP",
     "textPlaceholder": "Escribe aquí una frase o párrafo…",
+    "maxNewTokens": "Tokens nuevos a generar",
     "tabularPlaceholder": "ej. 0.12, 0.45, -0.8, ...",
     "runButton": {
       "calculating": "Calculando predicción…",
@@ -294,7 +297,28 @@
     "projectNamePlaceholder": "Clasificador de señales",
     "projectDescriptionLabel": "Descripción opcional",
     "projectDescriptionPlaceholder": "Qué quieres probar…",
-    "createProjectButton": "Crear proyecto"
+    "createProjectButton": "Crear proyecto",
+    "flexible": "Flexible",
+    "flexibleHint": "Tus datos, tus modelos",
+    "local": "Local",
+    "localHint": "Corre en tu equipo",
+    "open": "Abierto",
+    "openHint": "Construido con PyTorch",
+    "recentModelTypes": "Tipos de modelo recientes",
+    "noModelStats": "Los modelos configurados aparecerán aquí.",
+    "recentActivity": "Actividad reciente",
+    "viewAll": "Ver todo",
+    "noActivity": "Todavía no hay actividad.",
+    "searchProjects": "Buscar proyectos…",
+    "filterModels": "Filtrar por modelo",
+    "allModels": "Todos los modelos",
+    "listView": "Vista de lista",
+    "gridView": "Vista de cuadrícula",
+    "nameColumn": "Nombre",
+    "modelColumn": "Tipo de modelo",
+    "lastOpenedColumn": "Última apertura",
+    "actionsColumn": "Acciones",
+    "noSearchResults": "No hay proyectos que coincidan con los filtros."
   },
   "sidebar": {
     "homeTitle": "Volver a proyectos",
@@ -308,7 +332,43 @@
     "stepEyebrow": "PASO 1 DE 5",
     "title": "¿Qué quieres construir?",
     "subtitle": "La tarea define tus datos, la salida y cómo mediremos el aprendizaje.",
-    "architectureEyebrow": "ARQUITECTURA"
+    "architectureEyebrow": "ARQUITECTURA",
+    "catalogTitle": "Elige una arquitectura y una tarea",
+    "catalogSubtitle": "Selecciona una arquitectura para tus datos y define qué quieres predecir.",
+    "searchPlaceholder": "Buscar arquitecturas…",
+    "popularFirst": "Más populares",
+    "familiesTitle": "Familias de arquitecturas",
+    "familiesSubtitle": "Elige una categoría para explorar modelos.",
+    "familyAll": "Todas las arquitecturas",
+    "familyAllHint": "Explora todos los modelos disponibles",
+    "familyTabular": "Tabular",
+    "familyTabularHint": "MLP y autoencoder para datos estructurados",
+    "familySeries": "Series temporales",
+    "familySeriesHint": "CNN, RNN y Transformer para señales",
+    "familyVision": "Visión por computadora",
+    "familyVisionHint": "CNN y ViT para imágenes",
+    "familyText": "Texto y NLP",
+    "familyTextHint": "Transformer para lenguaje",
+    "familyGenerative": "Generativos",
+    "familyGenerativeHint": "Autoencoders y reconstrucción",
+    "familyCausal": "Causal y probabilístico",
+    "familyCausalHint": "Transformer causal",
+    "architecturesTitle": "Arquitecturas",
+    "architectureCount": "{{count}} arquitecturas",
+    "popular": "Popular",
+    "overview": "Resumen",
+    "tasks": "Tareas",
+    "details": "Detalles",
+    "overviewText": "{{architecture}} ofrece una base editable y local para construir, entrenar y entender el flujo completo del modelo.",
+    "scalable": "Escalable",
+    "localReady": "Listo para PyTorch",
+    "inputSequence": "Entrada",
+    "representation": "Representación",
+    "availableTasks": "Tareas disponibles",
+    "availableTasksHint": "Selecciona una tarea para configurar los datos y la salida.",
+    "chooseTaskHint": "Elige una tarea para continuar",
+    "continueWith": "Continuar con {{task}}",
+    "taskFallback": "la tarea"
   },
   "taskCategory": {
     "all": "Todas",
@@ -378,7 +438,9 @@
   },
   "split": {
     "trainValidationAria": "Límite entre entrenamiento y validación",
-    "validationTestAria": "Límite entre validación y prueba"
+    "validationTestAria": "Límite entre validación y prueba",
+    "officialLocked": "Particiones oficiales del dataset; sus proporciones no se pueden modificar.",
+    "temporalLocked": "Partición cronológica protegida para evitar que el futuro se filtre al entrenamiento."
   },
   "time": {
     "seconds": "{{count}}s",

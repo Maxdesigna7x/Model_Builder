@@ -24,12 +24,12 @@ def emit(value: dict) -> None:
     print(json.dumps(value, ensure_ascii=False, allow_nan=False), flush=True)
 
 
-def _loss(task_id: str, prediction: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
+def _loss(task_id: str, prediction: torch.Tensor, target: torch.Tensor, loss_weights: torch.Tensor | None = None) -> torch.Tensor:
     objective = task_spec(task_id)["objective"]
     if objective == "classification": return nn.functional.cross_entropy(prediction, target.long())
     if objective == "token_prediction": return nn.functional.cross_entropy(prediction.transpose(1, 2), target.long(), ignore_index=0)
-    if objective == "segmentation_binary": return nn.functional.binary_cross_entropy_with_logits(prediction[:, 0], target.float()) + dice_loss(prediction[:, 0], target)
-    if objective == "segmentation_multiclass": return nn.functional.cross_entropy(prediction, target.long())
+    if objective == "segmentation_binary": return nn.functional.binary_cross_entropy_with_logits(prediction[:, 0], target.float(),pos_weight=loss_weights) + dice_loss(prediction[:, 0], target)
+    if objective == "segmentation_multiclass": return nn.functional.cross_entropy(prediction, target.long(),weight=loss_weights) + multiclass_dice_loss(prediction,target)
     return nn.functional.mse_loss(prediction, target.float())
 
 
@@ -37,7 +37,23 @@ def dice_loss(logits: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
     prob = logits.sigmoid(); truth = target.float(); inter=(prob*truth).sum((1,2)); return 1-((2*inter+1)/(prob.sum((1,2))+truth.sum((1,2))+1)).mean()
 
 
-def _metric(task_id: str, prediction: torch.Tensor, target: torch.Tensor) -> tuple[float, int]:
+def multiclass_dice_loss(logits: torch.Tensor,target: torch.Tensor) -> torch.Tensor:
+    probability=logits.softmax(1);truth=nn.functional.one_hot(target.long(),logits.shape[1]).permute(0,3,1,2).float();scores=[]
+    for class_index in range(1,logits.shape[1]):
+        p=probability[:,class_index];t=truth[:,class_index];scores.append((2*(p*t).sum((1,2))+1)/(p.sum((1,2))+t.sum((1,2))+1))
+    return 1-torch.stack(scores).mean()
+
+
+def default_epochs(task_id: str) -> int:
+    """Keep the first useful run short, except for tiny segmentation corpora."""
+    if task_id == "text.language_model":
+        return 10
+    if task_id.startswith("image.segmentation"):
+        return 40
+    return 20
+
+
+def _metric(task_id: str, prediction: torch.Tensor, target: torch.Tensor, target_transform: dict | None = None) -> tuple[float, int]:
     objective = task_spec(task_id)["objective"]
     if objective == "classification": return float((prediction.argmax(1)==target).sum()), target.shape[0]
     if objective == "token_prediction":
@@ -50,17 +66,20 @@ def _metric(task_id: str, prediction: torch.Tensor, target: torch.Tensor) -> tup
             pc=pred==c;tc=target==c;union=(pc|tc).sum().item()
             if union: scores.append((pc&tc).sum().item()/union)
         return (sum(scores)/len(scores) if scores else 0),1
+    if target_transform:
+        shape=[1,*target.shape[1:]];center=torch.tensor(target_transform["center"],device=prediction.device).reshape(shape);scale=torch.tensor(target_transform["scale"],device=prediction.device).reshape(shape)
+        prediction=prediction*scale+center;target=target.float()*scale+center
     err=nn.functional.mse_loss(prediction,target.float(),reduction="sum").item(); return err,target.numel()
 
 
-def _evaluate(model, loader, task_id, device) -> tuple[float,float]:
+def _evaluate(model, loader, task_id, device, loss_weights=None, target_transform=None) -> tuple[float,float]:
     model.eval(); loss_sum=0.; count=0; metric_sum=0.; metric_count=0
     with torch.inference_mode():
         for x,y in loader:
             x = x.to(device)
             if x.dtype == torch.uint8: x = x.float() / 255.0
             y = y.to(device)
-            pred=model(x);loss=_loss(task_id,pred,y);n=x.shape[0];loss_sum+=loss.item()*n;count+=n;m,c=_metric(task_id,pred,y);metric_sum+=m;metric_count+=c
+            pred=model(x);loss=_loss(task_id,pred,y,loss_weights);n=x.shape[0];loss_sum+=loss.item()*n;count+=n;m,c=_metric(task_id,pred,y,target_transform);metric_sum+=m;metric_count+=c
     return loss_sum/max(1,count),metric_sum/max(1,metric_count)
 
 
@@ -95,11 +114,12 @@ def train(request: dict) -> dict:
     project=request["project"];dataset=request["dataset"];task_id=request["task_id"];architecture=request["architecture"];graph=request.get("graph",{});config=request.get("config",{})
     payload=torch.load(dataset["path"],weights_only=True);x,y=payload["inputs"],payload["targets"]
     seed=int(config.get("seed",dataset.get("seed",42)));torch.manual_seed(seed)
-    splits=payload.get("splits") if payload.get("split_percentages")==dataset.get("splits") else split_indices(len(x),seed,dataset.get("splits"))
+    keep_saved_splits=payload.get("split_source") in {"official","temporal"} or payload.get("split_percentages")==dataset.get("splits")
+    splits=payload.get("splits") if keep_saved_splits else split_indices(len(x),seed,dataset.get("splits"))
     splits=splits or split_indices(len(x),seed,dataset.get("splits"))
     device=torch.device("cuda" if torch.cuda.is_available() and str(config.get("device","auto"))!="cpu" else "cpu")
     model=build_model(architecture,dataset["inputShape"],dataset["outputShape"],graph,task_id).to(device)
-    data_options=dataset.get("options",{});batch=max(1,int(config.get("batch_size",data_options.get("batchSize",32))));epochs=max(1,int(config.get("epochs",20)));lr=float(config.get("learning_rate",.001));optimizer_name=str(config.get("optimizer","adamw")).lower()
+    data_options=dataset.get("options",{});batch=max(1,int(config.get("batch_size",data_options.get("batchSize",32))));epochs=max(1,int(config.get("epochs",default_epochs(task_id))));lr=float(config.get("learning_rate",.001));optimizer_name=str(config.get("optimizer","adamw")).lower()
     optimizer=torch.optim.SGD(model.parameters(),lr=lr,momentum=.9) if optimizer_name=="sgd" else (torch.optim.Adam(model.parameters(),lr=lr) if optimizer_name=="adam" else torch.optim.AdamW(model.parameters(),lr=lr,weight_decay=float(config.get("weight_decay",1e-4))))
     augmentation_nodes=[node for node in (payload.get("pipeline",{}).get("nodes",[])) if node.get("enabled",True) and node.get("category")=="augment" and node.get("scope")=="train"]
     def loader(name,shuffle=False):
@@ -107,7 +127,13 @@ def train(request: dict) -> dict:
         data=AugmentedTensorDataset(split_x,split_y,augmentation_nodes,task_id) if name=="train" and augmentation_nodes else TensorDataset(split_x,split_y)
         workers=max(0,int(data_options.get("workers",0)));return DataLoader(data,batch_size=batch,shuffle=shuffle,generator=torch.Generator().manual_seed(seed),num_workers=workers,pin_memory=bool(data_options.get("pin_memory",False)) and torch.cuda.is_available())
     train_loader,val_loader,test_loader=loader("train",True),loader("validation"),loader("test")
-    best_criterion = str(config.get("best_model_criterion", "none")).lower()
+    loss_weights=None
+    if task_id=="image.segmentation.binary":
+        train_target=y[splits["train"]];positive=train_target.sum().clamp_min(1);loss_weights=((train_target.numel()-positive)/positive).clamp(1,10).to(device)
+    elif task_id=="image.segmentation.multiclass":
+        counts=torch.bincount(y[splits["train"]].long().flatten(),minlength=int(dataset["outputShape"][0])).float().clamp_min(1);loss_weights=(counts.sum()/(len(counts)*counts)).sqrt();loss_weights=(loss_weights/loss_weights.mean()).clamp(.25,4).to(device)
+    target_transform=data_options.get("targetTransform")
+    best_criterion = str(config.get("best_model_criterion", "val_loss")).lower()
     is_higher_better = task_spec(task_id)["metric"].lower() in {"accuracy", "dice", "miou", "iou"}
     best_score = -math.inf if (best_criterion == "metric" and is_higher_better) else math.inf
 
@@ -120,10 +146,10 @@ def train(request: dict) -> dict:
             xb = xb.to(device)
             if xb.dtype == torch.uint8: xb = xb.float() / 255.0
             yb = yb.to(device)
-            optimizer.zero_grad(set_to_none=True);pred=model(xb);loss=_loss(task_id,pred,yb)
+            optimizer.zero_grad(set_to_none=True);pred=model(xb);loss=_loss(task_id,pred,yb,loss_weights)
             if not torch.isfinite(loss): raise BackendError("TRAINING_LOSS_NON_FINITE")
             loss.backward();torch.nn.utils.clip_grad_norm_(model.parameters(),5.0);optimizer.step();train_sum+=loss.item()*xb.shape[0];seen+=xb.shape[0]
-        train_loss=train_sum/max(1,seen);val_loss,metric=_evaluate(model,val_loader,task_id,device);point={"epoch":epoch,"trainLoss":train_loss,"valLoss":val_loss,"metric":metric};history.append(point)
+        train_loss=train_sum/max(1,seen);val_loss,metric=_evaluate(model,val_loader,task_id,device,loss_weights,target_transform);point={"epoch":epoch,"trainLoss":train_loss,"valLoss":val_loss,"metric":metric};history.append(point)
 
         # Check best model criterion
         is_best = False
@@ -144,7 +170,10 @@ def train(request: dict) -> dict:
         save_checkpoint(run_root/"last.pt",model,optimizer,epoch,request,history)
         with (run_root/"events.jsonl").open("a",encoding="utf-8") as handle: handle.write(json.dumps(point,allow_nan=False)+"\n")
         emit({"type":"metric","run_id":run_id,"epoch":epoch,"train_loss":train_loss,"val_loss":val_loss,"metric":metric,"metric_name":task_spec(task_id)["metric"]})
-    test_loss,test_metric=_evaluate(model,test_loader,task_id,device)
+    best_path=run_root/"best.pt"
+    if best_path.exists():
+        model.load_state_dict(torch.load(best_path,map_location=device,weights_only=True)["model_state"])
+    test_loss,test_metric=_evaluate(model,test_loader,task_id,device,loss_weights,target_transform)
     result={"runId":run_id,"status":"completed","metricName":task_spec(task_id)["metric"],"history":history,"checkpoint":str(run_root/"best.pt"),"test":{"loss":test_loss,"metric":test_metric}}
     atomic_json(run_root/"result.json",result);atomic_json(run_root/"run.json",{"run_id":run_id,"status":"completed","completed_at":iso_now(),"task_id":task_id,"architecture":architecture,"config":config,"result":"result.json"})
     atomic_json(project_dir(project)/"runs"/"latest.json",{"run_id":run_id,"checkpoint":str(run_root/"best.pt"),"result":str(run_root/"result.json")})

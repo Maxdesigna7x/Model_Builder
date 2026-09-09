@@ -125,6 +125,12 @@ def _pipeline_stat(value, x: torch.Tensor, task_id: str) -> torch.Tensor:
 
 
 def apply_inference_pipeline(x: torch.Tensor, dataset: dict, task_id: str) -> torch.Tensor:
+    input_transform=dataset.get("options",{}).get("inputTransform",{})
+    if input_transform.get("mode")=="standard":
+        x=(x.float()-_pipeline_stat(input_transform["center"],x,task_id))/_pipeline_stat(input_transform["scale"],x,task_id).clamp_min(1e-7)
+    elif input_transform.get("mode") in {"minmax","minmax_sym"}:
+        low=_pipeline_stat(input_transform["low"],x,task_id);high=_pipeline_stat(input_transform["high"],x,task_id);x=(x.float()-low)/(high-low).clamp_min(1e-7)
+        if input_transform["mode"]=="minmax_sym": x=x*2-1
     pipeline=dataset.get("pipeline") or dataset.get("options",{}).get("pipeline") or {}
     fitted=pipeline.get("fittedState",{})
     for node in pipeline.get("nodes",[]):
@@ -140,6 +146,34 @@ def apply_inference_pipeline(x: torch.Tensor, dataset: dict, task_id: str) -> to
         elif kind=="clip" and state:
             low=_pipeline_stat(state["lower"],x,task_id);high=_pipeline_stat(state["upper"],x,task_id);x=torch.maximum(torch.minimum(x.float(),high),low)
     return x
+
+
+def generate_causal_tokens(model, prompt: torch.Tensor, context_length: int, max_new_tokens: int = 16) -> list[int]:
+    """Greedily generate a continuation, feeding every prediction back as context."""
+    tokens=[int(value) for value in prompt.flatten().tolist() if int(value)!=0]
+    if not tokens:
+        tokens=[1]
+    generated=[]
+    with torch.inference_mode():
+        for _ in range(max(1,min(int(max_new_tokens),128))):
+            window=tokens[-context_length:]
+            x=torch.zeros(1,context_length,dtype=torch.long,device=next(model.parameters()).device)
+            x[0,:len(window)]=torch.tensor(window,dtype=torch.long,device=x.device)
+            logits=model(x)
+            scores=logits[0,len(window)-1].clone()
+            scores[:2]=-torch.inf  # Never expose <pad> or <unk> as generated text.
+            next_token=int(scores.argmax())
+            tokens.append(next_token);generated.append(next_token)
+    return generated
+
+
+def inverse_target_transform(value: torch.Tensor,dataset: dict) -> torch.Tensor:
+    transform=dataset.get("options",{}).get("targetTransform")
+    if not transform:
+        return value
+    center=torch.tensor(transform["center"],dtype=value.dtype,device=value.device).reshape(value.shape[1:] or (1,))
+    scale=torch.tensor(transform["scale"],dtype=value.dtype,device=value.device).reshape(value.shape[1:] or (1,))
+    return value*scale+center
 
 
 def infer(request: dict):
@@ -197,7 +231,10 @@ def infer(request: dict):
             except Exception as exc:
                 raise BackendError("INFERENCE_MANUAL_IMAGE_FAILED", str(exc))
         elif task_id.startswith("text."):
-            vocab=dataset.get("options",{}).get("vocab") or data.get("classes") or ["<pad>","<unk>"];lookup={word:i for i,word in enumerate(vocab)};tokens=re.findall(r"\w+|[^\w\s]",values.lower(),flags=re.UNICODE);ids=[lookup.get(token,1) for token in tokens[:input_shape[0]]];ids += [0]*(input_shape[0]-len(ids));x=torch.tensor(ids,dtype=torch.long).unsqueeze(0);source="Texto tokenizado manualmente"
+            vocab=dataset.get("options",{}).get("vocab") or data.get("classes") or ["<pad>","<unk>"];lookup={word:i for i,word in enumerate(vocab)};tokens=re.findall(r"\w+|[^\w\s]",values.lower(),flags=re.UNICODE)
+            if dataset.get("options",{}).get("add_cls"):
+                tokens=["<cls>",*tokens]
+            ids=[lookup.get(token,1) for token in tokens[:input_shape[0]]];ids += [0]*(input_shape[0]-len(ids));x=torch.tensor(ids,dtype=torch.long).unsqueeze(0);source="Texto tokenizado manualmente"
         elif task_id.startswith("tabular"):
             nums = [float(v.strip()) for v in values.split(",") if v.strip()]
             if len(nums) != input_shape[0]:
@@ -209,7 +246,9 @@ def infer(request: dict):
             x = torch.tensor(nums).float().reshape(1, *input_shape)
             source = "Entrada manual"
     else:
-        splits = split_indices(len(data["inputs"]), int(dataset.get("seed", 42)), dataset.get("splits"))
+        # Inference must sample the exact persisted test partition.  Rebuilding
+        # percentages here silently broke official and chronological splits.
+        splits = data.get("splits") or split_indices(len(data["inputs"]), int(dataset.get("seed", 42)), dataset.get("splits"))
         test_indices = splits.get("test", list(range(len(data["inputs"]))))
 
         idx_param = request.get("index")
@@ -229,7 +268,8 @@ def infer(request: dict):
                 if 0 <= y_idx < len(classes):
                     true_label = classes[y_idx]
             elif y.numel() == 1:
-                true_label = f"{float(y.item()):.4f}"
+                display_y=inverse_target_transform(y.reshape(1,*y.shape),dataset)
+                true_label = f"{float(display_y.item()):.4f}"
 
         if is_image:
             input_preview = tensor_to_b64_png(x[0])
@@ -239,8 +279,10 @@ def infer(request: dict):
     if mode == "manual":
         x=apply_inference_pipeline(x,dataset,task_id)
 
-    with torch.inference_mode():
-        out = model(x)
+    out = None
+    if task_id != "text.language_model":
+        with torch.inference_mode():
+            out = model(x)
 
     res = {
         "source": source,
@@ -260,15 +302,18 @@ def infer(request: dict):
     elif task_id == "image.reconstruction":
         reconstructed=out[0].detach().cpu();res.update({"prediction":"Imagen reconstruida","shape":list(reconstructed.shape),"outputPreview":tensor_to_b64_png(reconstructed)})
     elif task_id == "text.language_model":
-        predicted=out.argmax(-1)[0];vocab=data.get("classes") or dataset.get("options",{}).get("vocab",[])
-        decoded=[vocab[int(index)] if int(index)<len(vocab) else str(int(index)) for index in predicted]
-        res.update({"prediction":" ".join(decoded),"tokens":predicted.tolist(),"shape":list(out.shape[1:])})
+        vocab=data.get("classes") or dataset.get("options",{}).get("vocab",[])
+        generated=generate_causal_tokens(model,x,input_shape[0],int(request.get("max_new_tokens",16)))
+        decoded=[vocab[index] if index<len(vocab) else str(index) for index in generated]
+        prompt_ids=[int(value) for value in x[0].tolist() if int(value)!=0]
+        prompt_words=[vocab[index] if index<len(vocab) else str(index) for index in prompt_ids]
+        res.update({"prediction":" ".join(decoded),"completion":" ".join(decoded),"prompt":" ".join(prompt_words),"tokens":generated,"shape":[len(generated),len(vocab)]})
     elif "segmentation" in task_id:
         mask = (out.sigmoid() >= .5)[0, 0] if task_id.endswith("binary") else out.argmax(1)[0]
         if task_id.endswith("binary"):
             mask_preview = tensor_to_b64_png(mask.unsqueeze(0).float())
         else:
-            palette = torch.tensor([[8, 12, 18], [35, 190, 215], [150, 110, 235], [65, 200, 125]], dtype=torch.uint8)
+            palette = torch.tensor([[8, 12, 18], [35, 190, 215], [150, 110, 235], [65, 200, 125], [240, 165, 45]], dtype=torch.uint8)
             colored = palette[mask.clamp(0, len(palette) - 1)].permute(2, 0, 1)
             mask_preview = tensor_to_b64_png(colored)
         res.update({
@@ -278,6 +323,7 @@ def infer(request: dict):
             "outputPreview": mask_preview,
         })
     else:
+        out=inverse_target_transform(out,dataset)
         res.update({
             "prediction": float(out[0].item()) if out.numel() == 1 else out[0].tolist(),
             "shape": list(out.shape[1:])

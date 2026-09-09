@@ -38,6 +38,8 @@
     "prompt": "Project folder path:"
   },
   "deleteProject": {
+    "eyebrow": "PROJECT MANAGEMENT",
+    "title": "Delete project?",
     "confirm": "Are you sure you want to delete the project \"{{name}}\"?"
   },
   "model": {
@@ -99,6 +101,7 @@
     "uploadHint": "Select or drag a file",
     "uploadFormats": "JPG, PNG, WebP or BMP",
     "textPlaceholder": "Write a sentence or paragraph here…",
+    "maxNewTokens": "New tokens to generate",
     "tabularPlaceholder": "e.g. 0.12, 0.45, -0.8, ...",
     "runButton": {
       "calculating": "Calculating prediction…",
@@ -294,7 +297,28 @@
     "projectNamePlaceholder": "Signal classifier",
     "projectDescriptionLabel": "Optional description",
     "projectDescriptionPlaceholder": "What do you want to try…",
-    "createProjectButton": "Create project"
+    "createProjectButton": "Create project",
+    "flexible": "Flexible",
+    "flexibleHint": "Your data, your models",
+    "local": "Local",
+    "localHint": "Runs on your machine",
+    "open": "Open",
+    "openHint": "Built on PyTorch",
+    "recentModelTypes": "Recent model types",
+    "noModelStats": "Configured models will appear here.",
+    "recentActivity": "Recent activity",
+    "viewAll": "View all",
+    "noActivity": "No activity yet.",
+    "searchProjects": "Search projects…",
+    "filterModels": "Filter by model",
+    "allModels": "All models",
+    "listView": "List view",
+    "gridView": "Grid view",
+    "nameColumn": "Name",
+    "modelColumn": "Model type",
+    "lastOpenedColumn": "Last opened",
+    "actionsColumn": "Actions",
+    "noSearchResults": "No projects match the current filters."
   },
   "sidebar": {
     "homeTitle": "Back to projects",
@@ -308,7 +332,43 @@
     "stepEyebrow": "STEP 1 OF 5",
     "title": "What do you want to build?",
     "subtitle": "The task defines your data, output and how we measure learning.",
-    "architectureEyebrow": "ARCHITECTURE"
+    "architectureEyebrow": "ARCHITECTURE",
+    "catalogTitle": "Choose an architecture and task",
+    "catalogSubtitle": "Select a model architecture for your data and define what you want to predict.",
+    "searchPlaceholder": "Search architectures…",
+    "popularFirst": "Popular first",
+    "familiesTitle": "Architecture families",
+    "familiesSubtitle": "Choose a category to explore models.",
+    "familyAll": "All architectures",
+    "familyAllHint": "Browse all available models",
+    "familyTabular": "Tabular",
+    "familyTabularHint": "MLP and autoencoder for structured data",
+    "familySeries": "Time series",
+    "familySeriesHint": "CNN, RNN and Transformer for signals",
+    "familyVision": "Computer vision",
+    "familyVisionHint": "CNN and ViT for images",
+    "familyText": "Text & NLP",
+    "familyTextHint": "Transformer for language",
+    "familyGenerative": "Generative",
+    "familyGenerativeHint": "Autoencoders and reconstruction",
+    "familyCausal": "Causal & probabilistic",
+    "familyCausalHint": "Causal Transformer",
+    "architecturesTitle": "Architectures",
+    "architectureCount": "{{count}} architectures",
+    "popular": "Popular",
+    "overview": "Overview",
+    "tasks": "Tasks",
+    "details": "Details",
+    "overviewText": "{{architecture}} provides an editable, local foundation to build, train and understand the complete model flow.",
+    "scalable": "Scalable",
+    "localReady": "PyTorch ready",
+    "inputSequence": "Input",
+    "representation": "Representation",
+    "availableTasks": "Available tasks",
+    "availableTasksHint": "Select a task to configure your data and output.",
+    "chooseTaskHint": "Choose a task to continue",
+    "continueWith": "Continue with {{task}}",
+    "taskFallback": "task"
   },
   "taskCategory": {
     "all": "All",
@@ -378,7 +438,9 @@
   },
   "split": {
     "trainValidationAria": "Boundary between train and validation",
-    "validationTestAria": "Boundary between validation and test"
+    "validationTestAria": "Boundary between validation and test",
+    "officialLocked": "Official dataset splits; their proportions cannot be changed.",
+    "temporalLocked": "Chronological split protected to keep future samples out of training."
   },
   "time": {
     "seconds": "{{count}}s",

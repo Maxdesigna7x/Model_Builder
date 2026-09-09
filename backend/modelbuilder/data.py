@@ -36,9 +36,38 @@ def split_indices(n: int, seed: int, percentages: dict[str, int] | None = None) 
     return {"train": order[:a], "validation": order[a:b], "test": order[b:]}
 
 
-def _build_preview(task_id: str, x: torch.Tensor, y: torch.Tensor | None, classes: list[str] | None = None) -> dict:
+def split_percentages(splits: dict[str, list[int]]) -> dict[str, int]:
+    """Return display percentages that add up to 100 for concrete split indices."""
+    names = ("train", "validation", "test")
+    counts = {name: len(splits.get(name, [])) for name in names}
+    total = sum(counts.values())
+    if total <= 0:
+        return {"train": 70, "validation": 15, "test": 15}
+    exact = {name: counts[name] * 100 / total for name in names}
+    result = {name: int(math.floor(exact[name])) for name in names}
+    for name in sorted(names, key=lambda item: exact[item] - result[item], reverse=True)[:100 - sum(result.values())]:
+        result[name] += 1
+    return result
+
+
+def _display_targets(y: torch.Tensor | None,options: dict) -> torch.Tensor | None:
+    transform=options.get("targetTransform")
+    if y is None or not transform:
+        return y
+    shape=[1,*y.shape[1:]];center=torch.tensor(transform["center"],dtype=y.dtype).reshape(shape);scale=torch.tensor(transform["scale"],dtype=y.dtype).reshape(shape)
+    return y*scale+center
+
+
+def _build_preview(task_id: str, x: torch.Tensor, y: torch.Tensor | None, classes: list[str] | None = None, options: dict | None = None) -> dict:
     items = []
     num_samples = min(8, len(x))
+    if task_id.startswith("text."):
+        vocab = (options or {}).get("vocab", [])
+        for i in range(num_samples):
+            token_ids = x[i].flatten().tolist()
+            words = [str(vocab[token]) if 0 <= int(token) < len(vocab) else "<unk>" for token in token_ids if int(token) != 0]
+            items.append({"text": " ".join(words)})
+        return {"type": "text", "items": items}
     if task_id.startswith("image") or "segmentation" in task_id:
         for i in range(num_samples):
             img_tensor = x[i]
@@ -78,7 +107,7 @@ def _build_preview(task_id: str, x: torch.Tensor, y: torch.Tensor | None, classe
                     mask_img = Image.fromarray(mask * 255, mode="L")
                     target_label = "Máscara"
                 else:
-                    palette = np.array([[8, 12, 18], [35, 190, 215], [150, 110, 235], [65, 200, 125]], dtype=np.uint8)
+                    palette = np.array([[8, 12, 18], [35, 190, 215], [150, 110, 235], [65, 200, 125], [240, 165, 45]], dtype=np.uint8)
                     mask_img = Image.fromarray(palette[np.clip(mask, 0, len(palette) - 1)], mode="RGB")
                     target_label = "Máscara de clases"
                 target_buf = io.BytesIO(); mask_img.save(target_buf, format="PNG")
@@ -175,13 +204,17 @@ def _save(
     source: str = "synthetic",
     source_path: str | None = None,
     metadata: dict | None = None,
+    split_indices_override: dict[str, list[int]] | None = None,
+    split_source: str = "generated",
 ) -> dict:
     dataset_id = str(uuid.uuid4())
     root = project_dir(project) / "datasets" / dataset_id / "1"
     root.mkdir(parents=True, exist_ok=True)
-    splits = split_indices(len(x), seed)
+    splits = split_indices_override or split_indices(len(x), seed)
+    percentages = split_percentages(splits)
+    counts = {name: len(splits.get(name, [])) for name in ("train", "validation", "test")}
     opts = options or {}
-    payload={"inputs": x.cpu(), "targets": y.cpu(), "task_id": task_id, "classes": classes, "splits": splits, "options": opts}
+    payload={"inputs": x.cpu(), "targets": y.cpu(), "task_id": task_id, "classes": classes, "splits": splits, "split_percentages": percentages, "split_source": split_source, "options": opts}
     torch.save(payload, root / "source.pt")
     torch.save(payload, root / "dataset.pt")
     if task_id == "text.language_model":
@@ -193,13 +226,15 @@ def _save(
     else:
         output_shape = list(y.shape[1:]) or ([len(classes)] if classes else [1])
     
-    preview = _build_preview(task_id, x, y, classes)
+    display_y=_display_targets(y,opts)
+    preview = _build_preview(task_id, x, display_y, classes, opts)
     summary = {
         "id": dataset_id, "revision": 1, "source": source, "samples": len(x),
         "inputShape": list(x.shape[1:]), "outputShape": output_shape,
-        "classes": classes, "description": description, "splits": {"train": 70, "validation": 15, "test": 15},
+        "classes": classes, "description": description, "splits": percentages,
+        "splitCounts": counts, "splitSource": split_source,
         "path": str(root / "dataset.pt"), "seed": seed,
-        "preview": preview, "analytics": build_analytics(task_id,x,y,classes,opts),
+        "preview": preview, "analytics": build_analytics(task_id,x,display_y,classes,opts),
         "options": opts
     }
     if source_path:
@@ -264,7 +299,17 @@ def apply_pipeline(project: dict, dataset: dict, task_id: str, pipeline: dict) -
     if not base_path.exists(): base_path=current_path.parent/"source.pt"
     if not base_path.exists(): base_path=current_path
     payload=torch.load(base_path,weights_only=True);x=payload["inputs"].clone();y=payload["targets"].clone();classes=payload.get("classes")
-    diagnostics=[];fitted={};seed=int(dataset.get("seed",42));percentages={key:int(dataset.get("splits",{}).get(key,default)) for key,default in (("train",70),("validation",15),("test",15))};strategy="automatic";splits=None
+    split_source=str(payload.get("split_source",dataset.get("splitSource","generated")))
+    managed=split_source in {"official","temporal"}
+    diagnostics=[];fitted={};seed=int(dataset.get("seed",42));percentages={key:int(dataset.get("splits",{}).get(key,default)) for key,default in (("train",70),("validation",15),("test",15))};strategy=split_source if managed else "automatic";splits={key:list(value) for key,value in payload.get("splits",{}).items()} if managed else None
+
+    def subset(keep: torch.Tensor | list[int]) -> None:
+        nonlocal x,y,splits
+        indices=keep.nonzero(as_tuple=False).flatten().tolist() if isinstance(keep,torch.Tensor) and keep.dtype==torch.bool else [int(index) for index in keep]
+        if splits is not None:
+            old_to_new={old:new for new,old in enumerate(indices)}
+            splits={name:[old_to_new[index] for index in values if index in old_to_new] for name,values in splits.items()}
+        x,y=x[indices],y[indices]
 
     def ensure_splits():
         nonlocal splits,strategy
@@ -286,18 +331,19 @@ def apply_pipeline(project: dict, dataset: dict, task_id: str, pipeline: dict) -
         elif kind=="finite_filter":
             keep=torch.isfinite(x.float()).reshape(len(x),-1).all(1)
             if y.dtype.is_floating_point: keep &= torch.isfinite(y.float()).reshape(len(y),-1).all(1)
-            removed=int((~keep).sum());x,y=x[keep],y[keep];splits=None;diagnostics.append({"level":"info","nodeId":node_id,"message":str(BackendError("DATA_SAMPLES_EXCLUDED_NON_FINITE", str(removed)))})
+            removed=int((~keep).sum());subset(keep);diagnostics.append({"level":"info","nodeId":node_id,"message":str(BackendError("DATA_SAMPLES_EXCLUDED_NON_FINITE", str(removed)))})
         elif kind=="deduplicate":
             seen=set();keep=[];include_target=bool(props.get("include_target",True))
             for index in range(len(x)):
                 digest=hashlib.sha256(x[index].contiguous().numpy().tobytes()+(y[index].contiguous().numpy().tobytes() if include_target else b"")).digest()
                 if digest not in seen: seen.add(digest);keep.append(index)
-            removed=len(x)-len(keep);x,y=x[keep],y[keep];splits=None;diagnostics.append({"level":"info","nodeId":node_id,"message":str(BackendError("DATA_SAMPLES_EXCLUDED_DUPLICATES", str(removed)))})
+            removed=len(x)-len(keep);subset(keep);diagnostics.append({"level":"info","nodeId":node_id,"message":str(BackendError("DATA_SAMPLES_EXCLUDED_DUPLICATES", str(removed)))})
         elif kind=="split":
-            percentages={key:int(props.get(key,default)) for key,default in (("train",70),("validation",15),("test",15))};seed=int(props.get("seed",seed));strategy=str(props.get("strategy","automatic"))
-            if sum(percentages.values())!=100 or min(percentages.values())<1: raise BackendError("SPLITS_INVALID_PERCENTAGES")
-            if strategy=="temporal" and not task_id.startswith("sequence"): raise BackendError("SPLITS_TEMPORAL_ONLY_SEQUENCES")
-            splits=_pipeline_splits(len(x),seed,percentages,strategy,y,task_id)
+            if not managed:
+                percentages={key:int(props.get(key,default)) for key,default in (("train",70),("validation",15),("test",15))};seed=int(props.get("seed",seed));strategy=str(props.get("strategy","automatic"))
+                if sum(percentages.values())!=100 or min(percentages.values())<1: raise BackendError("SPLITS_INVALID_PERCENTAGES")
+                if strategy=="temporal" and not task_id.startswith("sequence"): raise BackendError("SPLITS_TEMPORAL_ONLY_SEQUENCES")
+                splits=_pipeline_splits(len(x),seed,percentages,strategy,y,task_id)
         elif kind in {"normalize","image_normalize"}:
             ensure_splits()
             if kind=="image_normalize" and x.dtype==torch.uint8: x=x.float()/255.0
@@ -344,15 +390,18 @@ def apply_pipeline(project: dict, dataset: dict, task_id: str, pipeline: dict) -
 
     if len(x)<3: raise BackendError("PIPELINE_TOO_FEW_SAMPLES")
     ensure_splits()
+    if managed:
+        percentages=split_percentages(splits)
     revision=max(int(dataset.get("revision",1))+1,int(pipeline.get("revision",1)));root=dataset_root/str(revision);root.mkdir(parents=True,exist_ok=True)
     compiled={**pipeline,"revision":revision,"diagnostics":diagnostics,"fittedState":fitted}
     output=next((node for node in nodes if node.get("type")=="output"),{});output_props=output.get("properties",{});options={**payload.get("options",{}),"batchSize":int(output_props.get("batchSize",payload.get("options",{}).get("batchSize",32))),"workers":int(output_props.get("workers",0)),"pin_memory":bool(output_props.get("pin_memory",True)),"pipeline":compiled}
-    torch.save({"inputs":x.cpu(),"targets":y.cpu(),"task_id":task_id,"classes":classes,"splits":splits,"split_percentages":percentages,"options":options,"pipeline":compiled},root/"dataset.pt")
+    torch.save({"inputs":x.cpu(),"targets":y.cpu(),"task_id":task_id,"classes":classes,"splits":splits,"split_percentages":percentages,"split_source":split_source,"options":options,"pipeline":compiled},root/"dataset.pt")
     if task_id=="image.reconstruction": output_shape=list(y.shape[1:])
     elif "segmentation.binary" in task_id: output_shape=[1,*list(y.shape[1:])]
     elif "segmentation.multiclass" in task_id: output_shape=[len(classes or []),*list(y.shape[1:])]
     else: output_shape=dataset["outputShape"]
-    summary={**dataset,"revision":revision,"samples":len(x),"inputShape":list(x.shape[1:]),"outputShape":output_shape,"splits":percentages,"path":str(root/"dataset.pt"),"seed":seed,"preview":_build_preview(task_id,x,y,classes),"analytics":build_analytics(task_id,x,y,classes,options),"pipeline":compiled,"options":options,"validation":{"errors":0,"warnings":sum(d["level"]=="warning" for d in diagnostics),"checks":len(diagnostics)}}
+    display_y=_display_targets(y,options)
+    summary={**dataset,"revision":revision,"samples":len(x),"inputShape":list(x.shape[1:]),"outputShape":output_shape,"splits":percentages,"splitCounts":{name:len(splits.get(name,[])) for name in ("train","validation","test")},"splitSource":split_source,"path":str(root/"dataset.pt"),"seed":seed,"preview":_build_preview(task_id,x,display_y,classes,options),"analytics":build_analytics(task_id,x,display_y,classes,options),"pipeline":compiled,"options":options,"validation":{"errors":0,"warnings":sum(d["level"]=="warning" for d in diagnostics),"checks":len(diagnostics)}}
     atomic_json(root/"pipeline.json",compiled);atomic_json(root/"manifest.json",{**summary,"preview":summary["preview"],"split_indices":splits,"task_id":task_id,"schema_version":2})
     return summary
 
