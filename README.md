@@ -4,7 +4,21 @@ Aplicación visual local para crear proyectos, elegir una tarea compatible, prep
 
 La base usa **React + TypeScript + React Flow + ECharts**, un shell **Tauri 2** y un motor local **Python/PyTorch**. El catálogo cubre MLP, CNN 1D/2D (incluyendo un preset con bloque residual editable), RNN/GRU/LSTM, Transformer encoder, Transformer causal, ViT, U-Net y autoencoders.
 
-![Entrenamiento en tiempo real](docs/img0.png)
+![Captura 1](docs/img/1.png)
+
+![Captura 2](docs/img/2.png)
+
+![Captura 3](docs/img/3.png)
+
+![Captura 4](docs/img/4.png)
+
+![Captura 5](docs/img/5.png)
+
+![Captura 6](docs/img/6.png)
+
+![Captura 7](docs/img/7.png)
+
+![Captura 8](docs/img/8.png)
 
 ## Funciones implementadas
 
@@ -23,10 +37,6 @@ La base usa **React + TypeScript + React Flow + ECharts**, un shell **Tauri 2** 
 - Tema oscuro de gris neutro inspirado en `references/`, tema claro y cuatro acentos persistentes: azul, naranja, verde y violeta.
 
 VAE y Transformer encoder–decoder permanecen deliberadamente fuera del catálogo disponible: requieren salidas múltiples/pérdida KL y cross-attention/generación respectivamente. No se muestran como funciones parciales. El estado detallado está en [`ARCHITECTURE_TODO.md`](ARCHITECTURE_TODO.md).
-
-![Selector de tarea y arquitectura](docs/img2.png)
-
-![Constructor de red con bloques](docs/Img1.png)
 
 ### Datasets públicos y datos propios
 
