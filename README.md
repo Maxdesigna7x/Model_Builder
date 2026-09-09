@@ -32,36 +32,64 @@ VAE y Transformer encoder–decoder permanecen deliberadamente fuera del catálo
 
 La pantalla Datos ofrece fuentes públicas compatibles para la tarea seleccionada. Antes de usar la red, la app comprueba si el dataset ya está materializado en el proyecto o presente en `workspace_data/cache/huggingface`; si falta, descarga una revisión fijada y la convierte al contrato interno. No se ejecuta código remoto del repositorio. Para datos propios siguen disponibles `label<TAB>texto` en clasificación y una muestra por línea en modelado causal.
 
-## Instalación de dependencias
+## Requisitos e instalación
 
-Frontend:
+| Componente | Requisito |
+| --- | --- |
+| Node.js y npm | Node.js 20+ |
+| Python | 3.11+ con pip y venv |
+| Rust y Cargo | Stable |
+| Linux | Ubuntu/Debian |
+| Windows | Windows 10/11 + WebView2 + VS Build Tools 2022 + Windows SDK |
+
+Clona el repositorio:
 
 ```bash
-npm install
+git clone https://github.com/Maxdesigna7x/Model_Builder.git
+cd Model_Builder
 ```
 
-Backend (Python >= 3.11):
+### Linux
 
 ```bash
-pip install -e .
+chmod +x scripts/install-linux.sh run.sh run-web.sh
+./scripts/install-linux.sh
 ```
 
-## Ejecutar la interfaz web de desarrollo
+### Windows (PowerShell)
 
-```bash
-./run-web.sh
+```powershell
+Set-ExecutionPolicy -Scope Process Bypass
+.\scripts\install-windows.ps1
 ```
 
-Abrir `http://127.0.0.1:1420`. Este modo ejecuta el motor Python/PyTorch real a través del proxy de Vite, por lo que generación de datos, entrenamiento, métricas en vivo e inferencia funcionan. Lo que no está disponible en web es la gestión persistente de proyectos en disco (`project.create/open/delete`) y el selector nativo de carpetas; esas operaciones requieren el shell Tauri.
+Los instaladores validan Python, Node.js y Rust, crean el entorno .venv, instalan el backend y ejecutan npm ci con el lockfile. Son repetibles. Consulta [docs/INSTALACION.md](docs/INSTALACION.md) para los detalles.
 
-## Ejecutar como aplicación Tauri en Linux
+## Cómo ejecutar
 
-Tauri necesita las cabeceras nativas de WebKitGTK/GLib. En Ubuntu, Zorin OS o derivados:
+### Web con Vite
 
 ```bash
-./scripts/install-linux-deps.sh
+npm run dev
+```
+
+En Linux también puedes ejecutar ./run-web.sh. Abre http://127.0.0.1:1420.
+
+### Aplicación de escritorio Tauri
+
+Linux:
+
+```bash
 ./run.sh
 ```
+
+Windows:
+
+```powershell
+.\run-windows.ps1
+```
+
+Los comandos Tauri usan automáticamente el Python de .venv mediante MODELBUILDER_PYTHON.
 
 ## Validación
 
