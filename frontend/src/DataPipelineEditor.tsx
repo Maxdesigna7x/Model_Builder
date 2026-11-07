@@ -31,7 +31,7 @@ const outputNode=(dataset:DatasetSummary):DataPipelineNode=>({id:"output",type:"
 
 export function defaultDataPipeline(task:TaskId,dataset:DatasetSummary):DataPipeline{
   const modality=modalityFor(task);const sourceLabel=dataset.source==="huggingface"?"dataPipeline:definitions.source.huggingFaceLabel":dataset.source==="synthetic"?"dataPipeline:definitions.source.syntheticLabel":"dataPipeline:definitions.source.importedLabel";const nodes:DataPipelineNode[]=[{id:"source",type:"source",label:sourceLabel,description:dataset.sourcePath||dataset.description,category:"source",scope:"all",enabled:true,locked:true,properties:{}},make(DEFINITIONS[0])];
-  if(modality==="tabular"||modality==="sequence")nodes.push(make(DEFINITIONS[3]));if(modality==="image")nodes.push(make(DEFINITIONS[8]));nodes.push(outputNode(dataset));return {schemaVersion:1,revision:0,nodes};
+  if(modality==="tabular"||modality==="sequence")nodes.push(make(DEFINITIONS[3]));if(modality==="image")nodes.push(make({...DEFINITIONS[8],properties:{mode:"minmax"}}));nodes.push(outputNode(dataset));return {schemaVersion:1,revision:0,nodes};
 }
 
 function hydratePipeline(task:TaskId,dataset:DatasetSummary):DataPipeline{
@@ -39,11 +39,12 @@ function hydratePipeline(task:TaskId,dataset:DatasetSummary):DataPipeline{
   const output=nodes.find(node=>node.type==="output");nodes=nodes.filter(node=>node.type!=="output");nodes.push({...outputNode(dataset),...output,locked:true,properties:{...outputNode(dataset).properties,...output?.properties}});nodes[0]={...nodes[0],locked:true};return {...source,nodes};
 }
 
-export default function DataPipelineEditor({task,dataset,onApply}:{task:TaskId;dataset:DatasetSummary;onApply:(pipeline:DataPipeline)=>Promise<void>}){
+export default function DataPipelineEditor({task,dataset,onApply,onDraftChange}:{task:TaskId;dataset:DatasetSummary;onApply:(pipeline:DataPipeline)=>Promise<void>;onDraftChange?:(pipeline:DataPipeline,dirty:boolean)=>void}){
   const { t } = useTranslation(["dataPipeline","common"]);
   const initial=hydratePipeline(task,dataset);const [pipeline,setPipeline]=useState<DataPipeline>(initial);const [selectedId,setSelectedId]=useState(initial.nodes[1]?.id||"source");const [libraryOpen,setLibraryOpen]=useState(false);const [busy,setBusy]=useState(false);const [dirty,setDirty]=useState(!dataset.pipeline);const [draggedId,setDraggedId]=useState<string|null>(null);const [,setPortalReady]=useState(0);
   useEffect(()=>{const next=hydratePipeline(task,dataset);setPipeline(next);setSelectedId(current=>next.nodes.some(node=>node.id===current)?current:next.nodes[1]?.id||"source");setDirty(!dataset.pipeline)},[dataset.id,dataset.revision,task]);useEffect(()=>setPortalReady(1),[]);
   const modality=modalityFor(task);const selected=pipeline.nodes.find(node=>node.id===selectedId);const available=DEFINITIONS.filter(def=>(def.modalities.includes("all")||def.modalities.includes(modality))&&!def.excludeTasks?.includes(task)&&!(def.unique&&pipeline.nodes.some(node=>node.type===def.type)));const localDiagnostics=useMemo(()=>validatePipeline(pipeline,t),[pipeline,t]);const diagnostics=[...(pipeline.diagnostics||[]),...localDiagnostics];
+  useEffect(()=>{onDraftChange?.(pipeline,dirty)},[pipeline,dirty,onDraftChange]);
   const setNodes=(change:(nodes:DataPipelineNode[])=>DataPipelineNode[])=>{setPipeline(value=>({...value,nodes:change(value.nodes),diagnostics:[]}));setDirty(true)};const update=(id:string,patch:Partial<DataPipelineNode>)=>setNodes(nodes=>nodes.map(node=>node.id===id?{...node,...patch}:node));
   const add=(def:Definition)=>{const node=make(def);setNodes(nodes=>{const copy=[...nodes];copy.splice(copy.length-1,0,node);return copy});setSelectedId(node.id);setLibraryOpen(false)};const remove=(id:string)=>{setNodes(nodes=>nodes.filter(node=>node.id!==id));setSelectedId("source")};
   const move=(id:string,direction:-1|1)=>setNodes(nodes=>{const copy=[...nodes],index=copy.findIndex(node=>node.id===id),target=index+direction;if(index<=0||target<=0||target>=copy.length-1)return nodes;[copy[index],copy[target]]=[copy[target],copy[index]];return copy});

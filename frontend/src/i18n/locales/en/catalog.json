@@ -22,7 +22,7 @@
     },
     "cnn": {
       "name": "CNN 2D",
-      "description": "Spatial filters for images."
+      "description": "Spatial filters and task-specific image heads."
     },
     "vit": {
       "name": "Visual transformer (ViT)",
@@ -30,7 +30,7 @@
     },
     "unet": {
       "name": "Visual encoder-decoder",
-      "description": "U-Net with editable skips for segmentation."
+      "description": "U-Net with editable skips for dense image prediction."
     },
     "autoencoder": {
       "name": "Autoencoder",
@@ -94,6 +94,33 @@
         "output": "Image [C,H,W]",
         "metric": "MSE",
         "format": "Folder with images"
+      },
+      "localization": {
+        "name": "Single box localization",
+        "category": "Vision",
+        "modality": "Image + one box",
+        "input": "Image [C,H,W]",
+        "output": "Normalized box [x1,y1,x2,y2]",
+        "metric": "IoU",
+        "format": "Images + labels.csv (filename,xmin,ymin,xmax,ymax)"
+      },
+      "detection": {
+        "name": "Object detection",
+        "category": "Vision",
+        "modality": "Image + boxes",
+        "input": "Image [C,H,W]",
+        "output": "boxes [4,Hg,Wg] + classes [K,Hg,Wg]",
+        "metric": "mAP@0.5",
+        "format": "images/ + labels/*.txt + classes.txt"
+      },
+      "translation": {
+        "name": "Image to image",
+        "category": "Vision",
+        "modality": "Paired images",
+        "input": "Source image [C,H,W]",
+        "output": "Target image [Ct,H,W]",
+        "metric": "MAE",
+        "format": "inputs/ + targets/ matched by filename"
       },
       "segmentation": {
         "binary": {
@@ -187,6 +214,11 @@
     "Attention": "Attention"
   },
   "blocks": {
+    "multi_scale_cnn": {
+      "label": "Multi scale CNN",
+      "description": "Runs one compact convolutional pyramid and exposes its real p2, p3 and p4 feature maps as separate ports.",
+      "usage": "Connect a named output to a decoder or detection head. Feature maps share the same forward pass."
+    },
     "linear": {
       "label": "Dense",
       "description": "Learned transformation that combines all input features.",

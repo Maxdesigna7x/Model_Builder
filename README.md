@@ -1,5 +1,36 @@
 # ModelBuilder
 
+## Modelos preentrenados y fine-tuning
+
+El constructor incluye un catálogo curado de checkpoints de Hugging Face fijados a
+commits concretos. En CNN/ViT se representan el `AutoImageProcessor`, el backbone
+con inspección por etapas y una cabeza nueva compatible con el dataset. En texto se conserva el
+texto crudo y se vuelve a tokenizar con el `AutoTokenizer` del checkpoint; los
+modelos causales conservan su cabeza de vocabulario.
+
+Los nodos muestran si los pesos están preentrenados, congelados o entrenables. El
+inspector permite congelar el backbone y la pantalla de entrenamiento ofrece
+entrenar sólo la cabeza, fine-tuning completo, descongelamiento gradual o LoRA,
+además de scheduler/warmup, early stopping, precisión mixta, acumulación de
+gradientes, clipping y losses alternativas.
+
+Cada corrida conserva un manifiesto reproducible (grafo, dataset/splits, seed,
+dependencias y hardware), checkpoints para reanudar y un `bundle/` local con
+pesos, configuración, etiquetas, processor/tokenizer cuando aplica y Model Card.
+El registro del proyecto mantiene el lineage y los alias `best`/`last`; no se
+publica ningún artefacto fuera del equipo de forma automática.
+
+La carga remota usa `trust_remote_code=false`, revisiones de 40 caracteres y
+prefiere pesos `safetensors`. Los modelos descargados quedan en la caché local del
+workspace. MLP, redes recurrentes, CNN 1D y autoencoders mantienen plantillas desde
+cero porque sus contratos de columnas, frecuencia, canales o espacio latente no
+permiten pesos universales seguros.
+
+El avance y las ampliaciones pendientes se controlan en
+[`IMPLEMENTATION_TODO.md`](IMPLEMENTATION_TODO.md).
+La evidencia de esta entrega y sus límites están en
+[`docs/10-verificacion-version-cnn.md`](docs/10-verificacion-version-cnn.md).
+
 Aplicación visual local para crear proyectos, elegir una tarea compatible, preparar datos, construir una red mediante bloques, entrenarla con PyTorch y ejecutar inferencia desde un checkpoint.
 
 La base usa **React + TypeScript + React Flow + ECharts**, un shell **Tauri 2** y un motor local **Python/PyTorch**. El catálogo cubre MLP, CNN 1D/2D (incluyendo un preset con bloque residual editable), RNN/GRU/LSTM, Transformer encoder, Transformer causal, ViT, U-Net y autoencoders.
@@ -100,6 +131,28 @@ Windows:
 ```
 
 Los comandos Tauri usan automáticamente el Python de .venv mediante MODELBUILDER_PYTHON.
+
+## Capturas de la interfaz
+
+Para generar imágenes actualizadas de las pantallas y del catálogo y constructor de
+cada arquitectura, ejecuta desde la raíz del proyecto:
+
+```bash
+npm ci # solo si aún no instalaste las dependencias
+npm run capturas
+```
+
+Necesitas Chrome o Chromium instalado. Si no está en una ubicación habitual, indica
+su ruta con `CHROME_PATH` (por ejemplo, `CHROME_PATH=/ruta/a/chromium npm run capturas`).
+El script inicia Vite en un puerto libre y guarda archivos PNG de 1600 × 1000 en una
+carpeta nueva dentro de `capturas/`; muestra la ruta al terminar. Para elegir otra
+carpeta usa `CAPTURE_DIR=/ruta/de/salida npm run capturas`.
+
+Las capturas usan un proyecto, datos y métricas de demostración en una sesión de
+navegador aislada; no muestran proyectos ni entrenamientos reales y no modifican sus
+datos. Las imágenes de modelos corresponden a la primera tarea compatible de cada
+arquitectura y a su plantilla inicial. Los grafos extensos pueden quedar parcialmente
+fuera del área visible del constructor. La carpeta `capturas/` está ignorada por Git.
 
 ## Validación
 

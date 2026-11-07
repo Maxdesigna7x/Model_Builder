@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import threading
+import time
 from pathlib import Path
 
 import pytest
@@ -8,12 +10,14 @@ import torch
 from PIL import Image
 
 from modelbuilder.data import apply_pipeline, generate, import_dataset, split_indices
-from modelbuilder.engine import apply_inference_pipeline, generate_causal_tokens, infer
+from modelbuilder.engine import apply_inference_pipeline, generate_causal_tokens, handle, infer
 from modelbuilder.errors import BackendError
 from modelbuilder.huggingface_datasets import DATASETS as HF_DATASETS, LOADERS as HF_LOADERS, catalog as hf_catalog, download as hf_download
-from modelbuilder.models import build_model
+from modelbuilder.models import apply_stage_policy, build_model
+from modelbuilder.manifest import comparison_hash, semantic_hash
+from modelbuilder.pretrained import PRETRAINED_MODELS, catalog as model_catalog
 from modelbuilder.storage import create_project
-from modelbuilder.training import default_epochs, train
+from modelbuilder.training import default_epochs, redact_secrets, seed_everything, train, wait_for_training_control
 
 
 def node(node_id, block_type, **properties):
@@ -149,7 +153,17 @@ def test_train_checkpoint_and_inference(project):
     result = train(request)
     assert result["status"] == "completed"
     assert len(result["history"]) == 2
+    assert "macro_f1" in result["test"]["secondaryMetrics"]
+    assert len(result["test"]["diagnostics"]["confusion_matrix"])==3
+    assert result["comparisonContract"]==comparison_hash(task_id,dataset,"accuracy")
     assert Path(result["checkpoint"]).is_file()
+    assert (Path(result["bundle"])/"model.pt").is_file() and (Path(result["bundle"])/"MODEL_CARD.md").is_file()
+    registry=json.loads((Path(result["bundle"]).parents[2]/"models"/"registry.json").read_text())
+    assert registry["models"][-1]["aliases"]==["best","last"]
+    imported=handle({"action":"model.bundle.import","path":result["bundle"]})
+    assert imported["task_id"]==task_id and imported["checkpoint"].endswith("model.pt")
+    manifest=json.loads((Path(result["checkpoint"]).parent/"run.json").read_text())
+    assert manifest["dataset"]["splits"] and manifest["code"]["package"]=="modelbuilder"
     prediction = infer({"project": project, "mode": "manual", "values": ",".join(["0"] * 12)})
     assert len(prediction["probabilities"]) == 3
     assert abs(sum(prediction["probabilities"]) - 1) < 1e-5
@@ -163,11 +177,91 @@ def test_train_checkpoint_and_inference(project):
     assert sampled["source"]=="Muestra #1 (Split Test)"
 
 
+def test_advanced_training_and_safe_resume(project):
+    task_id="tabular.regression";dataset=generate(project,task_id,seed=23);graph=graph_for(task_id)
+    first=train({"project":project,"dataset":dataset,"task_id":task_id,"architecture":"mlp","graph":graph,"config":{"epochs":1,"batch_size":128,"device":"cpu","seed":23,"scheduler":"cosine","warmup_epochs":1,"gradient_accumulation":2,"gradient_clip_norm":1.0,"loss":"huber"}})
+    saved=torch.load(first["lastCheckpoint"],weights_only=True)
+    assert saved["schema_version"]==3 and saved["scheduler_state"] and saved["rng_state"]["numpy"]["state"].dtype==torch.uint32
+    resumed=train({"project":project,"dataset":dataset,"task_id":task_id,"architecture":"mlp","graph":graph,"config":{"epochs":2,"batch_size":128,"device":"cpu","seed":23,"scheduler":"cosine","warmup_epochs":1,"gradient_accumulation":2,"loss":"huber","resume_checkpoint":first["lastCheckpoint"]}})
+    assert [point["epoch"] for point in resumed["history"]]==[1,2]
+
+
+def test_class_balancing_supports_weights_and_sampler(project):
+    task_id="tabular.classification";dataset=generate(project,task_id,seed=31);graph=graph_for(task_id)
+    result=train({"project":project,"dataset":dataset,"task_id":task_id,"architecture":"mlp","graph":graph,"config":{"epochs":1,"batch_size":256,"device":"cpu","seed":31,"class_weights":True,"balanced_sampler":True,"finetuning_recipe":"smoke"}})
+    assert result["status"]=="completed" and len(result["history"])==1
+
+
 def test_task_aware_mvp_epoch_defaults():
     assert default_epochs("text.language_model") == 10
     assert default_epochs("image.segmentation.binary") == 40
     assert default_epochs("image.segmentation.multiclass") == 40
     assert default_epochs("image.classification") == 20
+
+
+def test_system_gpu_never_invents_cuda_device(monkeypatch):
+    monkeypatch.setattr(torch.cuda,"is_available",lambda:False)
+    result=handle({"action":"system.gpu"})
+    assert result=={"cuda":False,"name":"CPU","total_vram":0,"allocated_vram":0}
+
+
+def test_authoritative_catalog_contract():
+    result=handle({"action":"catalog.get"})
+    assert result["schema_version"]==1 and result["architectures"]["cnn"]["tasks"]==["image.classification","image.regression","image.localization","image.detection","image.translation"]
+    assert {"hf_vision_backbone","linear","concat"}.issubset(result["block_types"])
+
+
+def test_graph_validation_runs_backward(project):
+    dataset=generate(project,"tabular.classification",seed=3)
+    result=handle({"action":"graph.validate","project":project,"dataset":dataset,"task_id":"tabular.classification","architecture":"mlp","graph":graph_for("tabular.classification")})
+    assert result["valid"] and result["backward"] and result["parameters"]>0
+
+
+def test_seed_everything_covers_python_numpy_and_torch():
+    import random
+    import numpy as np
+    seed_everything(19); first=(random.random(),float(np.random.rand()),float(torch.rand(1)))
+    seed_everything(19); second=(random.random(),float(np.random.rand()),float(torch.rand(1)))
+    assert first==second
+
+
+def test_secret_values_are_redacted_from_manifests():
+    assert redact_secrets({"hf_token":"abc","nested":{"password":"def"},"safe":2})=={"hf_token":"[REDACTED]","nested":{"password":"[REDACTED]"},"safe":2}
+
+
+def test_training_control_pauses_resumes_and_cancels(tmp_path):
+    control=tmp_path/"control.json";control.write_text('{"state":"paused"}')
+    events=[]
+    def resume(): time.sleep(.05);control.write_text('{"state":"running"}')
+    thread=threading.Thread(target=resume);thread.start()
+    assert wait_for_training_control(tmp_path,events.append);thread.join()
+    assert [event["type"] for event in events]==["paused","resumed"]
+    control.write_text('{"state":"cancelled"}')
+    assert not wait_for_training_control(tmp_path,events.append)
+
+
+def test_stage_policy_unfreezes_only_last_requested_stage():
+    backbone=torch.nn.Module();backbone.layers=torch.nn.ModuleList([torch.nn.Linear(3,3) for _ in range(4)])
+    apply_stage_policy(backbone,{"frozen":True,"trainable_stages":1})
+    assert not any(parameter.requires_grad for layer in backbone.layers[:3] for parameter in layer.parameters())
+    assert all(parameter.requires_grad for parameter in backbone.layers[3].parameters())
+
+
+def test_pretrained_catalog_is_curated_pinned_and_safe():
+    models=model_catalog("image.classification","cnn")
+    assert {item["id"] for item in models}=={"resnet-18","mobilenet-v2","convnext-tiny"}
+    assert all(len(item["revision"])==40 and not item["trustRemoteCode"] for item in models)
+    assert {item["adapter"] for item in PRETRAINED_MODELS.values()} >= {"vision_backbone","text_backbone","causal_lm"}
+    assert handle({"action":"model.catalog.guidance","architecture":"mlp"})["reason"]
+    assert all(item["weightsFormat"]=="safetensors" and item["diskFreeBytes"]>0 for item in models)
+
+
+def test_semantic_hash_ignores_canvas_position_and_labels():
+    graph=graph_for("tabular.classification");copy=json.loads(json.dumps(graph))
+    copy["nodes"][0]["position"]={"x":999,"y":123};copy["nodes"][0]["data"]["label"]="Otro nombre"
+    assert semantic_hash(graph)==semantic_hash(copy)
+    copy["nodes"][1]["data"]["properties"]["out_features"]=99
+    assert semantic_hash(graph)!=semantic_hash(copy)
 
 
 def test_invalid_disconnected_and_wrong_output():
@@ -195,6 +289,13 @@ def test_import_tabular_and_sequence_csv(project, tmp_path):
     sequence.write_text("\n".join(rows), encoding="utf-8")
     temporal = import_dataset(project, "sequence.classification", str(sequence))
     assert temporal["inputShape"] == [4, 1] and temporal["classes"] == ["0", "1"]
+
+
+def test_imported_text_preserves_raw_inputs_for_pretrained_tokenizers(project,tmp_path):
+    source=tmp_path/"text.txt";source.write_text("\n".join(f"clase{i%2}\tTexto original número {i}" for i in range(12)),encoding="utf-8")
+    dataset=import_dataset(project,"text.classification",str(source),{"max_length":8})
+    payload=torch.load(dataset["path"],weights_only=True)
+    assert payload["raw_inputs"][0]=="Texto original número 0" and len(payload["raw_inputs"])==12
 
 
 def test_import_image_classification_and_segmentation(project, tmp_path):

@@ -34,16 +34,24 @@ export async function startTraining(payload: Record<string, unknown>): Promise<v
     return;
   }
 
-  await fetch("/api/start-training", {
+  const response = await fetch("/api/start-training", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ action: "train", ...payload })
   });
+  if (!response.ok) {
+    throw new Error((await response.text()) || "No se pudo iniciar el entrenamiento");
+  }
 }
 
 export async function pickDatasetDirectory(): Promise<string | null> {
   if (!isTauri()) return null;
   return invoke<string | null>("pick_directory");
+}
+
+export async function pickDatasetFile(): Promise<string | null> {
+  if (!isTauri()) return null;
+  return invoke<string | null>("pick_dataset_file");
 }
 
 export async function onTrainingEvent(callback: (event: Record<string, unknown>) => void): Promise<UnlistenFn> {

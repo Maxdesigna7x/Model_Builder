@@ -32,3 +32,6 @@ Thumbs.db
 # Entornos virtuales
 .venv/
 venv/
+
+# Capturas locales de la interfaz
+capturas/

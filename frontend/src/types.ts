@@ -1,7 +1,7 @@
 import type { Edge, Node } from "@xyflow/react";
 
 export type Step = "model" | "data" | "builder" | "training" | "inference";
-export type TaskId = "tabular.classification" | "tabular.regression" | "tabular.reconstruction" | "image.classification" | "image.regression" | "image.reconstruction" | "sequence.classification" | "sequence.regression" | "sequence.forecast" | "text.classification" | "text.language_model" | "image.segmentation.binary" | "image.segmentation.multiclass";
+export type TaskId = "tabular.classification" | "tabular.regression" | "tabular.reconstruction" | "image.classification" | "image.regression" | "image.reconstruction" | "image.localization" | "image.detection" | "image.translation" | "sequence.classification" | "sequence.regression" | "sequence.forecast" | "text.classification" | "text.language_model" | "image.segmentation.binary" | "image.segmentation.multiclass";
 export type Architecture = "mlp" | "cnn1d" | "lstm" | "transformer" | "transformer_causal" | "cnn" | "vit" | "unet" | "autoencoder";
 
 export type ArchitectureDef = { name: string; description: string; accent: string; tasks: TaskId[] };
@@ -29,8 +29,10 @@ export type BlockDef = {
   categoryKey?: string;
   defaults: Record<string, number | string | boolean>;
 };
+export type RuntimeCatalog = { schema_version:number; tasks:Record<TaskId,{architectures:Architecture[];objective:string;metric:string}>; architectures:Record<Architecture,{tasks:TaskId[]}>; block_types:string[] };
 
-export type ModelNodeData = { label: string; blockType: string; category: string; shape?: string; properties: Record<string, string | number | boolean>; error?: string; onDelete?: (id: string) => void; [key: string]: unknown };
+export type TensorPort = { name:string; dtype:"float32"|"int64"|"bool"|"structured"; shape:string; fields?:string[] };
+export type ModelNodeData = { label: string; blockType: string; category: string; shape?: string; inputs?:TensorPort[]; outputs?:TensorPort[]; properties: Record<string, string | number | boolean>; error?: string; compound?: boolean; expanded?: boolean; stages?: string[]; onDelete?: (id: string) => void; onToggleExpanded?: (id: string) => void; [key: string]: unknown };
 export type ModelNode = Node<ModelNodeData>;
 export type ModelEdge = Edge;
 
@@ -63,6 +65,19 @@ export interface ProjectModel {
   nodes: ModelNode[];
   edges: ModelEdge[];
   graphValid: boolean;
+  schemaVersion?: number;
+  semanticHash?: string;
+  source?: "scratch" | "huggingface" | "checkpoint";
+  pretrained?: PretrainedModelSpec;
+  checkpointLineage?: { checkpoint: string; parentRunId: string; parentModelId: string; sourceNodeId: string; sourceHandle?: string };
+}
+
+export interface PretrainedModelSpec {
+  id: string; name: string; architecture: Architecture; implementation: string;
+  repoId: string; revision: string; library: string; license: string; tasks: TaskId[];
+  processor: string; adapter: string; size: string; description: string;
+  parameterCount?: number; inputContract?: string; limitations?: string;
+  cached: boolean; cacheVerified?:boolean; cacheBytes?:number; diskFreeBytes?:number; gated?:boolean; available: boolean; trustRemoteCode: boolean; weightsFormat: string;
 }
 
 export interface DatasetPreview {
@@ -73,8 +88,12 @@ export interface DatasetPreview {
 
 export interface DatasetOptions {
   channels?: number;
+  targetChannels?: number;
+  target_channels?: number;
   resolution?: number;
   normalization?: "none" | "standard" | "minmax" | "minmax_sym";
+  target_column?: string;
+  feature_columns?: string[];
   batchSize?: number;
   vocab_size?: number;
   max_length?: number;
@@ -173,13 +192,13 @@ export interface DatasetAnalytics {
   pixelDistribution?: { labels: string[]; values: number[] };
 }
 
-export interface MetricPoint { epoch: number; trainLoss: number; valLoss: number; metric: number; }
-export interface RunResult { runId: string; status: string; metricName: string; history: MetricPoint[]; checkpoint?: string; test?: { loss: number; metric: number }; }
+export interface MetricPoint { epoch: number; trainLoss: number; valLoss: number; metric: number; learningRate?:number; secondaryMetrics?:Record<string,number>; }
+export interface RunResult { runId: string; status: string; metricName: string; comparisonContract?:string; history: MetricPoint[]; checkpoint?: string; lastCheckpoint?:string; bundle?:string; stoppedEarly?:boolean; test?: { loss: number; metric: number; secondaryMetrics?:Record<string,number>; diagnostics?:Record<string,unknown> }; }
 export interface TrainingRun {
   id: string;
   name: string;
-  status: "draft" | "running" | "completed" | "error";
-  config: Record<string, number | string>;
+  status: "draft" | "running" | "paused" | "completed" | "cancelled" | "error";
+  config: Record<string, number | string | boolean>;
   history: MetricPoint[];
   result: RunResult | null;
   createdAt: string;
@@ -187,6 +206,10 @@ export interface TrainingRun {
   completedAt?: string;
   error?: string;
   modelId?: string;
+  modelTask?: TaskId;
+  modelArchitecture?: Architecture;
+  modelInputShape?: number[];
+  modelGraph?: { nodes: ModelNode[]; edges: ModelEdge[] };
 }
 
 export interface BackendResponse<T = unknown> { ok: boolean; result?: T; error?: { code: string; message: string }; }
@@ -196,4 +219,15 @@ export interface GpuInfo {
   name: string;
   total_vram: number;
   allocated_vram: number;
+}
+
+export interface GraphValidation {
+  valid: boolean;
+  message: string;
+  node_shapes?: Record<string, number[] | Record<string,number[]>>;
+  output_shapes?: Record<string, number[]>;
+  parameters: number;
+  trainable_parameters: number;
+  semantic_hash: string;
+  schema_version: number;
 }

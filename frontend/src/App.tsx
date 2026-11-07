@@ -5,15 +5,16 @@ import {
   type Connection, type NodeMouseHandler, type ReactFlowInstance
 } from "@xyflow/react";
 import { Activity, AlertCircle, ArrowLeft, ArrowUpDown, BarChart3, Binary, Box, BrainCircuit, Check, CheckCircle2, ChevronRight, Clock3, Cloud, Cpu, Database, Download, FileText, FolderOpen, GitBranch, GitFork, Grid2X2, Image, LayoutGrid, Layers3, List, Network, Info, Moon, Palette, Play, Plus, RefreshCw, Repeat2, ScanLine, Search, Shield, Shrink, SlidersHorizontal, Save, Sparkles, Split, Sun, Table2, Upload, WandSparkles, Waves, Waypoints, X, Zap } from "lucide-react";
-import { ARCHITECTURES, BLOCK_INFO, BLOCKS, TASKS, presetsFor, syncOutputContract, templateFor } from "./catalog";
+import { ARCHITECTURES, BLOCK_INFO, BLOCKS, TASKS, pretrainedTemplate, presetsFor, syncOutputContract, templateFor } from "./catalog";
 import { getPresetBenefit, getPresetDescription, getPresetName, getPresetTradeoff } from "./catalog-i18n";
-import { backend, isTauri, onTrainingEvent, pickDatasetDirectory, startTraining } from "./bridge";
+import { backend, isTauri, onTrainingEvent, pickDatasetDirectory, pickDatasetFile, startTraining } from "./bridge";
 import ModelNode from "./ModelNode";
 import { TrainingChart } from "./Chart";
-import DataPipelineEditor from "./DataPipelineEditor";
+import DataPipelineEditor, { defaultDataPipeline } from "./DataPipelineEditor";
 import DataCharts from "./DataCharts";
+import { extractCnnBackbone, featurePorts } from "./cnn-reuse";
 import { translateBackendError } from "./i18n/errors";
-import type { Architecture, DataPipeline, DatasetAnalytics, DatasetOptions, DatasetPreview, DatasetSummary, GpuInfo, HuggingFaceDataset, MetricPoint, ModelEdge, ModelNode as ModelNodeT, Project, ProjectModel, RunResult, Step, TaskId, TrainingRun } from "./types";
+import type { Architecture, DataPipeline, DatasetAnalytics, DatasetOptions, DatasetPreview, DatasetSummary, GpuInfo, GraphValidation, HuggingFaceDataset, MetricPoint, ModelEdge, ModelNode as ModelNodeT, PretrainedModelSpec, Project, ProjectModel, RunResult, RuntimeCatalog, Step, TaskId, TrainingRun } from "./types";
 
 const ARCHITECTURE_ICONS: Record<Architecture, typeof BrainCircuit> = {
   mlp: Binary,
@@ -28,6 +29,8 @@ const ARCHITECTURE_ICONS: Record<Architecture, typeof BrainCircuit> = {
 };
 
 const nodeTypes = { modelNode: ModelNode };
+const initialGraphNodes = (nodes: ModelNodeT[]) => [...nodes].sort((a,b)=>a.position.x-b.position.x).slice(0,3).map(({id})=>({id}));
+const initialGraphFit = (nodes: ModelNodeT[]) => ({nodes:initialGraphNodes(nodes),...(window.innerWidth<=1280?{padding:0,maxZoom:1}:{padding:.3,maxZoom:.85})});
 
 import { BaseEdge, EdgeLabelRenderer, getSmoothStepPath, type EdgeProps } from "@xyflow/react";
 import { Trash2 } from "lucide-react";
@@ -83,12 +86,36 @@ function useSteps() {
 const uid = () => crypto.randomUUID();
 const now = () => new Date().toISOString();
 const formatBytes = (bytes: number) => bytes < 1024 ? `${bytes} B` : bytes < 1024 ** 2 ? `${(bytes / 1024).toFixed(1)} KB` : `${(bytes / 1024 ** 2).toFixed(bytes < 10 * 1024 ** 2 ? 2 : 0)} MB`;
+function parseCsvHeader(header: string): string[] {
+  const candidates = [",", "\t", ";", "|"];
+  const delimiter = candidates.reduce((best, value) => (header.split(value).length > header.split(best).length ? value : best), ",");
+  const columns: string[] = [];
+  let value = "", quoted = false;
+  for (let index = 0; index < header.length; index++) {
+    const char = header[index];
+    if (char === '"') {
+      if (quoted && header[index + 1] === '"') { value += '"'; index++; }
+      else quoted = !quoted;
+    } else if (char === delimiter && !quoted) {
+      columns.push(value.trim()); value = "";
+    } else value += char;
+  }
+  columns.push(value.trim());
+  return columns.filter(Boolean);
+}
 const newTrainingRun = (index: number, name: string): TrainingRun => ({ id: uid(), name, status: "draft", config: {}, history: [], result: null, createdAt: now() });
 const newProjectModel = (index: number, architecture: Architecture, task: TaskId, name: string): ProjectModel => {
   const graph = templateFor(architecture, task);
   return { id: uid(), name, architecture, nodes: graph.nodes, edges: graph.edges, graphValid: false };
 };
-const loadProjects = (): Project[] => JSON.parse(localStorage.getItem("mb-projects") || "[]");
+const loadProjects = (): Project[] => {
+  try {
+    const value = JSON.parse(localStorage.getItem("mb-projects") || "[]");
+    return Array.isArray(value) ? value : [];
+  } catch {
+    return [];
+  }
+};
 type Theme = "dark" | "light";
 type Accent = "blue" | "orange" | "green" | "violet";
 const loadTheme = (): Theme => localStorage.getItem("mb-theme") === "light" ? "light" : "dark";
@@ -112,7 +139,9 @@ function graphErrorMap(nodes:ModelNodeT[],edges:ModelEdge[],t:(key:string)=>stri
   const errors=new Map<string,string>();const byId=new Map(nodes.map(node=>[node.id,node]));
   const inputs=nodes.filter(node=>node.data.blockType==="input"),outputs=nodes.filter(node=>node.data.blockType==="output");
   if(inputs.length!==1) inputs.forEach(node=>errors.set(node.id,t("app:graphError.singleInput")));
-  if(outputs.length!==1) outputs.forEach(node=>errors.set(node.id,t("app:graphError.singleOutput")));
+  if(!outputs.length) inputs.forEach(node=>errors.set(node.id,t("app:graphError.singleOutput")));
+  const outputNames=outputs.map(node=>String(node.data.properties.output_name||node.data.label||node.id).trim());
+  if(new Set(outputNames).size!==outputNames.length)outputs.forEach(node=>errors.set(node.id,t("app:graphError.duplicateOutputName")));
   const seen=new Set<string>();
   edges.forEach(edge=>{const key=`${edge.source}:${edge.sourceHandle||""}->${edge.target}:${edge.targetHandle||""}`;if(seen.has(key)){errors.set(edge.source,t("app:graphError.duplicateConnection"));errors.set(edge.target,t("app:graphError.duplicateConnection"))}seen.add(key);if(!byId.has(edge.source)||!byId.has(edge.target))return;if(byId.get(edge.source)?.data.blockType==="output")errors.set(edge.source,t("app:graphError.outputCannotSource"));if(byId.get(edge.target)?.data.blockType==="input")errors.set(edge.target,t("app:graphError.inputCannotTarget"))});
   nodes.forEach(node=>{const incoming=edges.filter(edge=>edge.target===node.id);const outgoing=edges.filter(edge=>edge.source===node.id);if(node.data.blockType!=="input"&&!incoming.length)errors.set(node.id,t("app:graphError.blockNoInput"));if(node.data.blockType!=="output"&&!outgoing.length)errors.set(node.id,t("app:graphError.blockNoOutput"));if(!["concat","add"].includes(node.data.blockType)&&incoming.length>1)errors.set(node.id,t("app:graphError.singleInputOnly"));if(["concat","add"].includes(node.data.blockType)&&incoming.length<2)errors.set(node.id,t("app:graphError.needsTwoInputs"))});
@@ -138,17 +167,27 @@ export default function App() {
   const [trainingRuns, setTrainingRuns] = useState<TrainingRun[]>([firstRun.current]);
   const [activeRunId, setActiveRunId] = useState(firstRun.current.id);
   const [graphValid, setGraphValid] = useState(false);
+  const [validationStats, setValidationStats] = useState<GraphValidation | null>(null);
   const [training, setTraining] = useState(false);
   const runningRunId = useRef<string | null>(null);
+  const backendRunId = useRef<string | null>(null);
   const [theme, setTheme] = useState<Theme>(loadTheme);
   const [accent, setAccent] = useState<Accent>(loadAccent);
   const [notice, setNotice] = useState<string>("");
   const [gpuInfo, setGpuInfo] = useState<GpuInfo | null>(null);
+  const [runtimeCatalog,setRuntimeCatalog]=useState<RuntimeCatalog|null>(null);
+  const dataContinue = useRef<() => Promise<boolean>>(async () => true);
 
   useEffect(() => {
-    if (isTauri()) {
-      backend<GpuInfo>("system.gpu").then(setGpuInfo).catch(() => {});
-    }
+    backend<GpuInfo>("system.gpu").then(setGpuInfo).catch(() => setGpuInfo({cuda:false,name:"CPU",total_vram:0,allocated_vram:0}));
+    backend<RuntimeCatalog>("catalog.get").then(setRuntimeCatalog).catch(()=>setRuntimeCatalog(null));
+    backend<Project[]>("project.list").then(saved => {
+      setProjects(current => {
+        const merged = new Map(current.map(item => [item.id, item]));
+        saved.forEach(item => merged.set(item.id, { ...merged.get(item.id), ...item }));
+        return [...merged.values()];
+      });
+    }).catch(()=>{});
   }, []);
 
 
@@ -160,17 +199,22 @@ export default function App() {
     if (!project) return;
     const state={ step, task, architecture, dataset, nodes, edges, models, activeModelId, trainingRuns, activeRunId, graphValid };
     localStorage.setItem(`mb-state-${project.id}`, JSON.stringify(state));
-    if(isTauri()) { const timer=window.setTimeout(()=>backend("project.state.save",{project,state}).catch(()=>{}),600); return ()=>window.clearTimeout(timer); }
+    const timer=window.setTimeout(()=>backend("project.state.save",{project,state}).catch(()=>{}),600);
+    return ()=>window.clearTimeout(timer);
   }, [project, step, task, architecture, dataset, nodes, edges, models, activeModelId, trainingRuns, activeRunId, graphValid]);
   useEffect(() => {
     if (!activeModelId || !architecture) return;
-    setModels(items => items.map(model => model.id === activeModelId ? { ...model, architecture, nodes, edges, graphValid } : model));
-  }, [activeModelId, architecture, nodes, edges, graphValid]);
+    setModels(items => items.map(model => model.id === activeModelId ? { ...model, architecture, nodes, edges, graphValid, semanticHash: graphValid ? validationStats?.semantic_hash : undefined } : model));
+  }, [activeModelId, architecture, nodes, edges, graphValid, validationStats]);
+  useEffect(() => { if (!graphValid) setValidationStats(null); }, [graphValid]);
   useEffect(() => { let off = () => {}; onTrainingEvent(event => {
     const targetId = runningRunId.current;
     if (!targetId) return;
-    if (event.type === "metric") setTrainingRuns(runs => runs.map(item => item.id === targetId ? { ...item, history: [...item.history.filter(p => p.epoch !== Number(event.epoch)), { epoch: Number(event.epoch), trainLoss: Number(event.train_loss), valLoss: Number(event.val_loss), metric: Number(event.metric) }].sort((a,b) => a.epoch-b.epoch) } : item));
-    if (event.type === "complete") { const result=event.result as unknown as RunResult; setTraining(false); setTrainingRuns(runs => runs.map(item => item.id === targetId ? { ...item, status:"completed", result, history:result.history || item.history, completedAt:now() } : item)); runningRunId.current=null; setNotice(t("app:notice.trainingComplete")); }
+    if (event.type === "started") backendRunId.current=String(event.run_id);
+    if (event.type === "paused") setTrainingRuns(runs=>runs.map(item=>item.id===targetId?{...item,status:"paused"}:item));
+    if (event.type === "resumed") setTrainingRuns(runs=>runs.map(item=>item.id===targetId?{...item,status:"running"}:item));
+    if (event.type === "metric") setTrainingRuns(runs => runs.map(item => item.id === targetId ? { ...item, history: [...item.history.filter(p => p.epoch !== Number(event.epoch)), { epoch: Number(event.epoch), trainLoss: Number(event.train_loss), valLoss: Number(event.val_loss), metric: Number(event.metric), learningRate:Number(event.learning_rate), secondaryMetrics:(event.secondary_metrics||{}) as Record<string,number> }].sort((a,b) => a.epoch-b.epoch) } : item));
+    if (event.type === "complete") { const result=event.result as unknown as RunResult; setTraining(false); setTrainingRuns(runs => runs.map(item => item.id === targetId ? { ...item, status:result.status==="cancelled"?"cancelled":"completed", result, history:result.history || item.history, completedAt:now() } : item)); runningRunId.current=null;backendRunId.current=null; setNotice(result.status==="cancelled"?"Entrenamiento cancelado; se guardó last.pt.":t("app:notice.trainingComplete")); }
     if (event.type === "error") { setTraining(false); setTrainingRuns(runs => runs.map(item => item.id === targetId ? { ...item, status:"error", error:String(event.message), completedAt:now() } : item)); runningRunId.current=null; setNotice(translateBackendError(String(event.message))); }
   }).then(fn => off = fn); return () => off(); }, []);
 
@@ -182,7 +226,7 @@ export default function App() {
 
   const createProject = async (name: string, description: string) => {
     const p: Project = { id: uid(), name, description, path: `projects/${name.toLowerCase().replace(/[^a-z0-9áéíóúñ]+/gi, "-")}`, createdAt: now(), updatedAt: now() };
-    if (isTauri()) { try { await backend("project.create", { project: p }); } catch (e) { setNotice(translateBackendError(String(e))); return; } }
+    try { await backend("project.create", { project: p }); } catch (e) { setNotice(translateBackendError(String(e))); return; }
     const freshRun=newTrainingRun(1, t("app:trainingRun.defaultName", { index: 1 })); setProjects(v => [p, ...v]); setProject(p); setStep("model"); setTask(null); setArchitecture(null); setDataset(null); setNodes([]); setEdges([]); setModels([]); setActiveModelId(null); setTrainingRuns([freshRun]); setActiveRunId(freshRun.id); setGraphValid(false);
   };
 
@@ -220,9 +264,20 @@ export default function App() {
   };
 
   const choose = (a: Architecture, taskId: TaskId) => {
-    const freshRun=newTrainingRun(1, t("app:trainingRun.defaultName", { index: 1 })); const template = templateFor(a, taskId); setArchitecture(a); setTask(taskId); setDataset(null); setTrainingRuns([freshRun]);setActiveRunId(freshRun.id);setGraphValid(false); setNodes(template.nodes); setEdges(template.edges);
-    const model=activeModelId ? { id:activeModelId, name:models.find(item=>item.id===activeModelId)?.name || t("app:projectModel.defaultName", { index: 1 }), architecture:a, nodes:template.nodes, edges:template.edges, graphValid:false } : newProjectModel(1,a,taskId,t("app:projectModel.defaultName", { index: 1 }));
-    if (!activeModelId) { model.nodes=template.nodes; model.edges=template.edges; setActiveModelId(model.id); setModels([model]); } else setModels(items=>items.map(item=>item.id===activeModelId?model:item));
+    if (architecture === a && task === taskId) return;
+    const taskChanged = Boolean(task && task !== taskId);
+    if (taskChanged && (dataset || nodes.length > 0 || trainingRuns.some(item => item.result))) {
+      const confirmed = window.confirm(t("app:notice.changeTaskWarning"));
+      if (!confirmed) return;
+    }
+    const template = templateFor(a, taskId);
+    const nextNodes = !taskChanged && dataset ? syncOutputContract(template.nodes, template.edges, dataset) : template.nodes;
+    const freshRun=newTrainingRun(taskChanged ? 1 : trainingRuns.length + 1, t("app:trainingRun.defaultName", { index:taskChanged ? 1 : trainingRuns.length + 1 }));
+    const model=newProjectModel(taskChanged ? 1 : models.length + 1,a,taskId,t("app:projectModel.defaultName", { index:taskChanged ? 1 : models.length + 1 }));
+    model.nodes=nextNodes; model.edges=template.edges;
+    setArchitecture(a); setTask(taskId); setDataset(taskChanged ? null : dataset); setTrainingRuns(taskChanged ? [freshRun] : [...trainingRuns, freshRun]); setActiveRunId(freshRun.id); setGraphValid(false); setNodes(nextNodes); setEdges(template.edges); setSelectedId(null); setActiveModelId(model.id);
+    if (taskChanged) setModels([model]);
+    else setModels(items=>[...items.map(item=>item.id===activeModelId?{...item,architecture:architecture || item.architecture,nodes,edges,graphValid}:item),model]);
     if (project) { const updated = { ...project, architecture: a, taskId, updatedAt: now() }; setProject(updated); setProjects(v => v.map(p => p.id === updated.id ? updated : p)); }
   };
 
@@ -242,6 +297,24 @@ export default function App() {
     catch (e) { setNotice(translateBackendError(String(e))); }
   };
 
+  const importDataFiles = async (files: File[], options?: DatasetOptions) => {
+    if (!task || !architecture || !project || !files.length) return;
+    try {
+      const encoded = await Promise.all(files.map(async file => {
+        const bytes = new Uint8Array(await file.arrayBuffer());
+        let binary = "";
+        for (let offset = 0; offset < bytes.length; offset += 0x8000) {
+          binary += String.fromCharCode(...bytes.subarray(offset, Math.min(offset + 0x8000, bytes.length)));
+        }
+        return { name: file.name, relative_path: (file as File & { webkitRelativePath?: string }).webkitRelativePath || file.name, content_base64: btoa(binary) };
+      }));
+      const result = await backend<DatasetSummary>("data.import.files", { project, task_id: task, architecture, files: encoded, options });
+      setDataset(result); setNodes(current => syncOutputContract(current, edges, result)); setGraphValid(false); setNotice(t("app:data.importedNotice"));
+    } catch (error) {
+      setNotice(translateBackendError(String(error)));
+    }
+  };
+
   const applyDataPipeline = async (pipeline: DataPipeline) => {
     if (!project || !dataset || !task) throw new Error(t("app:data.noActiveDataset"));
     try {
@@ -251,33 +324,55 @@ export default function App() {
   };
 
   const validateGraph = async () => {
+    if (!project || !dataset || !task || !architecture) {
+      setGraphValid(false);
+      setNotice(t("app:notice.completeProjectData"));
+      return false;
+    }
     const contractNodes = syncOutputContract(nodes, edges, dataset);
     if (contractNodes !== nodes) setNodes(contractNodes);
     const graphNodes = contractNodes;
     const errors=graphErrorMap(graphNodes,edges,t);
     setNodes(items=>items.map(node=>({...node,data:{...node.data,error:errors.get(node.id)}})));
     if (errors.size) { const [nodeId,message]=errors.entries().next().value as [string,string];setSelectedId(nodeId);setNotice(`${nodes.find(node=>node.id===nodeId)?.data.label || t("app:builder.graph")}: ${message}`);setGraphValid(false);return false; }
-    if (project && dataset && task && architecture) {
+    {
       try {
-        const r = await backend<{ valid: boolean; message: string; node_shapes?: Record<string, number[]> }>("graph.validate", { project, dataset, task_id: task, architecture, graph: { nodes: graphNodes, edges } });
-        if (r.node_shapes) setNodes(ns => ns.map(n => ({ ...n, data: { ...n.data, shape: `[B, ${r.node_shapes?.[n.id]?.join(", ") || "?"}]` } })));
-        setGraphValid(r.valid); setNotice(r.message); return r.valid;
-      } catch (e) { const message=translateBackendError(String(e));const failed=nodes.find(node=>message.includes(node.data.label)||message.includes(node.id));if(failed){setNodes(items=>items.map(node=>node.id===failed.id?{...node,data:{...node.data,error:message}}:node));setSelectedId(failed.id)}setGraphValid(false);setNotice(message); }
+        const r = await backend<GraphValidation>("graph.validate", { project, dataset, task_id: task, architecture, graph: { nodes: graphNodes, edges } });
+        if (r.node_shapes) setNodes(ns => ns.map(n => {const value=r.node_shapes?.[n.id];const shape=Array.isArray(value)?`[B, ${value.join(", ")}]`:value?Object.entries(value).map(([port,dims])=>`${port} [B, ${dims.join(", ")}]`).join(" · "):"?";return {...n,data:{...n.data,shape}}}));
+        setValidationStats(r.valid ? r : null); setGraphValid(r.valid); setNotice(r.message); return r.valid;
+      } catch (e) { const message=translateBackendError(String(e));const failed=nodes.find(node=>message.includes(node.data.label)||message.includes(node.id));if(failed){setNodes(items=>items.map(node=>node.id===failed.id?{...node,data:{...node.data,error:message}}:node));setSelectedId(failed.id)}setGraphValid(false);setNotice(message);return false; }
     }
-    setGraphValid(true); return true;
+    setGraphValid(false); return false;
   };
 
-  const train = async (config: Record<string, number | string>) => {
+  const saveModelRevision = async () => {
+    if (!(await validateGraph()) || !project || !activeModelId) return;
+    const model = models.find(item => item.id === activeModelId);
+    if (!model) return;
+    try {
+      const saved = await backend<{ revision: number }>("model.revision.save", {
+        project,
+        model: { ...model, architecture, nodes, edges, graphValid: true, semanticHash: validationStats?.semantic_hash }
+      });
+      setNotice(t("app:builder.revisionSaved", { revision: saved.revision }));
+    } catch (error) {
+      setNotice(translateBackendError(String(error)));
+    }
+  };
+
+  const train = async (config: Record<string, number | string | boolean>) => {
     if (!project || !dataset || !task || !architecture || !(await validateGraph())) return;
     const targetId=activeTrainingRun?.id || newTrainingRun(trainingRuns.length+1, t("app:trainingRun.defaultName", { index: trainingRuns.length + 1 })).id;
     runningRunId.current=targetId;
-    setTraining(true); setTrainingRuns(runs=>runs.map(item=>item.id===targetId?{...item,modelId:activeModelId || undefined,status:"running",config,history:[],result:null,error:undefined,startedAt:now(),completedAt:undefined}:item)); setNotice(t("app:training.preparing"));
+    const trainedGraph={nodes:syncOutputContract(nodes,edges,dataset),edges};
+    setTraining(true); setTrainingRuns(runs=>runs.map(item=>item.id===targetId?{...item,modelId:activeModelId || undefined,modelTask:task,modelArchitecture:architecture,modelInputShape:[...(dataset.inputShape||[])],modelGraph:trainedGraph,status:"running",config,history:[],result:null,error:undefined,startedAt:now(),completedAt:undefined}:item)); setNotice(t("app:training.preparing"));
     try {
-      await startTraining({ project, dataset, task_id: task, architecture, graph: { nodes: syncOutputContract(nodes, edges, dataset), edges }, config });
+      await startTraining({ project, dataset, task_id: task, architecture, model_spec:models.find(model=>model.id===activeModelId), graph: { nodes: syncOutputContract(nodes, edges, dataset), edges }, config });
     } catch (e) {
       setTraining(false); runningRunId.current=null; setTrainingRuns(runs=>runs.map(item=>item.id===targetId?{...item,status:"error",error:translateBackendError(String(e)),completedAt:now()}:item));setNotice(translateBackendError(String(e)));
     }
   };
+  const controlTraining=async(state:"running"|"paused"|"cancelled")=>{if(!project||!backendRunId.current)return;await backend("training.control",{project,run_id:backendRunId.current,state});};
 
   const infer = async (payload: { mode: string; values?: string; index?: number }) => {
     if (!project || !task || !architecture || !dataset) throw new Error(t("app:data.completeProjectData"));
@@ -298,12 +393,18 @@ export default function App() {
     const model=newProjectModel(models.length+1,architecture,task,defaultName); model.name=name; model.nodes=syncOutputContract(model.nodes,model.edges,dataset); setModels(items=>[...items,model]); switchModelAfterCreate(model);
   };
   const switchModelAfterCreate=(model:ProjectModel)=>{setActiveModelId(model.id);setArchitecture(model.architecture);setNodes(model.nodes);setEdges(model.edges);setGraphValid(false);setSelectedId(null)};
+  const createCheckpointBackbone=(payload:{name:string;nodes:ModelNodeT[];edges:ModelEdge[];checkpoint:string;sourceRunId:string;sourceModelId:string;sourceNodeId:string;sourceHandle?:string})=>{
+    if(!architecture||!task)return;
+    const model:ProjectModel={id:uid(),name:payload.name,architecture,nodes:payload.nodes,edges:payload.edges,graphValid:false,source:"checkpoint",checkpointLineage:{checkpoint:payload.checkpoint,parentRunId:payload.sourceRunId,parentModelId:payload.sourceModelId,sourceNodeId:payload.sourceNodeId,sourceHandle:payload.sourceHandle}};
+    const fresh=newTrainingRun(trainingRuns.length+1,t("app:trainingRun.defaultName", { index: trainingRuns.length+1 }));fresh.modelId=model.id;fresh.config={initial_checkpoint:payload.checkpoint};
+    setModels(items=>[...items,model]);setTrainingRuns(items=>[...items,fresh]);setActiveRunId(fresh.id);switchModelAfterCreate(model);setStep("builder");
+  };
 
   const stepIndex=steps.findIndex(item=>item.id===step);
   const goPrevious=()=>{if(stepIndex>0)setStep(steps[stepIndex-1].id)};
   const goNext=async()=>{
     if(step==="model"){if(!task||!architecture){setNotice(t("app:notice.selectTaskAndArchitecture"));return}setStep("data");return}
-    if(step==="data"){if(!dataset){setNotice(t("app:notice.loadDataset"));return}setStep("builder");return}
+    if(step==="data"){if(!dataset){setNotice(t("app:notice.loadDataset"));return}if(!(await dataContinue.current()))return;setStep("builder");return}
     if(step==="builder"){if(await validateGraph())setStep("training");return}
     if(step==="training"){if(!run){setNotice(t("app:notice.completeRun"));return}setStep("inference")}
   };
@@ -316,17 +417,17 @@ export default function App() {
       {notice && <div className="notice"><span>{notice}</span><button onClick={() => setNotice("")}><X size={14}/></button></div>}
       <section className={`content ${step === "training" ? "no-scroll" : ""}`}>
         <div className={`stage-nav ${step==="builder"?"on-toolbar":""}`}><button className="secondary" onClick={goPrevious} disabled={stepIndex===0}><ArrowLeft/> {t("common:previous")}</button>{stepIndex<steps.length-1&&<button className="primary" onClick={goNext}>{t("common:next")} <ChevronRight/></button>}</div>
-        {step === "model" && <ModelTask architecture={architecture} task={task} onChoose={choose} onContinue={goNext} />}
-        {step === "data" && <DataStep project={project} task={task} dataset={dataset} onDownload={downloadData} onImport={importData} onChooseAnother={()=>setDataset(null)} onApplyPipeline={applyDataPipeline} onSplitsChange={splits => setDataset(current => current ? { ...current, splits } : current)} />}
-        {step === "builder" && architecture && task && <Builder architecture={architecture} task={task} dataset={dataset} models={models} activeModelId={activeModelId} onSelectModel={switchModel} onAddModel={addModel} theme={theme} nodes={nodes} edges={edges} setNodes={setNodes} setEdges={setEdges} onNodesChange={(changes: Parameters<typeof onNodesChange>[0]) => { setGraphValid(false); onNodesChange(changes); }} onEdgesChange={(changes: Parameters<typeof onEdgesChange>[0]) => { setGraphValid(false); onEdgesChange(changes); }} onDirty={()=>setGraphValid(false)} selected={selected} setSelectedId={setSelectedId} onValidate={validateGraph} />}
-        {step === "training" && task && <Training task={task} dataset={dataset} models={models} activeModelId={activeModelId} onSelectModel={switchModel} runs={trainingRuns} activeRunId={activeRunId} training={training} accent={accent} onSelectRun={setActiveRunId} onAddRun={addTrainingRun} onTrain={train} />}
+        {step === "model" && <ModelTask architecture={architecture} task={task} runtimeCatalog={runtimeCatalog} onChoose={choose} onContinue={goNext} />}
+        {step === "data" && <DataStep project={project} task={task} dataset={dataset} dataContinue={dataContinue} setNotice={setNotice} onDownload={downloadData} onImport={importData} onImportFiles={importDataFiles} onChooseAnother={()=>setDataset(null)} onApplyPipeline={applyDataPipeline} onSplitsChange={splits => setDataset(current => current ? { ...current, splits } : current)} />}
+        {step === "builder" && architecture && task && <Builder architecture={architecture} task={task} dataset={dataset} validationStats={validationStats} models={models} trainingRuns={trainingRuns} activeModelId={activeModelId} onSelectModel={switchModel} onAddModel={addModel} onReuseCheckpoint={createCheckpointBackbone} onApplyPretrained={spec=>setModels(items=>items.map(model=>model.id===activeModelId?{...model,source:"huggingface",pretrained:spec,schemaVersion:2,graphValid:false}:model))} theme={theme} nodes={nodes} edges={edges} setNodes={setNodes} setEdges={setEdges} onNodesChange={(changes: Parameters<typeof onNodesChange>[0]) => { if(changes.some(change=>["remove","add","replace"].includes(change.type))){setGraphValid(false);setNodes(items=>items.map(node=>({...node,data:{...node.data,shape:undefined,error:undefined}})))} onNodesChange(changes); }} onEdgesChange={(changes: Parameters<typeof onEdgesChange>[0]) => { if(changes.some(change=>["remove","add","replace"].includes(change.type))){setGraphValid(false);setNodes(items=>items.map(node=>({...node,data:{...node.data,shape:undefined,error:undefined}})))} onEdgesChange(changes); }} onDirty={()=>{setGraphValid(false);setValidationStats(null);setNodes(items=>items.map(node=>({...node,data:{...node.data,shape:undefined,error:undefined}})))}} selected={selected} selectedId={selectedId} setSelectedId={setSelectedId} onValidate={validateGraph} onSaveRevision={saveModelRevision} />}
+        {step === "training" && task && <Training task={task} dataset={dataset} models={models} activeModelId={activeModelId} onSelectModel={switchModel} runs={trainingRuns} activeRunId={activeRunId} training={training} accent={accent} onSelectRun={setActiveRunId} onAddRun={addTrainingRun} onTrain={train} onControl={controlTraining} />}
         {step === "inference" && task && dataset && <Inference task={task} dataset={dataset} run={run} runName={activeTrainingRun?.name || t("app:inference.activeRun")} onInfer={infer} />}
       </section>
     </main>
   </div>;
 }
 
-function Builder({ architecture, task, dataset, models, activeModelId, onSelectModel, onAddModel, theme, nodes, edges, setNodes, setEdges, onNodesChange, onEdgesChange, onDirty, selected, setSelectedId, onValidate }: { architecture: Architecture; task:TaskId; dataset:DatasetSummary|null; models:ProjectModel[]; activeModelId:string|null; onSelectModel:(id:string)=>void; onAddModel:()=>void; theme: Theme; nodes: ModelNodeT[]; edges: ModelEdge[]; setNodes: React.Dispatch<React.SetStateAction<ModelNodeT[]>>; setEdges: React.Dispatch<React.SetStateAction<ModelEdge[]>>; onNodesChange: any; onEdgesChange: any; onDirty: () => void; selected: ModelNodeT | null; setSelectedId: (id: string | null) => void; onValidate: () => void }) {
+function Builder({ architecture, task, dataset, validationStats, models, trainingRuns, activeModelId, onSelectModel, onAddModel, onReuseCheckpoint, onApplyPretrained, theme, nodes, edges, setNodes, setEdges, onNodesChange, onEdgesChange, onDirty, selected, selectedId, setSelectedId, onValidate, onSaveRevision }: { architecture: Architecture; task:TaskId; dataset:DatasetSummary|null; validationStats:GraphValidation|null; models:ProjectModel[]; trainingRuns:TrainingRun[]; activeModelId:string|null; onSelectModel:(id:string)=>void; onAddModel:()=>void; onReuseCheckpoint:(payload:{name:string;nodes:ModelNodeT[];edges:ModelEdge[];checkpoint:string;sourceRunId:string;sourceModelId:string;sourceNodeId:string;sourceHandle?:string})=>void; onApplyPretrained:(spec:PretrainedModelSpec)=>void; theme: Theme; nodes: ModelNodeT[]; edges: ModelEdge[]; setNodes: React.Dispatch<React.SetStateAction<ModelNodeT[]>>; setEdges: React.Dispatch<React.SetStateAction<ModelEdge[]>>; onNodesChange: any; onEdgesChange: any; onDirty: () => void; selected: ModelNodeT | null; selectedId:string|null; setSelectedId: (id: string | null) => void; onValidate: () => void; onSaveRevision: () => void }) {
   const { t } = useTranslation(["app", "common", "catalog"]);
   const [libraryOpen, setLibraryOpen] = useState(true);
   const [flow, setFlow] = useState<ReactFlowInstance<ModelNodeT, ModelEdge> | null>(null);
@@ -334,10 +435,23 @@ function Builder({ architecture, task, dataset, models, activeModelId, onSelectM
   const [pinnedBlock,setPinnedBlock]=useState<(typeof BLOCKS)[Architecture][number]|null>(null);
   const infoCard=useRef<HTMLDivElement>(null);
   const [presetsOpen,setPresetsOpen]=useState(false);
+  const [pretrainedModels,setPretrainedModels]=useState<PretrainedModelSpec[]>([]);
+  const [pretrainedLoading,setPretrainedLoading]=useState(false);
+  const [scratchGuidance,setScratchGuidance]=useState("");
   const [presetName,setPresetName]=useState("");
   const [customPresets,setCustomPresets]=useState<Array<{id:string;name:string;description:string;nodes:ModelNodeT[];edges:ModelEdge[]}>>(()=>JSON.parse(localStorage.getItem(`mb-presets-${architecture}`)||"[]"));
+  const [reuseBackboneOpen,setReuseBackboneOpen]=useState(false);
+  const [reuseRunId,setReuseRunId]=useState("");
+  const [reuseFeatureKey,setReuseFeatureKey]=useState("");
+  const [reuseBackboneError,setReuseBackboneError]=useState("");
+  const reusableRuns=useMemo(()=>trainingRuns.filter(run=>run.status==="completed"&&!!run.result?.checkpoint&&!!run.modelGraph&&run.modelTask?.startsWith("image.")&&run.modelArchitecture===architecture&&run.modelInputShape?.[0]===dataset?.inputShape?.[0]),[trainingRuns,architecture,dataset?.inputShape]);
+  const selectedReuseRun=reusableRuns.find(run=>run.id===reuseRunId)||reusableRuns.at(-1);
+  const reuseFeatures=useMemo(()=>selectedReuseRun?.modelGraph?featurePorts(selectedReuseRun.modelGraph.nodes):[],[selectedReuseRun]);
+  const selectedReuseFeature=reuseFeatures.find(feature=>`${feature.nodeId}::${feature.handle||""}`===reuseFeatureKey)||reuseFeatures[0];
+  useEffect(()=>{if(reuseBackboneOpen){setReuseRunId(reusableRuns.at(-1)?.id||"");setReuseFeatureKey("");setReuseBackboneError("")}},[reuseBackboneOpen]);
+  useEffect(()=>{if(!reuseFeatures.some(feature=>`${feature.nodeId}::${feature.handle||""}`===reuseFeatureKey))setReuseFeatureKey(reuseFeatures[0]?`${reuseFeatures[0].nodeId}::${reuseFeatures[0].handle||""}`:"")},[reuseFeatures,reuseFeatureKey]);
   useEffect(()=>localStorage.setItem(`mb-presets-${architecture}`,JSON.stringify(customPresets)),[architecture,customPresets]);
-  useEffect(()=>{if(!flow)return;const frame=requestAnimationFrame(()=>flow.fitView({padding:.18,duration:180}));return()=>cancelAnimationFrame(frame)},[flow,libraryOpen]);
+  useEffect(()=>{if(!presetsOpen)return;setPretrainedLoading(true);Promise.all([backend<PretrainedModelSpec[]>("model.catalog",{task_id:task,architecture}),backend<{reason?:string}>("model.catalog.guidance",{architecture})]).then(([items,guidance])=>{setPretrainedModels(items);setScratchGuidance(guidance.reason||"")}).catch(()=>{setPretrainedModels([]);setScratchGuidance("")}).finally(()=>setPretrainedLoading(false))},[presetsOpen,architecture,task]);
   useEffect(()=>{
     if(!pinnedBlock)return;
     const close=(event:PointerEvent)=>{if(infoCard.current&&!infoCard.current.contains(event.target as Node))setPinnedBlock(null)};
@@ -346,29 +460,35 @@ function Builder({ architecture, task, dataset, models, activeModelId, onSelectM
   },[pinnedBlock]);
 
   const removeNode = useCallback((id: string) => {
+    const target=nodes.find(node=>node.id===id);
+    if(target?.data.blockType==="input"||(target?.data.blockType==="output"&&nodes.filter(node=>node.data.blockType==="output").length<=1))return;
     onDirty();
-    setNodes(ns => ns.filter(n => n.id !== id || n.data.blockType === "input" || n.data.blockType === "output"));
+    setNodes(ns => ns.filter(n => n.id !== id));
     setEdges(es => es.filter(e => e.source !== id && e.target !== id));
     setSelectedId(null);
-  }, [setNodes, setEdges, setSelectedId, onDirty]);
+  }, [nodes,setNodes, setEdges, setSelectedId, onDirty]);
 
   const removeEdge = useCallback((edgeId: string) => {
     onDirty();
     setEdges(es => es.filter(e => e.id !== edgeId));
   }, [setEdges, onDirty]);
+  const toggleExpanded=useCallback((id:string)=>setNodes(items=>items.map(item=>item.id===id?{...item,data:{...item.data,expanded:!item.data.expanded}}:item)),[setNodes]);
 
   const liveErrors=useMemo(()=>graphErrorMap(nodes,edges,t),[nodes,edges,t]);
   const nodesWithHandler = useMemo(() => {
     return nodes.map(n => ({
       ...n,
-      deletable: n.data.blockType !== "input" && n.data.blockType !== "output",
+      deletable: n.data.blockType !== "input" && (n.data.blockType !== "output"||nodes.filter(node=>node.data.blockType==="output").length>1),
       data: {
         ...n.data,
         error: liveErrors.get(n.id),
-        onDelete: removeNode
+        canDelete:n.data.blockType==="output"?nodes.filter(node=>node.data.blockType==="output").length>1:n.data.blockType!=="input",
+        inputHandles:["concat","add"].includes(n.data.blockType)?Array.from({length:Math.max(2,edges.filter(edge=>edge.target===n.id).length+1)},(_,index)=>`input_${index}`):undefined,
+        onDelete: removeNode,
+        onToggleExpanded: toggleExpanded
       }
     }));
-  }, [nodes, removeNode,liveErrors]);
+  }, [nodes,edges, removeNode,toggleExpanded,liveErrors]);
 
   const edgesWithHandler = useMemo(() => {
     return edges.map(e => ({
@@ -388,6 +508,7 @@ function Builder({ architecture, task, dataset, models, activeModelId, onSelectM
     if(!sourceNode||!targetNode||sourceNode.data.blockType==="output"||targetNode.data.blockType==="input")return false;
     if(edges.some(edge=>edge.source===connection.source&&edge.target===connection.target&&edge.sourceHandle===connection.sourceHandle&&edge.targetHandle===connection.targetHandle&&edge.id!==(connection as ModelEdge).id))return false;
     const existingIncoming = edges.filter(e => e.target === connection.target && e.id !== (connection as ModelEdge).id);
+    if(["concat","add"].includes(targetNode.data.blockType)&&connection.targetHandle&&existingIncoming.some(edge=>edge.targetHandle===connection.targetHandle))return false;
     if (!["concat","add"].includes(targetNode.data.blockType)&&existingIncoming.length > 0) return false;
 
     const isReachable = (src: string, tgt: string, visited = new Set<string>()): boolean => {
@@ -409,12 +530,79 @@ function Builder({ architecture, task, dataset, models, activeModelId, onSelectM
     setEdges(es => addEdge({ ...p, type: "smoothstep", data: { onDelete: removeEdge } }, es));
   }, [setEdges, onDirty, isValidConnection, removeEdge]);
 
+  const insertMergeBranch = (kind:"add"|"concat") => {
+    const source=nodes.find(node=>node.id===selectedId);
+    const outgoing=edges.filter(edge=>edge.source===selectedId);
+    if(!source||source.data.blockType==="output"||outgoing.length!==1)return;
+    const match=source.data.shape?.match(/^\[B,\s*(\d+),\s*\d+,\s*\d+\]$/);
+    if(!match)return;
+    const channels=Number(match[1]);
+    const downstream=outgoing[0];
+    const sourceIndex=nodes.findIndex(node=>node.id===source.id);
+    const branchX=source.position.x+230;
+    const mergeX=source.position.x+(kind==="add"?920:460);
+    const mergeId=`${kind}-${uid().slice(0,8)}`;
+    const branchId=`${kind}-branch-${uid().slice(0,8)}`;
+    const nextId=downstream.target;
+    const merge:ModelNodeT={id:mergeId,type:"modelNode",position:{x:mergeX,y:source.position.y},deletable:true,data:{blockType:kind,label:kind==="add"?t("app:builder.residualAddLabel"):t("app:builder.concatLabel"),category:"Merge",inputHandles:["input_0","input_1"],properties:{axis:1}}};
+    const branchNodes:ModelNodeT[]=kind==="add"?[
+      {id:branchId,type:"modelNode",position:{x:branchX,y:source.position.y-220},deletable:true,data:{blockType:"conv2d",label:t("app:builder.residualConvLabel"),category:"Convolution",properties:{out_channels:channels,kernel_size:3,stride:1,padding:1,bias:false}}},
+      {id:`${branchId}-relu`,type:"modelNode",position:{x:branchX+230,y:source.position.y-220},deletable:true,data:{blockType:"relu",label:"ReLU",category:"Activation",properties:{}}},
+      {id:`${branchId}-conv2`,type:"modelNode",position:{x:branchX+460,y:source.position.y-220},deletable:true,data:{blockType:"conv2d",label:t("app:builder.residualConvLabel"),category:"Convolution",properties:{out_channels:channels,kernel_size:3,stride:1,padding:1,bias:false}}}
+    ]:[{id:branchId,type:"modelNode",position:{x:branchX,y:source.position.y-220},deletable:true,data:{blockType:"identity",label:t("app:builder.concatBranchLabel"),category:"Shape",properties:{}}}];
+    const branchEnd=kind==="add"?`${branchId}-conv2`:branchId;
+    const branchEdges:ModelEdge[]=kind==="add"?[
+      {id:`${source.id}-${branchId}`,source:source.id,target:branchId,type:"smoothstep"},
+      {id:`${branchId}-${branchId}-relu`,source:branchId,target:`${branchId}-relu`,type:"smoothstep"},
+      {id:`${branchId}-relu-${branchId}-conv2`,source:`${branchId}-relu`,target:`${branchId}-conv2`,type:"smoothstep"},
+      {id:`${branchId}-conv2-${mergeId}`,source:branchEnd,target:mergeId,targetHandle:"input_1",type:"smoothstep"}
+    ]:[
+      {id:`${source.id}-${branchId}`,source:source.id,target:branchId,type:"smoothstep"},
+      {id:`${branchId}-${mergeId}`,source:branchId,target:mergeId,targetHandle:"input_1",type:"smoothstep"}
+    ];
+    onDirty();
+    const descendants=new Set<string>();
+    const pending=[nextId];
+    while(pending.length){const id=pending.pop()!;if(descendants.has(id))continue;descendants.add(id);pending.push(...edges.filter(edge=>edge.source===id).map(edge=>edge.target));}
+    const next=nodes.find(node=>node.id===nextId);
+    const shift=Math.max(0,mergeX+230-(next?.position.x??mergeX+230));
+    setNodes(items=>{const moved=items.map(item=>descendants.has(item.id)?{...item,position:{...item.position,x:item.position.x+shift}}:item);return [...moved.slice(0,sourceIndex+1),...branchNodes,merge,...moved.slice(sourceIndex+1)]});
+    setEdges(items=>[...items.filter(edge=>edge.id!==downstream.id),{id:`${source.id}-${mergeId}`,source:source.id,target:mergeId,targetHandle:"input_0",type:"smoothstep"},...branchEdges,{id:`${mergeId}-${nextId}`,source:mergeId,target:nextId,type:"smoothstep"}]);
+    setSelectedId(mergeId);
+    window.setTimeout(()=>flow?.fitView({nodes:[{id:source.id},{id:mergeId},{id:nextId}],duration:250,padding:.5}),20);
+  };
+
   const select: NodeMouseHandler<ModelNodeT> = (_, n) => setSelectedId(n.id);
   const addBlock = (b: typeof BLOCKS[Architecture][number], position = { x: 300 + Math.random() * 300, y: 120 + Math.random() * 220 }) => {
     onDirty();
     const id = `${b.type}-${uid().slice(0, 6)}`;
     setNodes(ns => [...ns, { id, type: "modelNode", position, deletable: true, data: { blockType: b.type, label: b.label, category: b.category, properties: { ...b.defaults } } }]);
     setSelectedId(id);
+  };
+
+  const addOutput=()=>{
+    onDirty();
+    const outputs=nodes.filter(node=>node.data.blockType==="output");
+    const name=`Output ${outputs.length+1}`;
+    const source=nodes.find(node=>node.id===selectedId&&node.data.blockType!=="output");
+    const id=`output-${uid().slice(0,8)}`;
+    const position={x:Math.max(0,...nodes.map(node=>node.position.x))+190,y:(source?.position.y??180)+outputs.length*125};
+    const output:ModelNodeT={id,type:"modelNode",position,deletable:true,data:{blockType:"output",label:name,category:"Output",properties:{output_name:name}}};
+    setNodes(items=>[...items,output]);
+    if(source)setEdges(items=>addEdge({id:`${source.id}-${id}`,source:source.id,target:id,type:"smoothstep"},items));
+    setSelectedId(id);
+  };
+
+  const createFromCheckpointBackbone=()=>{
+    if(!selectedReuseRun?.modelGraph||!selectedReuseRun.result?.checkpoint||!selectedReuseFeature)return;
+    try{
+      const extracted=extractCnnBackbone({nodes:selectedReuseRun.modelGraph.nodes,edges:selectedReuseRun.modelGraph.edges,feature:selectedReuseFeature,task,dataset,inputShape:dataset?.inputShape||[],sourceInputShape:selectedReuseRun.modelInputShape});
+      const sourceModel=models.find(model=>model.id===selectedReuseRun.modelId);
+      const taskLabel=t(`catalog:tasks.${task}.name`,{defaultValue:task});
+      const name=`${sourceModel?.name||selectedReuseRun.name} · ${selectedReuseFeature.label} · ${taskLabel}`;
+      onReuseCheckpoint({name,nodes:extracted.nodes,edges:extracted.edges,checkpoint:selectedReuseRun.result.checkpoint,sourceRunId:selectedReuseRun.id,sourceModelId:selectedReuseRun.modelId||"",sourceNodeId:selectedReuseFeature.nodeId,sourceHandle:selectedReuseFeature.handle});
+      setReuseBackboneOpen(false);
+    }catch(error){const message=error instanceof Error?error.message:String(error);setReuseBackboneError(message==="CNN_REUSE_DENSE_SCALE_INVALID"?t("app:builder.reuseScaleInvalid"):message)}
   };
 
   const updateProp = (key: string, value: string | number | boolean) => {
@@ -435,7 +623,8 @@ function Builder({ architecture, task, dataset, models, activeModelId, onSelectM
   }, [nodes]);
   const builtinPresets = useMemo(() => presetsFor(architecture, task), [architecture, task]);
 
-  const applyPreset=(preset:{nodes:ModelNodeT[];edges:ModelEdge[]})=>{onDirty();setNodes(syncOutputContract(preset.nodes,preset.edges,dataset).map(node=>({...node,data:{...node.data,error:undefined}})));setEdges(preset.edges);setSelectedId(null);setPresetsOpen(false);window.setTimeout(()=>flow?.fitView({padding:.18}),20)};
+  const applyPreset=(preset:{nodes:ModelNodeT[];edges:ModelEdge[]})=>{onDirty();setNodes(syncOutputContract(preset.nodes,preset.edges,dataset).map(node=>({...node,data:{...node.data,error:undefined}})));setEdges(preset.edges);setSelectedId(null);setPresetsOpen(false);window.setTimeout(()=>flow?.fitView(initialGraphFit(preset.nodes)),20)};
+  const applyPretrained=async(spec:PretrainedModelSpec)=>{await backend("model.license.accept",{model_id:spec.id});onApplyPretrained(spec);applyPreset(pretrainedTemplate(spec,task))};
   const savePreset=()=>{if(!presetName.trim())return;setCustomPresets(items=>[...items,{id:uid(),name:presetName.trim(),description:t("app:customPreset.description"),nodes,edges}]);setPresetName("")};
   const presetI18n = (preset: typeof builtinPresets[number]) => {
     return {
@@ -452,9 +641,13 @@ function Builder({ architecture, task, dataset, models, activeModelId, onSelectM
       <div className="builder-toolbar">
         <button className={libraryOpen ? "active" : ""} onClick={() => setLibraryOpen(!libraryOpen)}><Plus /> {t("common:blocks")}</button>
         <button className={presetsOpen ? "active" : ""} onClick={()=>setPresetsOpen(true)}><Layers3/> {t("common:presets")}</button>
+        {reusableRuns.length>0&&<button onClick={()=>setReuseBackboneOpen(true)}><Network/> {t("app:builder.reuseBackbone")}</button>}
+        <button onClick={addOutput} title={t("app:builder.addOutputHelp")}><Plus/> {t("app:builder.addOutput")}</button>
+        <button disabled={!selected?.data.shape?.match(/^\[B,\s*\d+,\s*\d+,\s*\d+\]$/)||edges.filter(edge=>edge.source===selectedId).length!==1} onClick={()=>insertMergeBranch("add")} title={t("app:builder.residualHelp")}><GitFork/> {t("app:builder.addResidual")}</button>
+        <button disabled={!selected?.data.shape?.match(/^\[B,\s*\d+,\s*\d+,\s*\d+\]$/)||edges.filter(edge=>edge.source===selectedId).length!==1} onClick={()=>insertMergeBranch("concat")} title={t("app:builder.concatHelp")}><Split/> {t("app:builder.addConcat")}</button>
         <span className="toolbar-separator" />
         <button onClick={onValidate}><Check /> {t("common:validate")}</button>
-        <button onClick={onValidate}><Save /> {t("app:builder.saveRevision")}</button>
+        <button onClick={onSaveRevision}><Save /> {t("app:builder.saveRevision")}</button>
         <div className="toolbar-spacer" />
         <span>{t("app:builder.graphSummary", { blocks: nodes.length, connections: edges.length })}</span>
       </div>
@@ -473,9 +666,10 @@ function Builder({ architecture, task, dataset, models, activeModelId, onSelectM
         )}
 
         <div className="flow-wrap">
+          <div className="canvas-navigation-hint">{t("app:builder.canvasNavigation")}</div>
           <div className="canvas-param-badge">
             <Cpu size={13} />
-            <span>{t("app:builder.paramEstimate", { count: paramEstimate > 0 ? paramEstimate.toLocaleString() : "---" })}</span>
+            <span>{validationStats ? `${validationStats.parameters.toLocaleString()} total · ${validationStats.trainable_parameters.toLocaleString()} entrenables · ~${Math.ceil(validationStats.parameters*4/1048576)} MB` : t("app:builder.paramEstimate", { count: paramEstimate > 0 ? paramEstimate.toLocaleString() : "---" })}</span>
           </div>
 
           <ReactFlow
@@ -493,6 +687,7 @@ function Builder({ architecture, task, dataset, models, activeModelId, onSelectM
             nodeTypes={nodeTypes}
             edgeTypes={edgeTypes}
             fitView
+            fitViewOptions={initialGraphFit(nodes)}
             colorMode={theme === "dark" ? "dark" : "light"}
             deleteKeyCode={["Backspace", "Delete"]}
           >
@@ -510,9 +705,11 @@ function Builder({ architecture, task, dataset, models, activeModelId, onSelectM
                 <h3>{t(`catalog:blocks.${selected.data.blockType}.label`, { defaultValue: selected.data.label })}</h3>
                 <code>{selected.data.blockType}</code>
               </div>
-              {Object.entries(selected.data.properties).length ? Object.entries(selected.data.properties).map(([k, v]) => (
-                <Property key={k} name={k} value={v} disabled={!!dataset && ((selected.data.blockType==="linear"&&k==="out_features")||(selected.data.blockType==="conv2d"&&k==="out_channels")) && edges.some(edge=>edge.source===selected.id&&nodes.find(node=>node.id===edge.target)?.data.blockType==="output")} onChange={nv => updateProp(k, nv)} />
+      {Object.entries(selected.data.properties).length ? Object.entries(selected.data.properties).map(([k, v]) => (
+                <Property key={k} name={k} value={v} disabled={(selected.data.blockType.startsWith("hf_")&&!["frozen","trainable_stages","max_length","offline"].includes(k)) || (!!dataset && ((selected.data.blockType==="linear"&&k==="out_features")||(selected.data.blockType==="conv2d"&&k==="out_channels")) && edges.some(edge=>edge.source===selected.id&&nodes.find(node=>node.id===edge.target)?.data.blockType==="output"))} onChange={nv => updateProp(k, nv)} />
               )) : <p className="muted">{t("app:inspector.noParams")}</p>}
+              {selected.data.blockType!=="input"&&selected.data.blockType!=="output"&&estimateNodeParameters(selected)>0&&<label className="property trainable-property"><span>{t("app:inspector.frozen")}</span><button type="button" role="switch" aria-checked={Boolean(selected.data.properties.frozen)} className={selected.data.properties.frozen?"toggle on":"toggle"} onClick={()=>updateProp("frozen",!selected.data.properties.frozen)}><i/></button></label>}
+              {["batchnorm1d","batchnorm2d"].includes(selected.data.blockType)&&<label className="property trainable-property"><span>{t("app:inspector.freezeBatchNormStats")}</span><button type="button" role="switch" aria-checked={Boolean(selected.data.properties.freeze_batchnorm_stats)} className={selected.data.properties.freeze_batchnorm_stats?"toggle on":"toggle"} onClick={()=>updateProp("freeze_batchnorm_stats",!selected.data.properties.freeze_batchnorm_stats)}><i/></button></label>}
               <div className="inspector-section">
                 <span className="eyebrow">{t("app:inspector.tensor")}</span>
                 <div className="shape-box">{selected.data.shape || t("app:inspector.shapePlaceholder")}</div>
@@ -527,10 +724,15 @@ function Builder({ architecture, task, dataset, models, activeModelId, onSelectM
               <p>{t("app:inspector.emptyHint")}</p>
             </div>
           )}
+          <details className="model-shape-summary">
+            <summary>{t("app:builder.shapeSummary",{count:nodes.length})}</summary>
+            <div className="shape-summary-list">{nodes.map(node=><button key={node.id} className={node.id===selectedId?"active":""} onClick={()=>{setSelectedId(node.id);flow?.fitView({nodes:[{id:node.id}],duration:250,padding:.7,maxZoom:1})}}><span>{node.data.label}</span><code>{node.data.shape||"?"}</code></button>)}</div>
+          </details>
         </aside>
       </div>
       {(pinnedBlock||hoveredBlock)&&(()=>{const block=pinnedBlock||hoveredBlock!;const blockLabel=t(`catalog:blocks.${block.type}.label`, { defaultValue: block.label });const description=t(`catalog:blocks.${block.type}.description`, { defaultValue: BLOCK_INFO[block.type]?.description });const usage=t(`catalog:blocks.${block.type}.usage`, { defaultValue: BLOCK_INFO[block.type]?.usage });const diagram=t(`catalog:blocks.${block.type}.diagram`, { returnObjects: true, defaultValue: BLOCK_INFO[block.type]?.diagram || [t("common:input"), blockLabel, t("common:output")] }) as string[];return <div ref={infoCard} className={`block-info-popover ${pinnedBlock?"pinned":"preview"}`}><div className="block-info-head"><span className="eyebrow">{pinnedBlock?t("app:blockInfo.pinnedEyebrow"):t("app:blockInfo.previewEyebrow")}</span>{pinnedBlock&&<button className="modal-close" onClick={()=>setPinnedBlock(null)} aria-label={t("app:blockInfo.closeInfo")}><X/></button>}</div><h2>{blockLabel}</h2><p>{description || t("app:blockInfo.fallbackDescription")}</p><div className="node-diagram">{diagram.map((part,index)=><div key={`${part}-${index}`}>{index>0&&<ChevronRight/>}<span className={index===1?"operation":""}>{part}</span></div>)}</div><h3>{t("app:blockInfo.usageTitle")}</h3><p>{usage || t("app:blockInfo.fallbackUsage")}</p><div className="default-properties"><span>{t("app:blockInfo.defaults")}</span><code>{Object.keys(block.defaults).length?JSON.stringify(block.defaults):t("app:blockInfo.noEditableDefaults")}</code></div>{!pinnedBlock&&<small className="pin-hint">{t("app:blockInfo.pinHint")}</small>}</div>})()}
-      {presetsOpen&&<div className="modal-backdrop"><div className="modal presets-modal"><button className="modal-close" onClick={()=>setPresetsOpen(false)}><X/></button><span className="eyebrow">{t("app:presets.modalEyebrow")}</span><h2>{t("app:presets.modalTitle")}</h2><div className="preset-list">{builtinPresets.map(preset=>{const info=presetI18n(preset);return <article key={preset.id}><div><Sparkles/><span><strong>{info.name}</strong><small>{info.description}</small></span></div><p><b>{t("app:presets.benefitLabel")}</b> {info.benefit}. <b>{t("app:presets.tradeoffLabel")}</b> {info.tradeoff}.</p><button className="secondary" onClick={()=>applyPreset(preset)}>{t("app:presets.apply")}</button></article>;})}{customPresets.map(preset=><article key={preset.id}><div><Save/><span><strong>{preset.name}</strong><small>{preset.description}</small></span></div><p><b>{t("app:presets.benefitLabel")}</b> {t("app:customPreset.benefit")}. <b>{t("app:presets.tradeoffLabel")}</b> {t("app:customPreset.tradeoff")}.</p><button className="secondary" onClick={()=>applyPreset(preset)}>{t("app:presets.apply")}</button></article>)}</div><div className="save-preset"><label>{t("app:savePreset.label")}<input value={presetName} onChange={event=>setPresetName(event.target.value)} placeholder={t("app:savePreset.placeholder")}/></label><button className="primary" disabled={!presetName.trim()} onClick={savePreset}><Save/> {t("common:save")}</button></div></div></div>}
+      {reuseBackboneOpen&&<div className="modal-backdrop" onMouseDown={()=>setReuseBackboneOpen(false)}><section className="modal reuse-backbone-modal" role="dialog" aria-modal="true" aria-labelledby="reuse-backbone-title" onMouseDown={event=>event.stopPropagation()}><button className="modal-close" onClick={()=>setReuseBackboneOpen(false)} aria-label={t("common:close")}><X/></button><span className="eyebrow">{t("app:builder.reuseBackboneEyebrow")}</span><h2 id="reuse-backbone-title">{t("app:builder.reuseBackboneTitle")}</h2><p>{t("app:builder.reuseBackboneDescription")}</p>{reusableRuns.length>0?<><label>{t("app:builder.reuseRunLabel")}<select value={selectedReuseRun?.id||""} onChange={event=>{setReuseRunId(event.target.value);setReuseFeatureKey("");setReuseBackboneError("")}}>{reusableRuns.map(run=><option key={run.id} value={run.id}>{run.name} · {run.modelGraph?.nodes.length||0} bloques · {new Date(run.createdAt).toLocaleDateString()}</option>)}</select></label>{reuseFeatures.length>0?<label>{t("app:builder.reuseFeatureLabel")}<select value={selectedReuseFeature?`${selectedReuseFeature.nodeId}::${selectedReuseFeature.handle||""}`:""} onChange={event=>setReuseFeatureKey(event.target.value)}>{reuseFeatures.map(feature=><option key={`${feature.nodeId}::${feature.handle||""}`} value={`${feature.nodeId}::${feature.handle||""}`}>{feature.label} · [B,{feature.channels},{feature.height},{feature.width}]</option>)}</select></label>:<p className="inspector-error">{t("app:builder.reuseNoFeatures")}</p>}{selectedReuseFeature&&<div className="reuse-backbone-summary"><Network/><span><strong>{selectedReuseFeature.label}</strong><small>[B, {selectedReuseFeature.channels}, {selectedReuseFeature.height}, {selectedReuseFeature.width}] · {t("app:builder.reuseFrozenHint")}</small></span></div>}{reuseBackboneError&&<p className="inspector-error">{reuseBackboneError}</p>}<div className="modal-actions"><button className="secondary" onClick={()=>setReuseBackboneOpen(false)}>{t("common:cancel")}</button><button className="primary" disabled={!selectedReuseFeature} onClick={createFromCheckpointBackbone}>{t("app:builder.reuseCreateButton")} <ChevronRight size={16}/></button></div></>:<p>{t("app:builder.reuseNoRuns")}</p>}</section></div>}
+      {presetsOpen&&<div className="modal-backdrop"><div className="modal presets-modal"><button className="modal-close" onClick={()=>setPresetsOpen(false)}><X/></button><span className="eyebrow">{t("app:presets.modalEyebrow")}</span><h2>{t("app:presets.modalTitle")}</h2>{(pretrainedLoading||pretrainedModels.length>0)&&<><h3>Modelos preentrenados · Hugging Face</h3><div className="preset-list">{pretrainedLoading?<p>Consultando catálogo…</p>:pretrainedModels.map(spec=><article key={spec.id}><div><Cloud/><span><strong>{spec.name}</strong><small>{spec.repoId} · {spec.size} · {spec.cached?"en caché":"requiere descarga"}</small></span></div><p>{spec.description}<br/><b>Licencia:</b> {spec.license} · <b>Revisión:</b> {spec.revision.slice(0,8)} · <b>Biblioteca:</b> {spec.library} / {spec.processor}{spec.parameterCount?" · "+(spec.parameterCount/1e6).toFixed(1)+" M parámetros":""}{spec.inputContract?" · "+spec.inputContract:""}.<br/>{spec.limitations||"Backbone congelado inicialmente y cabeza nueva."}</p><button className="secondary" onClick={()=>applyPretrained(spec)}>Aceptar licencia y usar</button></article>)}</div></>}<h3>Plantillas desde cero</h3>{scratchGuidance&&<p className="muted">{scratchGuidance}</p>}<div className="preset-list">{builtinPresets.map(preset=>{const info=presetI18n(preset);return <article key={preset.id}><div><Sparkles/><span><strong>{info.name}</strong><small>{info.description}</small></span></div><p><b>{t("app:presets.benefitLabel")}</b> {info.benefit}. <b>{t("app:presets.tradeoffLabel")}</b> {info.tradeoff}.</p><button className="secondary" onClick={()=>applyPreset(preset)}>{t("app:presets.apply")}</button></article>;})}{customPresets.map(preset=><article key={preset.id}><div><Save/><span><strong>{preset.name}</strong><small>{preset.description}</small></span></div><p><b>{t("app:presets.benefitLabel")}</b> {t("app:customPreset.benefit")}. <b>{t("app:presets.tradeoffLabel")}</b> {t("app:customPreset.tradeoff")}.</p><button className="secondary" onClick={()=>applyPreset(preset)}>{t("app:presets.apply")}</button></article>)}</div><div className="save-preset"><label>{t("app:savePreset.label")}<input value={presetName} onChange={event=>setPresetName(event.target.value)} placeholder={t("app:savePreset.placeholder")}/></label><button className="primary" disabled={!presetName.trim()} onClick={savePreset}><Save/> {t("common:save")}</button></div></div></div>}
     </div>
   );
 }
@@ -541,7 +743,7 @@ function Property({ name, value, disabled=false, onChange }: { name: string; val
     <label className="property">
       <span>{name.replaceAll("_", " ")}</span>
       {typeof value === "boolean" ? (
-        <button className={`toggle ${value ? "on" : ""}`} onClick={() => onChange(!value)} type="button"><i /></button>
+        <button disabled={disabled} className={`toggle ${value ? "on" : ""}`} onClick={() => onChange(!value)} type="button"><i /></button>
       ) : (
         <input disabled={disabled} title={disabled ? t("app:property.autoAdjusted") : undefined} type={typeof value === "number" ? "number" : "text"} step="any" value={String(value)} onChange={e => onChange(typeof value === "number" ? Number(e.target.value) : e.target.value)} />
       )}
@@ -549,7 +751,7 @@ function Property({ name, value, disabled=false, onChange }: { name: string; val
   );
 }
 
-function Training({ task, dataset, models, activeModelId, onSelectModel, runs, activeRunId, training, accent, onSelectRun, onAddRun, onTrain }: { task: TaskId; dataset:DatasetSummary|null; models:ProjectModel[]; activeModelId:string|null; onSelectModel:(id:string)=>void; runs: TrainingRun[]; activeRunId: string; training: boolean; accent: Accent; onSelectRun:(id:string)=>void; onAddRun:()=>void; onTrain: (c: Record<string, number | string>) => void }) {
+function Training({ task, dataset, models, activeModelId, onSelectModel, runs, activeRunId, training, accent, onSelectRun, onAddRun, onTrain, onControl }: { task: TaskId; dataset:DatasetSummary|null; models:ProjectModel[]; activeModelId:string|null; onSelectModel:(id:string)=>void; runs: TrainingRun[]; activeRunId: string; training: boolean; accent: Accent; onSelectRun:(id:string)=>void; onAddRun:()=>void; onTrain: (c: Record<string, number | string | boolean>) => void; onControl:(state:"running"|"paused"|"cancelled")=>void }) {
   const { t } = useTranslation(["app", "common", "catalog"]);
   const activeRun=runs.find(item=>item.id===activeRunId) || runs[0];
   const history=activeRun?.history || [];
@@ -561,9 +763,23 @@ function Training({ task, dataset, models, activeModelId, onSelectModel, runs, a
   const [batch, setBatch] = useState(Number(dataset?.options?.batchSize||32));
   const [optimizer, setOptimizer] = useState("adamw");
   const [bestModelCriterion, setBestModelCriterion] = useState(defaultBestCriterion);
+  const [scheduler,setScheduler]=useState("none");
+  const [warmup,setWarmup]=useState(0);
+  const [patience,setPatience]=useState(0);
+  const [accumulation,setAccumulation]=useState(1);
+  const [precision,setPrecision]=useState("fp32");
+  const [clipNorm,setClipNorm]=useState(5);
+  const [lossName,setLossName]=useState("auto");
+  const [finetuningRecipe,setFinetuningRecipe]=useState("auto");
+  const [backboneLr,setBackboneLr]=useState(0.0001);
+  const [headLr,setHeadLr]=useState(0.001);
+  const [classWeights,setClassWeights]=useState(false);
+  const [balancedSampler,setBalancedSampler]=useState(false);
+  const [resumeCheckpoint,setResumeCheckpoint]=useState("");
+  const [initialCheckpoint,setInitialCheckpoint]=useState("");
   useEffect(()=>{
     const config=activeRun?.config || {};
-    setEpochs(Number(config.epochs || defaultEpochs));setLr(Number(config.learning_rate || .001));setBatch(Number(config.batch_size || dataset?.options?.batchSize || 32));setOptimizer(String(config.optimizer || "adamw"));setBestModelCriterion(String(config.best_model_criterion || defaultBestCriterion));
+    setEpochs(Number(config.epochs || defaultEpochs));setLr(Number(config.learning_rate || .001));setBatch(Number(config.batch_size || dataset?.options?.batchSize || 32));setOptimizer(String(config.optimizer || "adamw"));setBestModelCriterion(String(config.best_model_criterion || defaultBestCriterion));setScheduler(String(config.scheduler||"none"));setWarmup(Number(config.warmup_epochs||0));setPatience(Number(config.early_stopping_patience||0));setAccumulation(Number(config.gradient_accumulation||1));setPrecision(String(config.precision||"fp32"));setClipNorm(Number(config.gradient_clip_norm||5));setLossName(String(config.loss||"auto"));setFinetuningRecipe(String(config.finetuning_recipe||"auto"));setBackboneLr(Number(config.backbone_learning_rate||.0001));setHeadLr(Number(config.head_learning_rate||.001));setClassWeights(Boolean(config.class_weights));setBalancedSampler(Boolean(config.balanced_sampler));setResumeCheckpoint(String(config.resume_checkpoint||""));setInitialCheckpoint(String(config.initial_checkpoint||""));
   },[activeRunId,dataset?.options?.batchSize,defaultEpochs,defaultBestCriterion]);
   const currentEpoch=history.at(-1)?.epoch || 0;
   const targetEpochs=Number(activeRun?.config.epochs || epochs || 1);
@@ -572,7 +788,8 @@ function Training({ task, dataset, models, activeModelId, onSelectModel, runs, a
   const etaSeconds=currentEpoch ? Math.max(0,Math.round((elapsedSeconds/currentEpoch)*(targetEpochs-currentEpoch))) : 0;
   const formatTime=(seconds:number)=>seconds<60?t("app:time.seconds", { count: seconds }):t("app:time.minutes", { minutes: Math.floor(seconds/60), seconds: seconds%60 });
   const bestLoss=history.length ? history.reduce((best, point)=>point.valLoss<best.valLoss?point:best,history[0]) : null;
-  const bestMetric=history.length ? history.reduce((best, point)=>point.metric>best.metric?point:best,history[0]) : null;
+  const metricHigherIsBetter=!new Set<TaskId>(["tabular.regression","tabular.reconstruction","image.regression","image.reconstruction","image.translation","sequence.regression","sequence.forecast"]).has(task);
+  const bestMetric=history.length ? history.reduce((best, point)=>(metricHigherIsBetter ? point.metric>best.metric : point.metric<best.metric)?point:best,history[0]) : null;
 
   const metricName = t(`catalog:tasks.${task}.metric`);
   return (
@@ -630,7 +847,23 @@ function Training({ task, dataset, models, activeModelId, onSelectModel, runs, a
               <option value="adam">Adam</option>
               <option value="sgd">SGD</option>
             </select>
-          </label>          <label>{t("app:training.bestModelCriterionLabel")}
+          </label>
+          <details className="advanced-training"><summary>{t("app:training.advanced.title")}</summary>
+            <label>{t("app:training.advanced.recipe")}<select value={finetuningRecipe} onChange={e=>setFinetuningRecipe(e.target.value)}><option value="auto">{t("app:training.advanced.recipeAuto")}</option><option value="head">{t("app:training.advanced.recipeHead")}</option><option value="gradual">{t("app:training.advanced.recipeGradual")}</option><option value="full">{t("app:training.advanced.recipeFull")}</option><option value="lora">LoRA</option><option value="smoke">{t("app:training.advanced.recipeSmoke")}</option></select></label>
+            <label>{t("app:training.advanced.backboneLr")}<input type="number" step="0.00001" value={backboneLr} onChange={e=>setBackboneLr(Number(e.target.value))}/></label>
+            <label>{t("app:training.advanced.headLr")}<input type="number" step="0.0001" value={headLr} onChange={e=>setHeadLr(Number(e.target.value))}/></label>
+            {task.includes("classification")&&<><label>{t("app:training.advanced.classWeights")}<button type="button" className={`toggle ${classWeights?"on":""}`} onClick={()=>setClassWeights(value=>!value)}><i/></button></label><label>{t("app:training.advanced.balancedSampler")}<button type="button" className={`toggle ${balancedSampler?"on":""}`} onClick={()=>setBalancedSampler(value=>!value)}><i/></button></label></>}
+            <label>{t("app:training.advanced.resume")}<input value={resumeCheckpoint} onChange={e=>setResumeCheckpoint(e.target.value)} placeholder={t("app:training.advanced.resumePlaceholder")}/></label>
+            <label>{t("app:training.advanced.initialWeights")}<input value={initialCheckpoint} onChange={e=>setInitialCheckpoint(e.target.value)} placeholder={t("app:training.advanced.initialWeightsPlaceholder")}/></label>
+            <label>{t("app:training.advanced.loss")}<select value={lossName} onChange={e=>setLossName(e.target.value)}><option value="auto">{t("app:training.advanced.automatic")}</option>{!task.includes("classification")&&<><option value="mse">MSE</option><option value="mae">MAE</option><option value="huber">Huber</option></>}{task.includes("classification")&&<option value="focal">Focal</option>}</select></label>
+            <label>{t("app:training.advanced.scheduler")}<select value={scheduler} onChange={e=>setScheduler(e.target.value)}><option value="none">{t("app:training.advanced.none")}</option><option value="cosine">{t("app:training.advanced.cosineWarmup")}</option><option value="step">{t("app:training.advanced.stepSchedule")}</option><option value="plateau">{t("app:training.advanced.reducePlateau")}</option></select></label>
+            <label>{t("app:training.advanced.warmup")}<input type="number" min="0" value={warmup} onChange={e=>setWarmup(Number(e.target.value))}/></label>
+            <label>{t("app:training.advanced.earlyStopping")}<input type="number" min="0" value={patience} onChange={e=>setPatience(Number(e.target.value))}/></label>
+            <label>{t("app:training.advanced.accumulation")}<input type="number" min="1" value={accumulation} onChange={e=>setAccumulation(Number(e.target.value))}/></label>
+            <label>{t("app:training.advanced.gradientClip")}<input type="number" min="0" step="0.5" value={clipNorm} onChange={e=>setClipNorm(Number(e.target.value))}/></label>
+            <label>{t("app:training.advanced.precision")}<select value={precision} onChange={e=>setPrecision(e.target.value)}><option value="fp32">FP32</option><option value="fp16">FP16 (CUDA)</option><option value="bf16">BF16 (CUDA)</option></select></label>
+          </details>
+          <label>{t("app:training.bestModelCriterionLabel")}
             <select value={bestModelCriterion} onChange={e => setBestModelCriterion(e.target.value)}>
               <option value="none">{t("app:training.criterion.none")}</option>
               <option value="val_loss">{t("app:training.criterion.val_loss")}</option>
@@ -647,7 +880,7 @@ function Training({ task, dataset, models, activeModelId, onSelectModel, runs, a
           {run?.test&&<div className="test-summary"><CheckCircle2/><span><small>{t("app:training.testResult")}</small><strong>{run.metricName}: {run.test.metric.toFixed(4)}</strong></span></div>}
           {activeRun?.error&&<div className="run-error"><AlertCircle/>{translateBackendError(activeRun.error)}</div>}
           </div>
-          <div className="run-config-footer"><button className="primary full" disabled={training || activeRun?.status==="completed"} onClick={() => onTrain({ epochs, learning_rate: lr, batch_size: batch, optimizer, best_model_criterion: bestModelCriterion })}>{activeRun?.status==="running" ? <><Activity className="spin" /> {t("app:training.trainingButton")}</> : activeRun?.status==="completed" ? <><Check/> {t("app:training.completedButton")}</> : <><Play /> {t("app:training.startButton")}</>}</button>{activeRun?.status==="completed"&&<small>{t("app:training.newRunHint")}</small>}</div>
+          <div className="run-config-footer">{training?<><button className="secondary" onClick={()=>onControl(activeRun?.status==="paused"?"running":"paused")}>{activeRun?.status==="paused"?"Reanudar":"Pausar"}</button><button className="secondary" onClick={()=>onControl("cancelled")}>Cancelar</button></>:<button className="primary full" disabled={activeRun?.status==="completed"} onClick={() => onTrain({ epochs, learning_rate: lr, backbone_learning_rate:backboneLr, head_learning_rate:headLr, batch_size: batch, optimizer, best_model_criterion: bestModelCriterion, scheduler, warmup_epochs:warmup, early_stopping_patience:patience, gradient_accumulation:accumulation, gradient_clip_norm:clipNorm, precision, loss:lossName, finetuning_recipe:finetuningRecipe, class_weights:classWeights, balanced_sampler:balancedSampler, resume_checkpoint:resumeCheckpoint, initial_checkpoint:initialCheckpoint })}>{activeRun?.status==="completed" ? <><Check/> {t("app:training.completedButton")}</> : <><Play /> {t("app:training.startButton")}</>}</button>}{activeRun?.status==="completed"&&<small>{t("app:training.newRunHint")}</small>}</div>
         </aside>
       </div>
     </div>
@@ -745,6 +978,7 @@ function computeVramEstimate(nodes: ModelNodeT[], dataset: DatasetSummary | null
     paramMemoryMB += Math.round(activationMB);
   }
   const estimatedMB = Math.max(394, Math.round(baseMB + paramMemoryMB));
+  if(totalVramBytes<=0)return{text:`${estimatedMB} MB estimados · memoria del sistema`,percent:0};
   const totalGB = (totalVramBytes / (1024 * 1024 * 1024)).toFixed(2);
   const percent = ((estimatedMB / (totalVramBytes / (1024 * 1024))) * 100).toFixed(1);
   return {
@@ -756,8 +990,8 @@ function computeVramEstimate(nodes: ModelNodeT[], dataset: DatasetSummary | null
 function Sidebar({ step, setStep, completed, onHome, gpuInfo, nodes, dataset, theme, setTheme, accent, setAccent }: { step:Step; setStep:(s:Step)=>void; completed:Record<Step,boolean>; onHome:()=>void; gpuInfo: GpuInfo | null; nodes: ModelNodeT[]; dataset: DatasetSummary | null; theme:Theme; setTheme:(value:Theme)=>void; accent:Accent; setAccent:(value:Accent)=>void }) {
   const { t } = useTranslation(["app", "common"]);
   const steps = useSteps();
-  const totalVram = gpuInfo?.total_vram || 12487661158;
-  const gpuName = gpuInfo?.name || "NVIDIA GeForce RTX 3060";
+  const totalVram = gpuInfo?.total_vram ?? 0;
+  const gpuName = gpuInfo?.name || "CPU";
   const vramEst = computeVramEstimate(nodes, dataset, totalVram, t);
 
   return <aside className="sidebar">
@@ -783,7 +1017,7 @@ function Sidebar({ step, setStep, completed, onHome, gpuInfo, nodes, dataset, th
   </aside>;
 }
 
-function ModelTask({ architecture, task, onChoose, onContinue }: { architecture:Architecture|null; task:TaskId|null; onChoose:(a:Architecture,t:TaskId)=>void; onContinue:()=>void }) {
+function ModelTask({ architecture, task, runtimeCatalog, onChoose, onContinue }: { architecture:Architecture|null; task:TaskId|null; runtimeCatalog:RuntimeCatalog|null; onChoose:(a:Architecture,t:TaskId)=>void; onContinue:()=>void }) {
   const { t } = useTranslation(["app", "catalog"]);
   const [family,setFamily]=useState("all");
   const [query,setQuery]=useState("");
@@ -799,7 +1033,7 @@ function ModelTask({ architecture, task, onChoose, onContinue }: { architecture:
   ],[t]);
   const allowed=families.find(item=>item.id===family)?.architectures||families[0].architectures;
   const visibleArchitectures=(Object.entries(ARCHITECTURES) as [Architecture,typeof ARCHITECTURES[Architecture]][]).filter(([id])=>allowed.includes(id)).filter(([id])=>`${t(`catalog:architectures.${id}.name`)} ${t(`catalog:architectures.${id}.description`)}`.toLowerCase().includes(query.toLowerCase()));
-  const detail=ARCHITECTURES[preview];
+  const detail={...ARCHITECTURES[preview],tasks:runtimeCatalog?.architectures[preview]?.tasks||ARCHITECTURES[preview].tasks};
   const DetailIcon=ARCHITECTURE_ICONS[preview];
   const activeTask=architecture===preview?task:null;
   return <div className="page model-page model-catalog-page">
@@ -812,21 +1046,30 @@ function ModelTask({ architecture, task, onChoose, onContinue }: { architecture:
   </div>;
 }
 
-function DataStep({ project, task, dataset, onDownload, onImport, onChooseAnother, onApplyPipeline, onSplitsChange }: {
+function DataStep({ project, task, dataset, dataContinue, setNotice, onDownload, onImport, onImportFiles, onChooseAnother, onApplyPipeline, onSplitsChange }: {
   project: Project | null;
   task: TaskId | null;
   dataset: DatasetSummary | null;
+  dataContinue: React.MutableRefObject<() => Promise<boolean>>;
+  setNotice: (message: string) => void;
   onDownload: (datasetId: string, opts?: DatasetOptions) => Promise<void>;
   onImport: (path: string, opts?: DatasetOptions) => Promise<void>;
+  onImportFiles: (files: File[], opts?: DatasetOptions) => Promise<void>;
   onChooseAnother: () => void;
   onApplyPipeline: (pipeline: DataPipeline) => Promise<void>;
   onSplitsChange: (splits: DatasetSummary["splits"]) => void;
 }) {
   const { t } = useTranslation(["app", "common", "catalog"]);
   const [path, setPath] = useState(dataset?.sourcePath || "");
+  const fileInput = useRef<HTMLInputElement>(null);
   const [loading, setLoading] = useState(false);
-  const [progress, setProgress] = useState(0);
   const [loadingLabel, setLoadingLabel] = useState("");
+  const [targetColumn, setTargetColumn] = useState("");
+  const [csvColumns, setCsvColumns] = useState<string[]>([]);
+  const [selectedFeatures, setSelectedFeatures] = useState<string[]>([]);
+  const [pendingFiles, setPendingFiles] = useState<File[]>([]);
+  const [pipelineDraft, setPipelineDraft] = useState<DataPipeline | null>(null);
+  const [pipelineDirty, setPipelineDirty] = useState(false);
   const [dataView,setDataView]=useState<"preview"|"charts">("preview");
   const [analytics,setAnalytics]=useState<DatasetAnalytics|undefined>(dataset?.analytics);
   const [catalog,setCatalog]=useState<HuggingFaceDataset[]>([]);
@@ -835,15 +1078,27 @@ function DataStep({ project, task, dataset, onDownload, onImport, onChooseAnothe
   const isText = task?.startsWith("text.") || false;
 
   const [channels, setChannels] = useState<number>(dataset?.options?.channels || (dataset?.inputShape?.[0] === 1 ? 1 : 3));
+  const [targetChannels, setTargetChannels] = useState<number>(dataset?.options?.targetChannels || 3);
   const [resolution, setResolution] = useState<number>(dataset?.options?.resolution || (isImage && dataset?.inputShape?.[1] ? dataset.inputShape[1] : 256));
   const [normalization, setNormalization] = useState<"none" | "standard" | "minmax" | "minmax_sym">(dataset?.options?.normalization || "none");
   const [batchSize, setBatchSize] = useState<number>(dataset?.options?.batchSize || 32);
   const [maxLength,setMaxLength]=useState<number>(dataset?.options?.max_length || 64);
   const [vocabSize,setVocabSize]=useState<number>(dataset?.options?.vocab_size || 2048);
+  const onPipelineDraftChange = useCallback((pipeline: DataPipeline, dirty: boolean) => {
+    setPipelineDraft(pipeline);
+    setPipelineDirty(dirty);
+  }, []);
+
+  useEffect(() => {
+    if (!dataset || !task) { setPipelineDraft(null); setPipelineDirty(false); return; }
+    setPipelineDraft(dataset.pipeline || defaultDataPipeline(task, dataset));
+    setPipelineDirty(!dataset.pipeline);
+  }, [dataset?.id, dataset?.revision, task]);
 
   useEffect(() => {
     if (dataset) {
       if (dataset.options?.channels) setChannels(dataset.options.channels);
+      if (dataset.options?.targetChannels) setTargetChannels(dataset.options.targetChannels);
       else if (dataset.inputShape?.[0]) setChannels(dataset.inputShape[0] === 1 ? 1 : 3);
 
       if (dataset.options?.resolution) setResolution(dataset.options.resolution);
@@ -870,26 +1125,91 @@ function DataStep({ project, task, dataset, onDownload, onImport, onChooseAnothe
   const testCount = dataset ? (dataset.splitCounts?.test ?? dataset.samples - trainCount - validationCount) : 0;
 
   const currentOpts: DatasetOptions = {
-    ...(isImage ? { channels, resolution } : isText ? {max_length:maxLength,vocab_size:vocabSize} : { normalization }),
+    ...(isImage ? { channels, resolution, ...(task==="image.translation"?{target_channels:targetChannels}:{}) } : isText ? {max_length:maxLength,vocab_size:vocabSize} : { normalization }),
+    ...(task.startsWith("tabular") && targetColumn.trim() ? { target_column: targetColumn.trim() } : {}),
+    ...(csvColumns.length ? { feature_columns: selectedFeatures } : {}),
     batchSize
   };
 
   const runLoading = async (label:string, operation:()=>Promise<void>) => {
-    setLoading(true);setLoadingLabel(label);setProgress(6);
-    const timer=window.setInterval(()=>setProgress(value=>Math.min(92,value+Math.max(1,Math.round((94-value)/8)))),180);
-    try { await operation();setProgress(100); }
-    finally { window.clearInterval(timer);window.setTimeout(()=>{setLoading(false);setProgress(0)},300); }
+    setLoading(true);setLoadingLabel(label);
+    try { await operation(); }
+    finally { window.setTimeout(()=>setLoading(false),300); }
   };
+  useEffect(() => {
+    dataContinue.current = async () => {
+      if (!dataset || !pipelineDraft || (!pipelineDirty && dataset.pipeline)) return true;
+      try {
+        await runLoading(t("app:data.applyingPipeline"), () => onApplyPipeline(pipelineDraft));
+        return true;
+      } catch {
+        return false;
+      }
+    };
+    return () => { dataContinue.current = async () => true; };
+  }, [dataContinue, dataset, pipelineDraft, pipelineDirty, onApplyPipeline, t]);
 
   const browseFolder=async()=>{
-    const selectedPath=await pickDatasetDirectory();
-    if(selectedPath)setPath(selectedPath);
-    else if(!isTauri()) window.alert(t("app:data.browseNotTauri"));
+    if(!isTauri()) { fileInput.current?.click(); return; }
+    const selectedPath=isImage ? await pickDatasetDirectory() : await pickDatasetFile();
+    if(selectedPath){setPath(selectedPath);setCsvColumns([]);setPendingFiles([]);setSelectedFeatures([]);setTargetColumn("");}
+  };
+  useEffect(() => {
+    if (!fileInput.current) return;
+    if (isImage) fileInput.current.setAttribute("webkitdirectory", "");
+    else fileInput.current.removeAttribute("webkitdirectory");
+  }, [isImage]);
+
+  const importSelectedFiles = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(event.target.files || []);
+    event.target.value = "";
+    if (!files.length) return;
+    if (task.startsWith("tabular") && files.length === 1) {
+      const header = (await files[0].slice(0, 128 * 1024).text()).split(/\r?\n/, 1)[0];
+      const columns = parseCsvHeader(header);
+      if (columns.length < 2) { setNotice(t("app:data.csvHeaderInvalid")); return; }
+      setPendingFiles(files); setCsvColumns(columns);
+      const preferred = task === "tabular.reconstruction" ? "" : columns.includes("target") ? "target" : columns.at(-1) || "";
+      setTargetColumn(preferred); setSelectedFeatures(columns.filter(column => column !== preferred));
+      return;
+    }
+    await runLoading(t("app:data.importLoading"), () => onImportFiles(files, currentOpts));
+  };
+
+  const inspectOrImportPath = async () => {
+    if (!path && !pendingFiles.length) return;
+    if (task.startsWith("tabular") && !csvColumns.length) {
+      setLoading(true); setLoadingLabel(t("app:data.inspectingColumns"));
+      try {
+        const response = await backend<{ columns: string[] }>("data.inspect_csv", { path });
+        setCsvColumns(response.columns);
+        const preferred = task === "tabular.reconstruction" ? "" : response.columns.includes("target") ? "target" : response.columns.at(-1) || "";
+        setTargetColumn(preferred); setSelectedFeatures(response.columns.filter(column => column !== preferred));
+      } catch (error) {
+        setNotice(translateBackendError(String(error)));
+      } finally {
+        window.setTimeout(() => setLoading(false), 300);
+      }
+      return;
+    }
+    await runLoading(t("app:data.importLoading"), () => pendingFiles.length ? onImportFiles(pendingFiles, currentOpts) : onImport(path, currentOpts));
+  };
+
+  const chooseTargetColumn = (next: string) => {
+    const automatic = csvColumns.includes("target") ? "target" : csvColumns.at(-1) || "";
+    const previous = targetColumn || automatic;
+    const effectiveNext = next || automatic;
+    setTargetColumn(next);
+    setSelectedFeatures(current => {
+      const updated = current.filter(column => column !== effectiveNext);
+      if (previous && previous !== effectiveNext && !current.includes(previous)) updated.push(previous);
+      return csvColumns.filter(column => updated.includes(column));
+    });
   };
 
   return (
     <div className="page data-page">
-      {loading&&<div className="loading-banner"><RefreshCw className="spin"/><span>{loadingLabel}</span><div><i style={{width:`${progress}%`}}/></div><strong>{progress}%</strong></div>}
+      {loading&&<div className="loading-banner"><RefreshCw className="spin"/><span>{loadingLabel}</span><div><i/></div></div>}
       <div className="page-intro">
         <div>
           <span className="eyebrow">{t("app:data.stepEyebrow")}</span>
@@ -914,19 +1234,24 @@ function DataStep({ project, task, dataset, onDownload, onImport, onChooseAnothe
             <Upload />
             <h3>{t("app:data.importTitle")}</h3>
             <p>{t("app:data.importSubtitle")}</p>
+            <p className="muted dataset-format-hint">{t(TASKS[task].formatKey || "",{defaultValue:TASKS[task].format})}</p>
+            <input ref={fileInput} type="file" hidden multiple={isImage} accept={isImage ? ".png,.jpg,.jpeg,.webp,.bmp,.csv,.txt,.json" : isText ? ".txt,.csv,.tsv" : ".csv,.tsv"} onChange={importSelectedFiles} />
+            {task==="image.translation"&&<label className="app-field"><span>{t("app:data.targetChannels")}</span><select value={targetChannels} onChange={event=>setTargetChannels(Number(event.target.value))}><option value={1}>{t("app:data.grayscale")}</option><option value={3}>{t("app:data.rgb")}</option></select></label>}
+            {task.startsWith("tabular") && <>{task !== "tabular.reconstruction" && <label className="app-field"><span>{t("app:data.targetColumnLabel")}</span>{csvColumns.length ? <select value={targetColumn || "__auto__"} onChange={event=>chooseTargetColumn(event.target.value === "__auto__" ? "" : event.target.value)}><option value="__auto__">{t("app:data.targetAuto")}</option>{csvColumns.map(column=><option key={column} value={column}>{column}</option>)}</select> : <input value={targetColumn} onChange={event=>setTargetColumn(event.target.value)} placeholder={t("app:data.targetColumnPlaceholder")} />}</label>}{csvColumns.length>0&&<fieldset className="column-selection"><legend>{t("app:data.featureColumnsLabel")}</legend>{csvColumns.filter(column=>task==="tabular.reconstruction"||column!==(targetColumn || (csvColumns.includes("target")?"target":csvColumns.at(-1)))).map(column=><label key={column}><input type="checkbox" checked={selectedFeatures.includes(column)} onChange={event=>setSelectedFeatures(current=>event.target.checked?[...current,column]:current.filter(value=>value!==column))}/><span>{column}</span></label>)}</fieldset>}</>}
             <label className="app-field">
               <span>{t("app:data.localPathLabel")}</span>
-              <div className="path-picker"><input value={path} onChange={e => setPath(e.target.value)} placeholder={t("app:data.pathPlaceholder")} /><button type="button" className="secondary" onClick={browseFolder}><FolderOpen size={15}/> {t("app:data.browse")}</button></div>
+              <div className="path-picker"><input value={path} onChange={e => { setPath(e.target.value); setCsvColumns([]); setPendingFiles([]); setSelectedFeatures([]); setTargetColumn(""); }} placeholder={t("app:data.pathPlaceholder")} /><button type="button" className="secondary" onClick={browseFolder}><FolderOpen size={15}/> {t("app:data.browse")}</button></div>
             </label>
-            <button className="secondary" disabled={!path||loading} onClick={() => runLoading(t("app:data.importLoading"),()=>onImport(path, currentOpts))}>
-              {t("app:data.inspectImport")}
+            {pendingFiles.length>0&&<p className="muted">{t("app:data.selectedFile",{name:pendingFiles[0].name})}</p>}
+            <button className="secondary" disabled={(!path&&!pendingFiles.length)||loading} onClick={inspectOrImportPath}>
+              {task.startsWith("tabular") && !csvColumns.length ? t("app:data.inspectColumns") : t("app:data.inspectImport")}
             </button>
           </article>
         </div>
       ) : (
         <div className="data-step-layout">
           <div className="data-main">
-            <DataPipelineEditor task={task} dataset={dataset} onApply={onApplyPipeline}/>
+            <DataPipelineEditor task={task} dataset={dataset} onApply={onApplyPipeline} onDraftChange={onPipelineDraftChange}/>
             <article className="panel">
               <div className="data-view-header"><span className="eyebrow">{t("app:data.explorerEyebrow")}</span><div className="data-view-switch" role="tablist" aria-label={t("app:data.viewAria")}><button role="tab" aria-selected={dataView==="preview"} className={dataView==="preview"?"active":""} onClick={()=>setDataView("preview")}>{t("app:data.samplesTab")}</button><button role="tab" aria-selected={dataView==="charts"} className={dataView==="charts"?"active":""} onClick={()=>setDataView("charts")}>{t("app:data.chartsTab")}</button></div></div>
 
@@ -1235,7 +1560,7 @@ function mockDataset(task: TaskId, options?: DatasetOptions): DatasetSummary {
   const channels = options?.channels || (image ? 3 : undefined);
   const normalization = options?.normalization || "none";
 
-  const classes = task.includes("classification") || segmentation
+  const classes = task.includes("classification") || segmentation || task==="image.detection"
     ? (multi ? ["Fondo", "Círculo", "Cuadrado", "Triángulo"] : ["Clase 0", "Clase 1", "Clase 2"])
     : undefined;
 
@@ -1274,6 +1599,12 @@ function mockDataset(task: TaskId, options?: DatasetOptions): DatasetSummary {
 
   const outputShape = segmentation
     ? [task.endsWith("binary") ? 1 : 4, resolution, resolution]
+    : task==="image.translation"
+      ? [options?.targetChannels||3,resolution,resolution]
+      : task==="image.localization"
+        ? [4]
+      : task==="image.detection"
+        ? [classes?.length||3]
     : task === "sequence.forecast"
       ? [8, 1]
       : task.includes("classification")
@@ -1300,4 +1631,4 @@ function mockDataset(task: TaskId, options?: DatasetOptions): DatasetSummary {
   };
 }
 
-function mockPoint(epoch:number,task:TaskId):MetricPoint { const train=1.4*Math.exp(-epoch/5)+.08+Math.sin(epoch)*.02; const val=1.5*Math.exp(-epoch/5.6)+.1+Math.sin(epoch*.7)*.025; const high=task.includes("classification")||task.includes("segmentation"); return {epoch,trainLoss:+train.toFixed(4),valLoss:+val.toFixed(4),metric:+(high?(1-val/1.8):val*.65).toFixed(4)} }
+function mockPoint(epoch:number,task:TaskId):MetricPoint { const train=1.4*Math.exp(-epoch/5)+.08+Math.sin(epoch)*.02; const val=1.5*Math.exp(-epoch/5.6)+.1+Math.sin(epoch*.7)*.025; const high=task.includes("classification")||task.includes("segmentation")||task==="image.localization"||task==="image.detection"; return {epoch,trainLoss:+train.toFixed(4),valLoss:+val.toFixed(4),metric:+(high?(1-val/1.8):val*.65).toFixed(4)} }

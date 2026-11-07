@@ -1,4 +1,4 @@
-import type { Architecture, DatasetSummary, ModelNode, ModelEdge, TaskId } from "./types";
+import type { Architecture, DatasetSummary, ModelNode, ModelEdge, PretrainedModelSpec, TaskId } from "./types";
 import type { ArchitectureDef, TaskDef, BlockDef } from "./types";
 
 export const ARCHITECTURES: Record<Architecture, ArchitectureDef> = {
@@ -7,9 +7,9 @@ export const ARCHITECTURES: Record<Architecture, ArchitectureDef> = {
   lstm: { name: "Recurrent network", description: "RNN, GRU and LSTM for temporal dependencies.", accent: "#fbbf24", tasks: ["sequence.classification", "sequence.regression", "sequence.forecast"] },
   transformer: { name: "Transformer encoder", description: "Bidirectional attention for series and text classification.", accent: "#fb7185", tasks: ["sequence.classification", "sequence.regression", "sequence.forecast", "text.classification"] },
   transformer_causal: { name: "Causal transformer", description: "Masked attention for predicting and generating tokens.", accent: "#f97316", tasks: ["text.language_model"] },
-  cnn: { name: "CNN 2D", description: "Spatial filters for images.", accent: "#4ade80", tasks: ["image.classification", "image.regression"] },
+  cnn: { name: "CNN 2D", description: "Spatial filters and task-specific image heads.", accent: "#4ade80", tasks: ["image.classification", "image.regression", "image.localization", "image.detection", "image.translation"] },
   vit: { name: "Visual transformer (ViT)", description: "Converts images into patches and applies attention.", accent: "#f472b6", tasks: ["image.classification", "image.regression"] },
-  unet: { name: "Visual encoder-decoder", description: "U-Net with editable skips for segmentation.", accent: "#a78bfa", tasks: ["image.segmentation.binary", "image.segmentation.multiclass"] },
+  unet: { name: "Visual encoder-decoder", description: "U-Net with editable skips for dense image prediction.", accent: "#a78bfa", tasks: ["image.segmentation.binary", "image.segmentation.multiclass", "image.translation"] },
   autoencoder: { name: "Autoencoder", description: "Encodes a latent space and reconstructs the input.", accent: "#60a5fa", tasks: ["tabular.reconstruction", "image.reconstruction"] }
 };
 
@@ -20,6 +20,9 @@ export const TASKS: Record<TaskId, TaskDef> = {
   "image.classification": { name: "Image classification", nameKey: "catalog:tasks.image.classification.name", category: "Vision", categoryKey: "catalog:tasks.image.classification.category", modality: "Image", modalityKey: "catalog:tasks.image.classification.modality", input: "Image [C,H,W]", inputKey: "catalog:tasks.image.classification.input", output: "Class and probabilities [K]", outputKey: "catalog:tasks.image.classification.output", metric: "Accuracy", metricKey: "catalog:tasks.image.classification.metric", format: "Folders per class", formatKey: "catalog:tasks.image.classification.format" },
   "image.regression": { name: "Visual regression", nameKey: "catalog:tasks.image.regression.name", category: "Vision", categoryKey: "catalog:tasks.image.regression.category", modality: "Image", modalityKey: "catalog:tasks.image.regression.modality", input: "Image [C,H,W]", inputKey: "catalog:tasks.image.regression.input", output: "Value(s) [Q]", outputKey: "catalog:tasks.image.regression.output", metric: "MSE", metricKey: "catalog:tasks.image.regression.metric", format: "Images + labels.csv", formatKey: "catalog:tasks.image.regression.format" },
   "image.reconstruction": { name: "Image reconstruction", nameKey: "catalog:tasks.image.reconstruction.name", category: "Reconstruction", categoryKey: "catalog:tasks.image.reconstruction.category", modality: "Image", modalityKey: "catalog:tasks.image.reconstruction.modality", input: "Image [C,H,W]", inputKey: "catalog:tasks.image.reconstruction.input", output: "Image [C,H,W]", outputKey: "catalog:tasks.image.reconstruction.output", metric: "MSE", metricKey: "catalog:tasks.image.reconstruction.metric", format: "Folder with images", formatKey: "catalog:tasks.image.reconstruction.format" },
+  "image.localization": { name: "Single box localization", nameKey: "catalog:tasks.image.localization.name", category: "Vision", categoryKey: "catalog:tasks.image.localization.category", modality: "Image + one box", modalityKey: "catalog:tasks.image.localization.modality", input: "Image [C,H,W]", inputKey: "catalog:tasks.image.localization.input", output: "Normalized box [x1,y1,x2,y2]", outputKey: "catalog:tasks.image.localization.output", metric: "IoU", metricKey: "catalog:tasks.image.localization.metric", format: "Images + labels.csv (filename,xmin,ymin,xmax,ymax)", formatKey: "catalog:tasks.image.localization.format" },
+  "image.detection": { name: "Object detection", nameKey: "catalog:tasks.image.detection.name", category: "Vision", categoryKey: "catalog:tasks.image.detection.category", modality: "Image + boxes", modalityKey: "catalog:tasks.image.detection.modality", input: "Image [C,H,W]", inputKey: "catalog:tasks.image.detection.input", output: "boxes [4,Hg,Wg] + classes [K,Hg,Wg]", outputKey: "catalog:tasks.image.detection.output", metric: "mAP@0.5", metricKey: "catalog:tasks.image.detection.metric", format: "images/ + labels/*.txt + classes.txt", formatKey: "catalog:tasks.image.detection.format" },
+  "image.translation": { name: "Image to image", nameKey: "catalog:tasks.image.translation.name", category: "Vision", categoryKey: "catalog:tasks.image.translation.category", modality: "Paired images", modalityKey: "catalog:tasks.image.translation.modality", input: "Source image [C,H,W]", inputKey: "catalog:tasks.image.translation.input", output: "Target image [Ct,H,W]", outputKey: "catalog:tasks.image.translation.output", metric: "MAE", metricKey: "catalog:tasks.image.translation.metric", format: "inputs/ + targets/ matched by filename", formatKey: "catalog:tasks.image.translation.format" },
   "sequence.classification": { name: "Sequence classification", nameKey: "catalog:tasks.sequence.classification.name", category: "Signals and series", categoryKey: "catalog:tasks.sequence.classification.category", modality: "Sequence", modalityKey: "catalog:tasks.sequence.classification.modality", input: "Series [T,F]", inputKey: "catalog:tasks.sequence.classification.input", output: "Class [K]", outputKey: "catalog:tasks.sequence.classification.output", metric: "Accuracy", metricKey: "catalog:tasks.sequence.classification.metric", format: "Long CSV by sequence_id", formatKey: "catalog:tasks.sequence.classification.format" },
   "sequence.regression": { name: "Sequence regression", nameKey: "catalog:tasks.sequence.regression.name", category: "Signals and series", categoryKey: "catalog:tasks.sequence.regression.category", modality: "Sequence", modalityKey: "catalog:tasks.sequence.regression.modality", input: "Series [T,F]", inputKey: "catalog:tasks.sequence.regression.input", output: "Value(s) [Q]", outputKey: "catalog:tasks.sequence.regression.output", metric: "MSE", metricKey: "catalog:tasks.sequence.regression.metric", format: "Long CSV + target per sequence", formatKey: "catalog:tasks.sequence.regression.format" },
   "sequence.forecast": { name: "Temporal forecast", nameKey: "catalog:tasks.sequence.forecast.name", category: "Signals and series", categoryKey: "catalog:tasks.sequence.forecast.category", modality: "Sequence", modalityKey: "catalog:tasks.sequence.forecast.modality", input: "Context [T,F]", inputKey: "catalog:tasks.sequence.forecast.input", output: "Horizon [P,Q]", outputKey: "catalog:tasks.sequence.forecast.output", metric: "MSE", metricKey: "catalog:tasks.sequence.forecast.metric", format: "Temporal CSV with series", formatKey: "catalog:tasks.sequence.forecast.format" },
@@ -59,6 +62,7 @@ export const BLOCKS: Record<Architecture, BlockDef[]> = {
     { type: "reshape", label: "Reshape", labelKey: "catalog:blocks.reshape.label", category: "Shape", categoryKey: "catalog:blockCategories.Shape", defaults: { shape: "8,1" } }
   ],
   cnn: [
+    { type: "multi_scale_cnn", label: "Multi scale CNN", labelKey: "catalog:blocks.multi_scale_cnn.label", category: "Convolution", categoryKey: "catalog:blockCategories.Convolution", defaults: { base_channels: 32, stages: 3 } },
     { type: "conv2d", label: "Conv 2D", labelKey: "catalog:blocks.conv2d.label", category: "Convolution", categoryKey: "catalog:blockCategories.Convolution", defaults: { out_channels: 32, kernel_size: 3, stride: 1, padding: 1 } },
     { type: "maxpool2d", label: "MaxPool 2D", labelKey: "catalog:blocks.maxpool2d.label", category: "Pooling", categoryKey: "catalog:blockCategories.Pooling", defaults: { kernel_size: 2, stride: 2 } },
     { type: "avgpool2d", label: "AvgPool 2D", labelKey: "catalog:blocks.avgpool2d.label", category: "Pooling", categoryKey: "catalog:blockCategories.Pooling", defaults: { kernel_size: 2, stride: 2 } },
@@ -166,8 +170,53 @@ export const BLOCK_INFO: Record<string, { description: string; usage: string; di
   layernorm: { description: "Normalizes per sample over the last dimension.", usage: "Suitable for sequences and small batches.", diagram: ["[…,F]", "LayerNorm", "[…,F]"] },
 };
 
-const node = (id: string, blockType: string, label: string, x: number, y: number, properties: Record<string, string | number | boolean> = {}): ModelNode => ({ id, type: "modelNode", position: { x, y }, data: { blockType, label, category: "Model", properties } });
+const node = (id: string, blockType: string, label: string, x: number, y: number, properties: Record<string, string | number | boolean> = {}): ModelNode => {
+  const structured=blockType==="hf_token_processor";
+  return { id, type:"modelNode", position:{x,y}, data:{blockType,label,category:"Model",properties,inputs:blockType==="input"?[]:[{name:"input",dtype:structured?"int64":"float32",shape:"dynamic"}],outputs:blockType==="output"?[]:[{name:"output",dtype:structured?"structured":blockType.includes("token")?"int64":"float32",shape:"dynamic",...(structured?{fields:["input_ids","attention_mask","token_type_ids"]}:{})}]}};
+};
+
+function pretrainedTemplateRaw(spec: PretrainedModelSpec, task: TaskId): {nodes:ModelNode[];edges:ModelEdge[]} {
+  const outputs=task.endsWith("classification")?3:task==="image.localization"?4:1;
+  const compound=(value:ModelNode,stages:string[])=>({...value,data:{...value.data,compound:true,expanded:false,stages}});
+  if(spec.adapter==="text_backbone") return sequential([
+    node("input","input","Texto",20,160),
+    node("processor","hf_token_processor",`${spec.processor} · fijado`,210,160,{locked:true,repo_id:spec.repoId,revision:spec.revision,max_length:128}),
+    compound(node("backbone","hf_text_backbone",`${spec.name} · pretrained`,455,160,{repo_id:spec.repoId,revision:spec.revision,frozen:true,trainable_stages:0,trust_remote_code:false,implementation:spec.implementation}),["Token embeddings","Attention blocks","Final normalization","Sequence pooling"]),
+    node("head","linear",`Nueva cabeza · ${outputs}`,735,160,{out_features:outputs,bias:true}),
+    node("output","output","Resultado",970,160)
+  ]);
+  if(spec.adapter==="causal_lm") return sequential([
+    node("input","input","Texto",20,160),
+    node("processor","hf_token_processor",`${spec.processor} · fijado`,230,160,{locked:true,repo_id:spec.repoId,revision:spec.revision,max_length:128}),
+    compound(node("causal","hf_causal_lm",`${spec.name} · pretrained`,500,160,{repo_id:spec.repoId,revision:spec.revision,trust_remote_code:false,implementation:spec.implementation}),["Token embeddings","Causal attention blocks","Final normalization","Vocabulary head"]),
+    node("output","output","Logits por token",790,160)
+  ]);
+  if(task==="image.detection") {
+    const nodes=[node("input","input","Imagen",20,245),node("processor","hf_image_processor",`${spec.processor} · fijado`,215,245,{locked:true,repo_id:spec.repoId,revision:spec.revision}),compound(node("backbone","hf_vision_backbone",`${spec.name} · mapas espaciales`,465,245,{repo_id:spec.repoId,revision:spec.revision,frozen:true,trainable_stages:0,trust_remote_code:false,implementation:spec.implementation,expose_feature_maps:true,feature_count:3}),["Mapas espaciales reales · map_0…map_2"]),node("box_head","conv2d","Box head · 4",755,130,{out_channels:4,kernel_size:1,padding:0}),node("class_head","conv2d","Class head · K",755,360,{out_channels:3,kernel_size:1,padding:0}),node("boxes","output","boxes",965,130,{output_name:"boxes"}),node("classes","output","classes",965,360,{output_name:"classes"})];
+    return {nodes,edges:[{id:"input-processor",source:"input",target:"processor"},{id:"processor-backbone",source:"processor",target:"backbone"},{id:"backbone-box",source:"backbone",sourceHandle:"map_2",target:"box_head"},{id:"backbone-classes",source:"backbone",sourceHandle:"map_2",target:"class_head"},{id:"box-output",source:"box_head",target:"boxes"},{id:"class-output",source:"class_head",target:"classes"}]};
+  }
+  if(task==="image.localization") {
+    const nodes=[node("input","input","Imagen",20,160),node("processor","hf_image_processor",`${spec.processor} · fijado`,210,160,{locked:true,repo_id:spec.repoId,revision:spec.revision}),compound(node("backbone","hf_vision_backbone",`${spec.name} · mapas espaciales`,465,160,{repo_id:spec.repoId,revision:spec.revision,frozen:true,trainable_stages:0,trust_remote_code:false,implementation:spec.implementation,expose_feature_maps:true,feature_count:3}),["Mapas espaciales reales · map_0…map_2"]),node("pool","adaptiveavgpool2d","Global average",735,160,{output_size:1}),node("flat","flatten","Flatten",925,160),node("head","linear","Caja · 4",1095,160,{out_features:4,bias:true}),node("output","output","Caja normalizada",1285,160)];
+    return {nodes,edges:[{id:"input-processor",source:"input",target:"processor"},{id:"processor-backbone",source:"processor",target:"backbone"},{id:"backbone-pool",source:"backbone",sourceHandle:"map_2",target:"pool"},{id:"pool-flat",source:"pool",target:"flat"},{id:"flat-head",source:"flat",target:"head"},{id:"head-output",source:"head",target:"output"}]};
+  }
+  return sequential([
+    node("input","input","Imagen",20,160),
+    node("processor","hf_image_processor",`${spec.processor} · fijado`,210,160,{locked:true,repo_id:spec.repoId,revision:spec.revision}),
+    compound(node("backbone","hf_vision_backbone",`${spec.name} · pretrained`,455,160,{repo_id:spec.repoId,revision:spec.revision,frozen:true,trainable_stages:0,trust_remote_code:false,implementation:spec.implementation}),spec.architecture==="vit"?["Patch embedding","Position embeddings","Encoder blocks","Final normalization"]:["Stem","Stage 1","Stage 2","Stage 3","Stage 4","Global pooling"]),
+    node("head","linear",`Nueva cabeza · ${outputs}`,735,160,{out_features:outputs,bias:true}),
+    node("output","output","Resultado",970,160)
+  ]);
+}
 const edge = (source: string, target: string, id = `${source}-${target}`): ModelEdge => ({ id, source, target, type: "smoothstep", animated: false });
+
+// Keep branches in their original columns while leaving room for full-width cards.
+function spaceGraph<T extends {nodes:ModelNode[]}>(graph:T):T {
+  const columns=[...new Set(graph.nodes.map(item=>item.position.x))].sort((a,b)=>a-b);
+  const spaced=new Map<number,number>();
+  columns.forEach((x,index)=>spaced.set(x,index ? Math.max(x,spaced.get(columns[index-1])!+230) : x));
+  return {...graph,nodes:graph.nodes.map(item=>({...item,position:{...item.position,x:spaced.get(item.position.x)!}}))};
+}
+export function pretrainedTemplate(spec: PretrainedModelSpec, task: TaskId) { return spaceGraph(pretrainedTemplateRaw(spec,task)); }
 
 export type BuiltinPreset = {
   id: string;
@@ -180,6 +229,11 @@ export type BuiltinPreset = {
 };
 
 const sequential = (nodes: ModelNode[]) => ({ nodes, edges: nodes.slice(0, -1).map((item, index) => edge(item.id, nodes[index + 1].id)) });
+function detectorPreset() {
+  const nodes=[node("input","input","Image [C,H,W]",20,245),node("stem","conv2d","Stem · 32",205,245,{out_channels:32,kernel_size:3,padding:1}),node("relu1","relu","ReLU",385,245),node("down1","maxpool2d","Downsample ×2",555,245,{kernel_size:2,stride:2}),node("features1","conv2d","Features · 64",730,245,{out_channels:64,kernel_size:3,padding:1}),node("relu2","relu","ReLU",910,245),node("down2","maxpool2d","Downsample ×2",1080,245,{kernel_size:2,stride:2}),node("features2","conv2d","Features · 96",1255,245,{out_channels:96,kernel_size:3,padding:1}),node("relu3","relu","ReLU",1435,245),node("down3","maxpool2d","Grid ×8",1605,245,{kernel_size:2,stride:2}),node("boxes_head","conv2d","Box head · 4",1785,130,{out_channels:4,kernel_size:1,padding:0}),node("classes_head","conv2d","Class head · K",1785,360,{out_channels:3,kernel_size:1,padding:0}),node("boxes","output","boxes",2010,130,{output_name:"boxes"}),node("classes","output","classes",2010,360,{output_name:"classes"})];
+  const path=["input","stem","relu1","down1","features1","relu2","down2","features2","relu3","down3"];
+  return {nodes,edges:path.slice(0,-1).map((source,index)=>edge(source,path[index+1])).concat([edge("down3","boxes_head"),edge("down3","classes_head"),edge("boxes_head","boxes"),edge("classes_head","classes")])};
+}
 const outputClasses = (task: TaskId) => ({
   "tabular.classification": 3,
   "tabular.regression": 1,
@@ -194,9 +248,12 @@ const outputClasses = (task: TaskId) => ({
   "text.language_model": 4096,
   "image.segmentation.binary": 1,
   "image.segmentation.multiclass": 5,
+  "image.localization": 4,
+  "image.detection": 3,
+  "image.translation": 3,
 }[task]);
 
-export function templateFor(architecture: Architecture, task: TaskId): { nodes: ModelNode[]; edges: ModelEdge[] } {
+function templateForRaw(architecture: Architecture, task: TaskId): { nodes: ModelNode[]; edges: ModelEdge[] } {
   const classes = outputClasses(task);
   if (architecture === "mlp") {
     const nodes = [node("input", "input", "Tabular data", 30, 160), node("dense1", "linear", "Dense 64", 250, 160, { out_features: 64 }), node("relu1", "relu", "ReLU", 465, 160), node("drop1", "dropout", "Dropout", 650, 160, { p: 0.1 }), node("head", "linear", `Output ${classes}`, 850, 160, { out_features: classes }), node("output", "output", "Result", 1050, 160)];
@@ -207,7 +264,9 @@ export function templateFor(architecture: Architecture, task: TaskId): { nodes: 
     return sequential([node("input", "input", "Sequence [T,F]", 20, 160), node("layout", "permute", "Permute to [F,T]", 205, 160, { dims: "2,1" }), node("conv1", "conv1d", "Conv 1D · 32", 400, 160, { out_channels: 32, kernel_size: 5, padding: 2 }), node("relu1", "relu", "ReLU", 585, 160), node("pool1", "maxpool1d", "MaxPool 2", 735, 160, { kernel_size: 2, stride: 2 }), node("conv2", "conv1d", "Conv 1D · 64", 900, 160, { out_channels: 64, kernel_size: 3, padding: 1 }), node("relu2", "relu", "ReLU", 1085, 160), node("pool", "adaptiveavgpool1d", "Temporal summary · 4", 1245, 160, { output_size: 4 }), node("flat", "flatten", "Flatten", 1440, 160), node("head", "linear", `Output ${classes}`, 1595, 160, { out_features: classes }), ...(forecast ? [node("reshape", "reshape", "Horizon 8×1", 1780, 160, { shape: "8,1" })] : []), node("output", "output", "Result", forecast ? 1970 : 1780, 160)]);
   }
   if (architecture === "cnn") {
-    const regression = task === "image.regression";
+    if(task==="image.detection") return detectorPreset();
+    if(task==="image.translation") return sequential([node("input","input","Source image",20,160),node("conv1","conv2d","Spatial Conv 32",210,160,{out_channels:32,kernel_size:3,padding:1}),node("relu","relu","ReLU",410,160),node("conv2","conv2d","Target channels",600,160,{out_channels:3,kernel_size:3,padding:1}),node("output","output","Translated image",800,160)]);
+    const regression = task === "image.regression" || task === "image.localization";
     const nodes = [node("input", "input", "Image", 20, 160), node("conv1", "conv2d", "Conv 16 · 3×3", 180, 160, { out_channels: 16, kernel_size: 3, padding: 1 }), node("norm1", "batchnorm2d", "BatchNorm", 345, 160), node("relu1", "relu", "ReLU", 505, 160), node("pool1", "maxpool2d", "MaxPool 2×2", 650, 160, { kernel_size: 2, stride: 2 }), node("conv2", "conv2d", "Conv 32 · 3×3", 815, 160, { out_channels: 32, kernel_size: 3, padding: 1 }), node("norm2", "batchnorm2d", "BatchNorm", 980, 160), node("relu2", "relu", "ReLU", 1140, 160), node("pool2", "maxpool2d", "MaxPool 2×2", 1285, 160, { kernel_size: 2, stride: 2 }), ...(regression ? [node("conv3", "conv2d", "Conv 64 · 3×3", 1450, 160, { out_channels: 64, kernel_size: 3, padding: 1 }), node("relu3", "relu", "ReLU", 1620, 160)] : []), node("gap", "adaptiveavgpool2d", "Global AvgPool", regression ? 1770 : 1450, 160, { output_size: 1 }), node("flat", "flatten", "Flatten", regression ? 1960 : 1640, 160), node("head", "linear", `Output ${classes}`, regression ? 2115 : 1795, 160, { out_features: classes }), node("output", "output", "Result", regression ? 2295 : 1975, 160)];
     return { nodes, edges: nodes.slice(0, -1).map((n, i) => edge(n.id, nodes[i + 1].id)) };
   }
@@ -228,14 +287,29 @@ export function templateFor(architecture: Architecture, task: TaskId): { nodes: 
     if (task === "tabular.reconstruction") return sequential([node("input", "input", "Data [F]", 20, 160), node("enc", "linear", "Encoder 32", 220, 160, { out_features: 32 }), node("relu1", "relu", "ReLU", 405, 160), node("latent", "linear", "Latent 8", 570, 160, { out_features: 8 }), node("relu2", "relu", "ReLU", 750, 160), node("dec", "linear", "Decoder 32", 910, 160, { out_features: 32 }), node("relu3", "relu", "ReLU", 1100, 160), node("head", "linear", "Reconstruction 25", 1260, 160, { out_features: 25 }), node("output", "output", "Reconstruction", 1470, 160)]);
     return sequential([node("input", "input", "Image", 20, 160), node("enc", "conv2d", "Encoder 16", 210, 160, { out_channels: 16, kernel_size: 4, stride: 2, padding: 1 }), node("relu1", "relu", "ReLU", 400, 160), node("latent", "conv2d", "Latent 32", 565, 160, { out_channels: 32, kernel_size: 4, stride: 2, padding: 1 }), node("relu2", "relu", "ReLU", 755, 160), node("dec1", "convtranspose2d", "Decoder 16", 920, 160, { out_channels: 16, kernel_size: 4, stride: 2, padding: 1 }), node("relu3", "relu", "ReLU", 1120, 160), node("head", "convtranspose2d", "Reconstruction grayscale", 1290, 160, { out_channels: 1, kernel_size: 4, stride: 2, padding: 1 }), node("sigmoid", "sigmoid", "Sigmoid", 1510, 160), node("output", "output", "Reconstruction", 1680, 160)]);
   }
-  const nodes = [node("input", "input", "Image", 20, 250), node("enc1", "conv2d", "Encoder 16", 190, 90, { out_channels: 16, kernel_size: 3, padding: 1 }), node("relu1", "relu", "ReLU", 355, 90), node("pool1", "maxpool2d", "MaxPool", 525, 190, { kernel_size: 2, stride: 2 }), node("enc2", "conv2d", "Encoder 32", 690, 120, { out_channels: 32, kernel_size: 3, padding: 1 }), node("relu2", "relu", "ReLU", 855, 120), node("pool2", "maxpool2d", "MaxPool", 1020, 250, { kernel_size: 2, stride: 2 }), node("bottleneck", "conv2d", "Bottleneck 64", 1190, 250, { out_channels: 64, kernel_size: 3, padding: 1 }), node("reluB", "relu", "ReLU", 1360, 250), node("up2", "convtranspose2d", "Upsample 32", 1525, 250, { out_channels: 32, kernel_size: 2, stride: 2 }), node("concat2", "concat", "Concat skip 2", 1700, 180, { axis: 1 }), node("dec2", "conv2d", "Decoder 32", 1870, 180, { out_channels: 32, kernel_size: 3, padding: 1 }), node("reluD2", "relu", "ReLU", 2040, 180), node("up1", "convtranspose2d", "Upsample 16", 2205, 180, { out_channels: 16, kernel_size: 2, stride: 2 }), node("concat1", "concat", "Concat skip 1", 2380, 100, { axis: 1 }), node("dec1", "conv2d", "Decoder 16", 2550, 100, { out_channels: 16, kernel_size: 3, padding: 1 }), node("reluD1", "relu", "ReLU", 2720, 100), node("head", "conv2d", `Mask ${classes}`, 2885, 100, { out_channels: classes, kernel_size: 1, padding: 0 }), node("output", "output", "Mask", 3060, 100)];
+  const nodes = [node("input", "input", "Image", 20, 250), node("enc1", "conv2d", "Encoder 16", 190, 90, { out_channels: 16, kernel_size: 3, padding: 1 }), node("relu1", "relu", "ReLU", 355, 90), node("pool1", "maxpool2d", "MaxPool", 525, 190, { kernel_size: 2, stride: 2 }), node("enc2", "conv2d", "Encoder 32", 690, 120, { out_channels: 32, kernel_size: 3, padding: 1 }), node("relu2", "relu", "ReLU", 855, 120), node("pool2", "maxpool2d", "MaxPool", 1020, 250, { kernel_size: 2, stride: 2 }), node("bottleneck", "conv2d", "Bottleneck 64", 1190, 250, { out_channels: 64, kernel_size: 3, padding: 1 }), node("reluB", "relu", "ReLU", 1360, 250), node("up2", "convtranspose2d", "Upsample 32", 1525, 250, { out_channels: 32, kernel_size: 2, stride: 2 }), node("concat2", "concat", "Concat skip 2", 1700, 180, { axis: 1 }), node("dec2", "conv2d", "Decoder 32", 1870, 180, { out_channels: 32, kernel_size: 3, padding: 1 }), node("reluD2", "relu", "ReLU", 2040, 180), node("up1", "convtranspose2d", "Upsample 16", 2205, 180, { out_channels: 16, kernel_size: 2, stride: 2 }), node("concat1", "concat", "Concat skip 1", 2380, 100, { axis: 1 }), node("dec1", "conv2d", "Decoder 16", 2550, 100, { out_channels: 16, kernel_size: 3, padding: 1 }), node("reluD1", "relu", "ReLU", 2720, 100), node("head", "conv2d", `Mask ${classes}`, 2885, 100, { out_channels: classes, kernel_size: 1, padding: 0 }), node("output", "output", task==="image.translation"?"Translated image":"Mask", 3060, 100)];
   return { nodes, edges: [edge("input", "enc1"), edge("enc1", "relu1"), edge("relu1", "pool1"), edge("pool1", "enc2"), edge("enc2", "relu2"), edge("relu2", "pool2"), edge("pool2", "bottleneck"), edge("bottleneck", "reluB"), edge("reluB", "up2"), edge("up2", "concat2"), edge("relu2", "concat2", "skip2"), edge("concat2", "dec2"), edge("dec2", "reluD2"), edge("reluD2", "up1"), edge("up1", "concat1"), edge("relu1", "concat1", "skip1"), edge("concat1", "dec1"), edge("dec1", "reluD1"), edge("reluD1", "head"), edge("head", "output")] };
+}
+
+export function templateFor(architecture: Architecture, task: TaskId) {
+  const graph=templateForRaw(architecture,task);
+  return ["cnn","cnn1d","unet"].includes(architecture) ? spaceGraph(graph) : graph;
 }
 
 /** Adapts a starter graph to the concrete dataset contract without rebuilding a user's graph. */
 export function syncOutputContract(nodes: ModelNode[], edges: ModelEdge[], dataset: DatasetSummary | null): ModelNode[] {
   if (!dataset) return nodes;
   const outputIds = new Set(nodes.filter(item => item.data.blockType === "output").map(item => item.id));
+  // A graph with named parallel outputs is authored deliberately; a dataset's
+  // single legacy output contract must never resize every branch as if it were
+  // the same head. Only recipes with explicit output bindings may adapt it.
+  if (outputIds.size > 1) {
+    const classOutput=nodes.find(item=>item.data.blockType==="output"&&item.data.properties.output_name==="classes");
+    if(!classOutput||!dataset.classes?.length) return nodes;
+    const headIds=new Set<string>();const frontier=edges.filter(item=>item.target===classOutput.id).map(item=>item.source);const byId=new Map(nodes.map(item=>[item.id,item]));
+    while(frontier.length){const id=frontier.shift()!;const block=byId.get(id)?.data.blockType;if(block==="conv2d"){headIds.add(id);break}frontier.push(...edges.filter(item=>item.target===id).map(item=>item.source))}
+    return nodes.map(item=>headIds.has(item.id)?{...item,data:{...item.data,label:`Class head · ${dataset.classes!.length}`,properties:{...item.data.properties,out_channels:dataset.classes!.length}}}:item);
+  }
   const byId = new Map(nodes.map(item => [item.id, item]));
   const headIds = new Set<string>();
   const outputPathIds = new Set<string>();
@@ -266,7 +340,9 @@ export function syncOutputContract(nodes: ModelNode[], edges: ModelEdge[], datas
     const required = item.data.blockType === "linear" && dataset.outputShape.length === 2
       ? (dataset.inputShape.length === 1 ? dataset.outputShape.at(-1)! : dataset.outputShape.reduce((left, right) => left * right, 1))
       : dataset.outputShape[0];
-    return { ...item, data: { ...item.data, label: `${item.data.label.split(" ·")[0]} · ${required}`, properties: { ...item.data.properties, [key]: required } } };
+    const baseLabel = item.data.label.split(" ·")[0].replace(/\s+\d+$/, "");
+    const label = /^Output\b/.test(baseLabel) ? `Output ${required}` : `${baseLabel} · ${required}`;
+    return { ...item, data: { ...item.data, label, properties: { ...item.data.properties, [key]: required } } };
   });
 }
 
@@ -295,7 +371,7 @@ function residualCnnPreset(task: TaskId) {
 }
 
 /** Presets bundled with the app. Each graph is compatible with the selected task contract. */
-export function presetsFor(architecture: Architecture, task: TaskId): BuiltinPreset[] {
+function presetsForRaw(architecture: Architecture, task: TaskId): BuiltinPreset[] {
   const classes = outputClasses(task);
   const base: BuiltinPreset = { id: "base", name: `${ARCHITECTURES[architecture].name} · Recommended base`, description: ARCHITECTURES[architecture].description, benefit: "Short validated structure to start with", tradeoff: "Limited capacity for complex problems", ...templateFor(architecture, task) };
 
@@ -304,6 +380,8 @@ export function presetsFor(architecture: Architecture, task: TaskId): BuiltinPre
     { id: "compact", name: "MLP · Compact", description: "A small hidden layer to iterate quickly or work with little data.", benefit: "Fast to train and easy to interpret", tradeoff: "Lower representation capacity", ...sequential([node("input", "input", "Tabular data", 30, 160), node("dense", "linear", "Dense 32", 250, 160, { out_features: 32 }), node("relu", "relu", "ReLU", 465, 160), node("head", "linear", `Output ${classes}`, 650, 160, { out_features: classes }), node("output", "output", "Result", 850, 160)]) }
   ];
 
+  if (architecture === "cnn" && task==="image.detection") return [base,{id:"detector-one-scale",name:"Detector · Una escala",description:"Dos cabezas convolucionales enlazadas a la misma cuadrícula: cajas y clases. La cuadrícula se infiere al validar el grafo.",benefit:"Supervisión separada y resultado decodificado con NMS",tradeoff:"Una caja por celda; colisiones de centros se reportan como error",...detectorPreset()}];
+  if (architecture === "cnn" && task==="image.translation") return [base,{id:"denoiser",name:"CNN · Imagen a imagen",description:"Dos convoluciones densas espacialmente para predicción emparejada de imagen.",benefit:"Conserva resolución y admite canales de salida distintos",tradeoff:"Menos capacidad que un encoder-decoder con skips",...templateFor(architecture,task)}];
   if (architecture === "cnn") return [base,
     { id: "standard", name: "CNN · Standard classifier", description: "Two Conv–BatchNorm–ReLU blocks with pooling and global average. Good starting point for real images.", benefit: "Balances capacity, stability and moderate size", tradeoff: "Requires more data than the base", ...sequential([node("input", "input", "Image", 20, 160), node("conv1", "conv2d", "Conv 32 · 3×3", 180, 160, { out_channels: 32, kernel_size: 3, padding: 1 }), node("norm1", "batchnorm2d", "BatchNorm 2D", 365, 160), node("relu1", "relu", "ReLU", 545, 160), node("pool1", "maxpool2d", "MaxPool 2×2", 705, 160, { kernel_size: 2, stride: 2 }), node("conv2", "conv2d", "Conv 64 · 3×3", 880, 160, { out_channels: 64, kernel_size: 3, padding: 1 }), node("norm2", "batchnorm2d", "BatchNorm 2D", 1065, 160), node("relu2", "relu", "ReLU", 1245, 160), node("pool2", "maxpool2d", "MaxPool 2×2", 1405, 160, { kernel_size: 2, stride: 2 }), node("gap", "adaptiveavgpool2d", "Global AvgPool", 1580, 160, { output_size: 1 }), node("flat", "flatten", "Flatten", 1780, 160), node("head", "linear", `Output ${classes}`, 1940, 160, { out_features: classes }), node("output", "output", "Result", 2120, 160)]) },
     { id: "deep_regularized", name: "CNN · Deep with regularization", description: "Four convolutions, two spatial scales and 2D Dropout for more demanding visual classification.", benefit: "Detects more complex visual patterns", tradeoff: "More parameters and higher overfitting risk", ...sequential([node("input", "input", "Image", 20, 160), node("conv1", "conv2d", "Conv 32 · 3×3", 180, 160, { out_channels: 32, kernel_size: 3, padding: 1 }), node("relu1", "relu", "ReLU", 365, 160), node("conv2", "conv2d", "Conv 32 · 3×3", 520, 160, { out_channels: 32, kernel_size: 3, padding: 1 }), node("relu2", "relu", "ReLU", 705, 160), node("pool1", "maxpool2d", "MaxPool 2×2", 860, 160, { kernel_size: 2, stride: 2 }), node("drop1", "dropout2d", "Dropout 2D 0.15", 1045, 160, { p: 0.15 }), node("conv3", "conv2d", "Conv 64 · 3×3", 1225, 160, { out_channels: 64, kernel_size: 3, padding: 1 }), node("relu3", "relu", "ReLU", 1410, 160), node("conv4", "conv2d", "Conv 64 · 3×3", 1565, 160, { out_channels: 64, kernel_size: 3, padding: 1 }), node("relu4", "relu", "ReLU", 1750, 160), node("pool2", "maxpool2d", "MaxPool 2×2", 1905, 160, { kernel_size: 2, stride: 2 }), node("gap", "adaptiveavgpool2d", "Global AvgPool", 2080, 160, { output_size: 1 }), node("flat", "flatten", "Flatten", 2280, 160), node("drop2", "dropout", "Dropout 0.30", 2430, 160, { p: 0.3 }), node("head", "linear", `Output ${classes}`, 2600, 160, { out_features: classes }), node("output", "output", "Result", 2780, 160)]) },
@@ -351,4 +429,9 @@ export function presetsFor(architecture: Architecture, task: TaskId): BuiltinPre
     { id: "light", name: "U-Net · Light", description: "Compact encoder-decoder to quickly try masks and segmentation formats.", benefit: "Consumes less memory", tradeoff: "Loses detail in complex scenes", ...unetPreset(task, 8) },
     { id: "regularized_unet", name: "U-Net · Normalized", description: "Adds BatchNorm, activation and Dropout at the bottleneck for more stable segmentation.", benefit: "Better generalization on varied datasets", tradeoff: "Trains slower", ...unetPreset(task, 24, true) }
   ];
+}
+
+export function presetsFor(architecture: Architecture, task: TaskId): BuiltinPreset[] {
+  const presets=presetsForRaw(architecture,task);
+  return ["cnn","cnn1d","unet"].includes(architecture) ? presets.map(spaceGraph) : presets;
 }

@@ -69,16 +69,58 @@ def open_project(path: str) -> dict:
     return value
 
 
+def list_projects() -> list[dict]:
+    root = workspace_root() / "projects"
+    if not root.is_dir():
+        return []
+    projects = []
+    for manifest_path in root.glob("*/project.json"):
+        try:
+            value = json.loads(manifest_path.read_text(encoding="utf-8"))
+            if value.get("schema_version") != 1 or not value.get("id"):
+                continue
+            value["path"] = str(manifest_path.parent)
+            value["createdAt"] = value.get("created_at", value.get("createdAt"))
+            value["updatedAt"] = value.get("updated_at", value.get("updatedAt"))
+            value["taskId"] = value.get("task_id", value.get("taskId"))
+            state_path = manifest_path.parent / "state.json"
+            if state_path.is_file():
+                value["savedState"] = json.loads(state_path.read_text(encoding="utf-8"))
+            projects.append(value)
+        except (OSError, json.JSONDecodeError):
+            continue
+    return sorted(projects, key=lambda item: item.get("updated_at", item.get("created_at", "")), reverse=True)
+
+
 def save_project_state(project: dict, state: dict) -> dict:
     root = project_dir(project)
     atomic_json(root / "state.json", state)
     manifest_path = root / "project.json"
-    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    if manifest_path.is_file():
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    else:
+        manifest = {**project, "schema_version": 1, "created_at": project.get("createdAt") or iso_now()}
     manifest["updated_at"] = iso_now()
     manifest["architecture"] = state.get("architecture")
     manifest["task_id"] = state.get("task")
     atomic_json(manifest_path, manifest)
     return {"saved": True}
+
+
+def save_model_revision(project: dict, model: dict) -> dict:
+    """Write an immutable, numbered snapshot of a validated model graph."""
+    model_id = str(model.get("id", "")).strip()
+    if not model_id or not re.fullmatch(r"[a-zA-Z0-9_-]+", model_id):
+        raise BackendError("MODEL_INVALID_ID")
+    if not model.get("nodes") or not model.get("edges"):
+        raise BackendError("MODEL_REVISION_EMPTY")
+    root = project_dir(project) / "models" / model_id / "revisions"
+    root.mkdir(parents=True, exist_ok=True)
+    revisions = [int(path.stem) for path in root.glob("*.json") if path.stem.isdigit()]
+    revision = max(revisions, default=0) + 1
+    value = {**model, "revision": revision, "saved_at": iso_now()}
+    atomic_json(root / f"{revision:04d}.json", value)
+    return {"revision": revision, "path": str(root / f"{revision:04d}.json"), "saved_at": value["saved_at"]}
 
 
 def delete_project(project: dict) -> dict:

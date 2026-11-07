@@ -22,7 +22,7 @@
     },
     "cnn": {
       "name": "CNN 2D",
-      "description": "Filtros espaciales para imágenes."
+      "description": "Filtros espaciales y cabezas visuales según la tarea."
     },
     "vit": {
       "name": "Transformer visual (ViT)",
@@ -30,7 +30,7 @@
     },
     "unet": {
       "name": "Encoder–decoder visual",
-      "description": "U-Net con skips editables para segmentación."
+      "description": "U-Net con conexiones skip editables para predicción espacial."
     },
     "autoencoder": {
       "name": "Autoencoder",
@@ -94,6 +94,33 @@
         "output": "Imagen [C,H,W]",
         "metric": "MSE",
         "format": "Carpeta con imágenes"
+      },
+      "localization": {
+        "name": "Localización de una caja",
+        "category": "Visión",
+        "modality": "Imagen + una caja",
+        "input": "Imagen [C,H,W]",
+        "output": "Caja normalizada [x1,y1,x2,y2]",
+        "metric": "IoU",
+        "format": "Imágenes + labels.csv (filename,xmin,ymin,xmax,ymax)"
+      },
+      "detection": {
+        "name": "Detección de objetos",
+        "category": "Visión",
+        "modality": "Imagen + cajas",
+        "input": "Imagen [C,H,W]",
+        "output": "boxes [4,Hg,Wg] + classes [K,Hg,Wg]",
+        "metric": "mAP@0.5",
+        "format": "images/ + labels/*.txt + classes.txt"
+      },
+      "translation": {
+        "name": "Imagen a imagen",
+        "category": "Visión",
+        "modality": "Imágenes emparejadas",
+        "input": "Imagen de entrada [C,H,W]",
+        "output": "Imagen objetivo [Ct,H,W]",
+        "metric": "MAE",
+        "format": "inputs/ + targets/ con nombres coincidentes"
       },
       "segmentation": {
         "binary": {
@@ -187,6 +214,11 @@
     "Attention": "Atención"
   },
   "blocks": {
+    "multi_scale_cnn": {
+      "label": "CNN multiescala",
+      "description": "Ejecuta una pirámide convolucional compacta y expone los mapas reales p2, p3 y p4 como puertos separados.",
+      "usage": "Conecta una salida nombrada a un decoder o cabeza de detección. Los mapas comparten el mismo forward."
+    },
     "linear": {
       "label": "Densa",
       "description": "Transformación aprendible que combina todas las características de entrada.",

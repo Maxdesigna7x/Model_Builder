@@ -405,7 +405,7 @@ def _load_emotion(spec: dict, task_id: str, opts: dict, offline: bool):
     _,_,vocab=_tokenize_texts(text_parts[0],opts)
     x, y, vocab = _tokenize_texts(texts, opts, labels, vocab)
     opts["vocab"] = vocab
-    return x, y, ["Tristeza", "Alegría", "Amor", "Ira", "Miedo", "Sorpresa"], _official_ranges([len(part) for part in text_parts])
+    return x, y, ["Tristeza", "Alegría", "Amor", "Ira", "Miedo", "Sorpresa"], _official_ranges([len(part) for part in text_parts]), "official", texts
 
 
 def _load_wikitext(spec: dict, task_id: str, opts: dict, offline: bool):
@@ -416,7 +416,7 @@ def _load_wikitext(spec: dict, task_id: str, opts: dict, offline: bool):
     texts=[text for part in text_parts for text in part]
     x, _, vocab = _tokenize_texts(texts, opts, vocab=vocab)
     y = x.roll(-1, dims=1); y[:, -1] = 0; opts["vocab"] = vocab
-    return x, y, vocab, _official_ranges([len(part) for part in text_parts])
+    return x, y, vocab, _official_ranges([len(part) for part in text_parts]), "official", texts
 
 
 def _load_segmentation(spec: dict, task_id: str, opts: dict, offline: bool):
@@ -481,5 +481,6 @@ def download(project: dict, task_id: str, dataset_id: str, options: dict | None 
         },
         split_indices_override=official_splits,
         split_source=(loaded[4] if len(loaded)>4 else "official" if official_splits else "generated"),
+        raw_inputs=(loaded[5] if len(loaded)>5 else None),
     )
     return summary

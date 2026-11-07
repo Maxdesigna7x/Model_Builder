@@ -6,8 +6,10 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
+    "test:cnn-reuse": "node scripts/test-cnn-reuse.cjs",
     "preview": "vite preview",
-    "tauri": "tauri"
+    "tauri": "tauri",
+    "capturas": "node scripts/capture-views.mjs"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.8.0",

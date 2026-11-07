@@ -20,6 +20,9 @@ CONTRACTS = {
     "image.classification": ([1, 28, 28], [10], {}),
     "image.regression": ([3, 64, 64], [1], {}),
     "image.reconstruction": ([1, 28, 28], [1, 28, 28], {}),
+    "image.localization": ([3, 64, 64], [4], {}),
+    "image.detection": ([3, 64, 64], [3], {"classes": ["a", "b", "c"]}),
+    "image.translation": ([3, 64, 64], [1, 64, 64], {"targetChannels": 1}),
     "sequence.classification": ([180, 1], [5], {}),
     "sequence.regression": ([48, 25], [1], {}),
     "sequence.forecast": ([48, 25], [8, 1], {}),
@@ -94,8 +97,12 @@ def test_every_first_use_model_matches_its_catalog_dataset(case):
     else:
         sample = torch.randn(1, *case["inputShape"])
     prediction = model(sample)
-    assert list(prediction.shape[1:]) == case["outputShape"]
-    prediction.float().square().mean().backward()
+    if case["task"]=="image.detection":
+        assert {name:list(value.shape[1:]) for name,value in prediction.items()}=={"boxes":[4,8,8],"classes":[3,8,8]}
+        sum(value.float().square().mean() for value in prediction.values()).backward()
+    else:
+        assert list(prediction.shape[1:]) == case["outputShape"]
+        prediction.float().square().mean().backward()
     assert any(parameter.grad is not None for parameter in model.parameters())
 
 
@@ -116,8 +123,12 @@ def test_every_builtin_preset_is_compatible_with_the_default_public_dataset():
             model = build_model(case["architecture"], case["inputShape"], case["outputShape"], case["graph"], case["task"])
             sample = torch.randint(0, 4096, (2, *case["inputShape"])) if case["task"].startswith("text.") else torch.randn(2, *case["inputShape"])
             prediction = model(sample)
-            assert list(prediction.shape[1:]) == case["outputShape"]
-            prediction.float().square().mean().backward()
+            if case["task"]=="image.detection":
+                assert {name:list(value.shape[1:]) for name,value in prediction.items()}=={"boxes":[4,8,8],"classes":[3,8,8]}
+                sum(value.float().square().mean() for value in prediction.values()).backward()
+            else:
+                assert list(prediction.shape[1:]) == case["outputShape"]
+                prediction.float().square().mean().backward()
             assert any(parameter.grad is not None for parameter in model.parameters())
         except Exception as error:
             pytest.fail(f"{case['architecture']} / {case['task']} / {case['preset']}: {error}")
