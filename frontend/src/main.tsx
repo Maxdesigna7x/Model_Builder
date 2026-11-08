@@ -12,8 +12,8 @@ import "./revision14.css";
 import "./revision15.css";
 import "./revision16.css";
 import "./i18n";
-import App from "./App";
+import DesktopSetup from "./DesktopSetup";
 
 createRoot(document.getElementById("root")!).render(
-  <StrictMode><App /></StrictMode>
+  <StrictMode><DesktopSetup /></StrictMode>
 );

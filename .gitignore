@@ -38,3 +38,7 @@ capturas/
 
 # Capturas de revisión aportadas en la conversación
 revisiones/
+
+# Runtime de empaquetado descargado por el script
+src-tauri/runtime/
+src-tauri/gen/

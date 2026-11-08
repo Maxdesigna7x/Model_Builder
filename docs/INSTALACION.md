@@ -27,3 +27,16 @@ En PowerShell:
     .\run-windows.ps1
 
 Los instaladores son repetibles y usan package-lock.json mediante npm ci.
+
+## Compilar la aplicación de escritorio
+
+Para preparar un instalador, instala Node, Rust y uv 0.9.30 en el equipo de compilación. En Linux instala además los paquetes nativos indicados arriba. Ejecuta:
+
+    npm ci
+    python -m pip install uv==0.9.30
+    python scripts/prepare-desktop-runtime.py
+    npm run tauri -- build
+
+En Linux puede usarse `python3` en vez de `python`. Los paquetes generados aparecen en `src-tauri/target/release/bundle/`. Compila Windows en Windows y Linux en Linux. El flujo manual **Desktop builds** de GitHub Actions genera artefactos para ambos sistemas.
+
+La versión distribuida prepara un Python privado al primer inicio y descarga las dependencias; necesita conexión y varios GB libres. La instalación predeterminada usa PyTorch para CPU. Los proyectos se guardan en la carpeta de datos de usuario de ModelBuilder, separados de la aplicación. El modo web y el entorno de desarrollo siguen usando los comandos anteriores. Las aplicaciones aún requieren pruebas en equipos limpios antes de su distribución pública.
