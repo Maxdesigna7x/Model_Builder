@@ -1,7 +1,7 @@
 # Pendientes nuevos: revisión visual y flujo CNN
 
-**Fecha:** 2026-11-07  
-**Origen:** observaciones nuevas del usuario y capturas de `revisiones/` más la captura final adjunta.  
+**Fecha:** 2026-11-07
+**Origen:** observaciones nuevas del usuario y capturas de `revisiones/` más la captura final adjunta.
 **Estado inicial:** todo lo de este documento queda registrado como pendiente antes de implementar esta ronda.
 
 Este documento es un backlog nuevo y separado. No modifica ni combina los planes anteriores de CNN, Kaggle o editor/entrenamiento (`docs/09-plan-cierre-cnn.md`, `docs/11-kaggle.md` y `docs/12-plan-editor-entrenamiento.md`). Las capturas describen problemas observados; las instrucciones operativas están en el mensaje del usuario.

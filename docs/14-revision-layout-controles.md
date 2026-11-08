@@ -1,7 +1,7 @@
 # Revisión de layout y controles
 
-**Fecha:** 2026-11-07  
-**Estado inicial:** lista de trabajo antes de implementar esta revisión.  
+**Fecha:** 2026-11-07
+**Estado inicial:** lista de trabajo antes de implementar esta revisión.
 **Alcance:** frontend existente de ModelBuilder. No editar `prototypes/` ni `node-help/`; son propuestas que se están generando por separado. Conservar todos los cambios locales existentes y no hacer commit ni push.
 
 ## Checklist
