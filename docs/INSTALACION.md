@@ -3,7 +3,7 @@
 ## Requisitos comunes
 
 - Git.
-- Node.js 20 o superior (npm incluido).
+- Node.js 20.19+ en la rama 20, o 22.12+ (se recomienda LTS 22+) (npm incluido).
 - Python 3.11 o superior, con venv y pip.
 - Rust estable y Cargo, necesarios para compilar Tauri.
 - Internet durante la instalación y la primera descarga de datasets.
@@ -18,7 +18,7 @@ El instalador configura WebKitGTK y las librerías nativas de Tauri, crea .venv,
 
 ## Windows 10/11
 
-También se requiere WebView2 Runtime, Visual Studio Build Tools 2022 con “Desktop development with C++” y el SDK de Windows. Instala Rust desde https://rustup.rs, Node.js 20 LTS y Python 3.11+ agregándolos al PATH.
+También se requiere WebView2 Runtime, Visual Studio Build Tools 2022 con “Desktop development with C++” y el SDK de Windows. Instala Rust desde https://rustup.rs, Node.js 22 LTS y Python 3.11+ agregándolos al PATH.
 
 En PowerShell:
 

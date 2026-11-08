@@ -6,7 +6,8 @@ function Require-Command($Name, $Label) {
 }
 Require-Command node 'Node.js'
 $NodeVersion = node -p "process.versions.node"
-if ([version]$NodeVersion -lt [version]'20.0.0') { throw "Node.js 20+ requerido; encontrado $NodeVersion." }
+& node -e 'const [m,n]=process.versions.node.split(".").map(Number);process.exit((m===20&&n>=19)||(m>=22&&(m>22||n>=12))?0:1)'
+if ($LASTEXITCODE -ne 0) { throw "Node.js 20.19+ (rama 20) o 22.12+ requerido; encontrado $NodeVersion." }
 Require-Command npm 'npm'
 $Py = Get-Command py -ErrorAction SilentlyContinue
 if ($Py) { $PyArgs = @() } else { $Py = Get-Command python -ErrorAction SilentlyContinue; $PyArgs = @() }

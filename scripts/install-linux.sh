@@ -3,15 +3,15 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
 fail() { echo "ERROR: $*" >&2; exit 1; }
-version_at_least() { printf '%s\n' "$1" "$2" | sort -V -C; }
+version_at_least() { printf '%s\n' "$2" "$1" | sort -V -C; }
 command -v apt-get >/dev/null || fail "Este instalador requiere Ubuntu/Debian."
 command -v sudo >/dev/null || fail "sudo no está instalado."
 echo "==> Dependencias nativas de Tauri"
 sudo apt-get update
 sudo apt-get install -y build-essential curl file pkg-config libayatana-appindicator3-dev librsvg2-dev libwebkit2gtk-4.1-dev libxdo-dev patchelf wget python3.11-venv
-command -v node >/dev/null || fail "Instala Node.js 20+ antes de continuar."
+command -v node >/dev/null || fail "Instala Node.js 20.19+ (rama 20) o 22.12+ antes de continuar."
 NODE_VERSION="$(node -p 'process.versions.node')"
-version_at_least "$NODE_VERSION" "20.0.0" || fail "Node.js 20+ requerido; encontrado $NODE_VERSION."
+node -e 'const [m,n]=process.versions.node.split(".").map(Number);process.exit((m===20&&n>=19)||(m>=22&&(m>22||n>=12))?0:1)' || fail "Node.js 20.19+ (rama 20) o 22.12+ requerido; encontrado $NODE_VERSION."
 command -v npm >/dev/null || fail "npm no está disponible."
 PYTHON_BIN="$(command -v python3.11 || command -v python3 || true)"
 [ -n "$PYTHON_BIN" ] || fail "Python 3.11+ requerido."

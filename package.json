@@ -12,7 +12,8 @@
     "preview": "vite preview",
     "tauri": "tauri",
     "capturas": "node scripts/capture-views.mjs",
-    "test:kaggle-ui": "node scripts/test-kaggle-ui.mjs"
+    "test:kaggle-ui": "node scripts/test-kaggle-ui.mjs",
+    "capturas:readme": "node scripts/capture-readme.mjs"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.8.0",

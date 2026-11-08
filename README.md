@@ -1,188 +1,211 @@
 # ModelBuilder
 
-## Modelos preentrenados y fine-tuning
+Aplicación visual local para preparar datos, construir redes mediante nodos, entrenarlas con **PyTorch** y probar sus predicciones. El trabajo reciente se centra en **CNN**: formas de tensor visibles, ramas paralelas, conexiones residuales, presets y reutilización de checkpoints como backbone.
 
-El constructor incluye un catálogo curado de checkpoints de Hugging Face fijados a
-commits concretos. En CNN/ViT se representan el `AutoImageProcessor`, el backbone
-con inspección por etapas y una cabeza nueva compatible con el dataset. En texto se conserva el
-texto crudo y se vuelve a tokenizar con el `AutoTokenizer` del checkpoint; los
-modelos causales conservan su cabeza de vocabulario.
+La interfaz usa React, TypeScript, React Flow y ECharts. Puede ejecutarse en navegador con Vite y backend Python local, o como aplicación de escritorio con Tauri 2.
 
-Los nodos muestran si los pesos están preentrenados, congelados o entrenables. El
-inspector permite congelar el backbone y la pantalla de entrenamiento ofrece
-entrenar sólo la cabeza, fine-tuning completo, descongelamiento gradual o LoRA,
-además de scheduler/warmup, early stopping, precisión mixta, acumulación de
-gradientes, clipping y losses alternativas.
+## Pantallas
 
-Cada corrida conserva un manifiesto reproducible (grafo, dataset/splits, seed,
-dependencias y hardware), checkpoints para reanudar y un `bundle/` local con
-pesos, configuración, etiquetas, processor/tokenizer cuando aplica y Model Card.
-El registro del proyecto mantiene el lineage y los alias `best`/`last`; no se
-publica ningún artefacto fuera del equipo de forma automática.
+Capturas de la interfaz actual en **tema oscuro con acento naranja**. Los proyectos, imágenes geométricas, métricas y predicciones son datos de demostración en un navegador aislado; no representan un entrenamiento real ni resultados de rendimiento.
 
-La carga remota usa `trust_remote_code=false`, revisiones de 40 caracteres y
-prefiere pesos `safetensors`. Los modelos descargados quedan en la caché local del
-workspace. MLP, redes recurrentes, CNN 1D y autoencoders mantienen plantillas desde
-cero porque sus contratos de columnas, frecuencia, canales o espacio latente no
-permiten pesos universales seguros.
+### Proyectos
 
-El avance y las ampliaciones pendientes se controlan en
-[`IMPLEMENTATION_TODO.md`](IMPLEMENTATION_TODO.md).
-La evidencia de esta entrega y sus límites están en
-[`docs/10-verificacion-version-cnn.md`](docs/10-verificacion-version-cnn.md).
+Logo adaptado al color del tema, creación de proyectos, búsqueda, filtros por arquitectura y vistas de lista o mosaico.
 
-Aplicación visual local para crear proyectos, elegir una tarea compatible, preparar datos, construir una red mediante bloques, entrenarla con PyTorch y ejecutar inferencia desde un checkpoint.
+![Inicio y proyectos con el tema naranja](docs/img/inicio.png)
 
-La base usa **React + TypeScript + React Flow + ECharts**, un shell **Tauri 2** y un motor local **Python/PyTorch**. El catálogo cubre MLP, CNN 1D/2D (incluyendo un preset con bloque residual editable), RNN/GRU/LSTM, Transformer encoder, Transformer causal, ViT, U-Net y autoencoders.
+### Arquitectura y tarea
 
-![Captura 1](docs/img/1.png)
+El catálogo muestra las familias disponibles y las tareas compatibles con cada una.
 
-![Captura 2](docs/img/2.png)
+![Selección de arquitectura y tarea](docs/img/arquitecturas.png)
 
-![Captura 3](docs/img/3.png)
+### Datos
 
-![Captura 4](docs/img/4.png)
+Pipeline de preparación, explorador con pestañas Info / Samples / Charts, muestras aleatorias, estadísticas de dimensiones originales y reparto train / validation / test.
 
-![Captura 5](docs/img/5.png)
+![Preparación de datos y explorador de muestras](docs/img/datos.png)
 
-![Captura 6](docs/img/6.png)
+### Constructor
 
-![Captura 7](docs/img/7.png)
+Biblioteca de capas y bloques, puertos de entrada/salida, formas por eje e inspector de propiedades. Add y Concatenate están disponibles como nodos independientes en **Ramas**.
 
-![Captura 8](docs/img/8.png)
+![Constructor CNN y dimensiones de tensor](docs/img/constructor.png)
 
-## Funciones implementadas
+### Entrenamiento
 
-- Biblioteca y creación de proyectos con recuperación del estado de edición.
-- Selector por Tabla, Señales y series, Visión, Texto y Reconstrucción; una tarea puede ofrecer varias arquitecturas compatibles.
-- Trece tareas: clasificación, regresión, pronóstico, segmentación, reconstrucción y modelado de tokens.
-- Catálogo de datasets públicos de Hugging Face compatible con las trece tareas, descarga bajo demanda, caché física, revisiones fijadas e importación de datos propios.
-- Particiones train/validation/test editables arrastrando sus dos límites; el reparto elegido se persiste y se aplica al entrenamiento real.
-- Constructor drag-and-drop con puertos, conexiones, biblioteca por arquitectura, edición de propiedades e inspector derecho.
-- Modelo inicial compacto para cada combinación arquitectura–tarea, ajustado automáticamente a las dimensiones, clases, vocabulario y horizonte del dataset elegido.
-- Compilación topológica del canvas a módulos PyTorch. Las ramas U-Net/ResNet y `Concat`/`Add` se ejecutan según las conexiones dibujadas.
-- Bloques reales de Conv1D, pooling 1D, padding causal, RNN, GRU, LSTM, embedding, posición, atención encoder/causal, pooling de tokens y patch embedding de ViT.
-- Validación de ciclos, nodos desconectados, shapes de salida y dry-run real.
-- Entrenamiento PyTorch en un proceso separado, con loss train/validation, métrica de tarea, checkpoint `best`/`last` y evaluación test final.
-- Inferencia desde el checkpoint guardado y el mismo contrato de datos.
-- Tema oscuro de gris neutro inspirado en `references/`, tema claro y cuatro acentos persistentes: azul, naranja, verde y violeta.
+Curvas separadas de entrenamiento y validación, mejor epoch, selección del modelo y configuración de early stopping.
 
-VAE y Transformer encoder–decoder permanecen deliberadamente fuera del catálogo disponible: requieren salidas múltiples/pérdida KL y cross-attention/generación respectivamente. No se muestran como funciones parciales. El estado detallado está en [`ARCHITECTURE_TODO.md`](ARCHITECTURE_TODO.md).
+![Entrenamiento y métricas de demostración](docs/img/entrenamiento.png)
 
-### Datasets públicos y datos propios
+### Inferencia
 
-La pantalla Datos ofrece fuentes públicas compatibles para la tarea seleccionada. Antes de usar la red, la app comprueba si el dataset ya está materializado en el proyecto o presente en `workspace_data/cache/huggingface`; si falta, descarga una revisión fijada y la convierte al contrato interno. No se ejecuta código remoto del repositorio. Para datos propios siguen disponibles `label<TAB>texto` en clasificación y una muestra por línea en modelado causal.
+En clasificación de imágenes, el resultado muestra la entrada, la clase predicha con su probabilidad y la clase real cuando está disponible.
 
-## Requisitos e instalación
+![Predicción de clasificación de demostración](docs/img/inferencia.png)
 
-| Componente | Requisito |
+## Flujo de trabajo
+
+1. Crea un proyecto y elige una arquitectura y una tarea.
+2. Elige el origen del dataset: Kaggle, catálogo de Hugging Face o datos propios.
+3. Prepara los datos en el pipeline. En imágenes se incluyen Resize y conversión de canales; revisa las muestras y las particiones.
+4. Construye el modelo desde la plantilla inicial, un preset o un backbone preentrenado. El panel lateral permite cambiar de etapa.
+5. Entrena, compara corridas y prueba el checkpoint en Inferencia.
+
+El estado del proyecto se guarda localmente en `workspace_data/`. Los datasets, cachés y checkpoints permanecen en el equipo; las descargas iniciales de servicios públicos requieren conexión y pueden requerir credenciales o aceptación de licencia.
+
+## Arquitecturas y tareas disponibles
+
+El catálogo actual contiene **9 familias y 16 tareas**. Las combinaciones permitidas se definen en [el catálogo del backend](backend/modelbuilder/catalog.py).
+
+| Familia | Usos disponibles |
 | --- | --- |
-| Node.js y npm | Node.js 20+ |
-| Python | 3.11+ con pip y venv |
-| Rust y Cargo | Stable |
-| Linux | Ubuntu/Debian |
-| Windows | Windows 10/11 + WebView2 + VS Build Tools 2022 + Windows SDK |
+| MLP | Clasificación y regresión tabular |
+| CNN 1D | Clasificación, regresión y pronóstico de secuencias |
+| CNN 2D | Clasificación y regresión de imágenes, localización de una caja, detección e imagen a imagen |
+| RNN / GRU / LSTM | Clasificación, regresión y pronóstico de secuencias |
+| Transformer encoder | Secuencias y clasificación de texto |
+| Transformer causal | Modelado de lenguaje por tokens |
+| ViT | Clasificación y regresión de imágenes |
+| U-Net | Segmentación binaria/multiclase e imagen a imagen |
+| Autoencoder | Reconstrucción tabular y de imágenes |
 
-Clona el repositorio:
+Las tareas de detección y los bloques multiescala permiten salidas espaciales y cabezas separadas. Esto no implica compatibilidad automática con cualquier arquitectura o checkpoint YOLO externo.
+
+VAE y Transformer encoder–decoder no están disponibles en el catálogo actual. Las propuestas de ayudas visuales animadas están en [prototypes/node-help](prototypes/node-help/README.md), separadas de la interfaz de producción.
+
+## Constructor de modelos
+
+- Capas individuales y bloques/presets en pestañas separadas, con ayudas y vistas de forma de salida.
+- Ramas paralelas y operaciones `Add` y `Concatenate`. La suma requiere tensores compatibles; la concatenación requiere coincidencia fuera del eje elegido.
+- Capas de decoder como ConvTranspose2D, Resize2D y Reshape disponibles en CNN.
+- Validación automática de cambios del grafo, ciclos, conexiones, formas y ejecución de comprobación. El canvas muestra su estado.
+- Canales/filtros separados de la resolución H × W, con explicación sencilla de los ejes en el inspector. El batch se configura al entrenar.
+- Disposición horizontal o vertical, puertos orientados con el flujo y autoorden topológico.
+- Selección múltiple, grupos, duplicación y borrado mediante acciones flotantes de tamaño constante al cambiar el zoom.
+- Paneles laterales plegables y tabs de modelos con cierre. Guardar una arquitectura solicita un nombre y la añade a los presets personalizados.
+- Reutilización de un checkpoint entrenado como backbone, con selección de la salida de características y una cabeza nueva compatible.
+
+## Datasets y preparación
+
+### Kaggle
+
+La integración usa `kagglehub` y está disponible para **clasificación de imágenes**. Descarga desde una URL o un identificador `propietario/dataset`, detecta carpetas por clase o etiquetas CSV y reúne las particiones originales antes de que definas tus propios splits.
+
+La resolución de entrada se configura después, mediante el pipeline. No todos los formatos de anotación de Kaggle se importan automáticamente; datasets privados o con condiciones de acceso necesitan credenciales y permisos en Kaggle. Consulta [formatos y configuración](docs/11-kaggle.md).
+
+### Hugging Face y datos propios
+
+El catálogo curado ofrece datasets compatibles con la tarea elegida. La app comprueba el proyecto y la caché física antes de descargar una revisión fijada. La importación local admite los formatos correspondientes a la tarea: tablas, imágenes y sus etiquetas, texto, secuencias o pares de imágenes/máscaras según el contrato mostrado por la app.
+
+Las particiones son editables cuando la fuente lo permite; los repartos oficiales o temporales pueden estar bloqueados para conservar su contrato. El botón de dado del explorador pide nuevas muestras aleatorias del dataset persistido, conservando las etiquetas emparejadas.
+
+**Límite actual de resolución:** algunos adaptadores materializan las imágenes a un tamaño uniforme antes del pipeline editable. Ampliarlas después no recupera detalle ya reducido; las estadísticas de Info corresponden a las dimensiones de origen cuando están disponibles.
+
+## Preentrenados y fine-tuning
+
+El menú de presets separa **plantillas desde cero** y **modelos preentrenados**. El catálogo curado de Hugging Face utiliza revisiones fijadas, muestra su licencia y no permite código remoto mediante `trust_remote_code`.
+
+En visión se representan el processor, el backbone y la cabeza compatible con el dataset. En texto se utiliza el tokenizer del checkpoint; los modelos causales conservan su salida de vocabulario. Los pesos descargados se reutilizan desde la caché local.
+
+El inspector permite congelar pesos. Entrenamiento ofrece recetas para cabeza, fine-tuning completo, descongelamiento gradual y LoRA cuando son compatibles. Las familias sin un contrato genérico de pesos preentrenados mantienen plantillas desde cero.
+
+## Entrenamiento y checkpoints
+
+- Proceso PyTorch separado, uso de CPU o CUDA según disponibilidad.
+- Loss y métrica de entrenamiento/validación, con marcas del mejor epoch. Accuracy mantiene la escala 0–1.
+- Pausar, reanudar y detener desde el panel de entrenamiento.
+- Early stopping apagado por defecto; al activarlo, la paciencia monitorea la pérdida de validación independientemente del criterio de selección de checkpoint.
+- Optimizador, scheduler, warmup, precisión mixta, acumulación de gradientes, clipping y opciones de loss según la tarea.
+- Checkpoints `best` / `last`, evaluación final sobre test, configuración y procedencia de cada corrida, y bundle local con los artefactos correspondientes.
+- Entrenar de nuevo conserva la corrida completada y crea otra. Se distinguen la reanudación de una corrida y el uso de pesos para un nuevo fine-tuning.
+
+Un checkpoint antiguo sin historial de validación utilizable reinicia el contador independiente de early stopping al reanudar. Los cambios de configuración de una corrida todavía no iniciada no se guardan como borrador independiente.
+
+## Instalación y ejecución
+
+| Componente | Modo web local | Escritorio Tauri |
+| --- | --- | --- |
+| Node.js y npm | Node 20.19+ (rama 20) o 22.12+ (se recomienda LTS 22+) | Igual |
+| Python | 3.11+ con pip y venv | Igual |
+| Rust / Cargo | No requerido | Rust estable |
+| Dependencias nativas | Las de Python/PyTorch para tu sistema | WebKitGTK y herramientas de compilación en Linux; WebView2 y VS Build Tools en Windows |
 
 ```bash
 git clone https://github.com/Maxdesigna7x/Model_Builder.git
 cd Model_Builder
 ```
 
-### Linux
+### Web local · Linux
 
 ```bash
-chmod +x scripts/install-linux.sh run.sh run-web.sh
-./scripts/install-linux.sh
+python3 -m venv .venv
+.venv/bin/python -m pip install --upgrade pip
+.venv/bin/python -m pip install -e .
+npm ci
+bash ./run-web.sh
 ```
 
-### Windows (PowerShell)
+Abre [http://localhost:1420](http://localhost:1420). El script detecta `.venv` y usa su Python; no necesitas activar el entorno manualmente.
+
+### Web local · Windows PowerShell
 
 ```powershell
-Set-ExecutionPolicy -Scope Process Bypass
-.\scripts\install-windows.ps1
-```
-
-Los instaladores validan Python, Node.js y Rust, crean el entorno .venv, instalan el backend y ejecutan npm ci con el lockfile. Son repetibles. Consulta [docs/INSTALACION.md](docs/INSTALACION.md) para los detalles.
-
-## Cómo ejecutar
-
-### Web con Vite
-
-```bash
+py -m venv .venv
+.\.venv\Scripts\python.exe -m pip install --upgrade pip
+.\.venv\Scripts\python.exe -m pip install -e .
+npm ci
+$env:MODELBUILDER_PYTHON = (Resolve-Path '.\.venv\Scripts\python.exe').Path
 npm run dev
 ```
 
-En Linux también puedes ejecutar ./run-web.sh. Abre http://127.0.0.1:1420.
+Si usas otro entorno, establece `MODELBUILDER_PYTHON` con la ruta de su ejecutable antes de lanzar Vite. CUDA depende de una instalación de PyTorch compatible con la GPU y sus controladores.
 
-### Aplicación de escritorio Tauri
+### Escritorio
 
-Linux:
+En Ubuntu/Debian, `bash scripts/install-linux.sh` prepara el entorno y las dependencias de Tauri; después ejecuta `bash run.sh`. En Windows, ejecuta `scripts/install-windows.ps1` y luego `run-windows.ps1` desde PowerShell, con los requisitos nativos instalados.
 
-```bash
-./run.sh
-```
+Consulta [la guía de instalación](docs/INSTALACION.md). `npm run build` compila el frontend; no genera por sí solo un instalador Tauri ni incluye Python.
 
-Windows:
+## Comprobaciones
 
-```powershell
-.\run-windows.ps1
-```
-
-Los comandos Tauri usan automáticamente el Python de .venv mediante MODELBUILDER_PYTHON.
-
-## Datasets de Kaggle
-
-La tarea de clasificación de imágenes permite descargar y analizar datasets con
-`kagglehub`, reunir las clases de todas las particiones originales y elegir después
-el split en la app. Admite carpetas por clase y etiquetas CSV. Consulta los formatos,
-credenciales y límites en [la guía de Kaggle](docs/11-kaggle.md).
-
-## Capturas de la interfaz
-
-Para generar imágenes actualizadas de las pantallas y del catálogo y constructor de
-cada arquitectura, ejecuta desde la raíz del proyecto:
+Con el entorno Python configurado:
 
 ```bash
-npm ci # solo si aún no instalaste las dependencias
-npm run capturas
-```
-
-Necesitas Chrome o Chromium instalado. Si no está en una ubicación habitual, indica
-su ruta con `CHROME_PATH` (por ejemplo, `CHROME_PATH=/ruta/a/chromium npm run capturas`).
-El script inicia Vite en un puerto libre y guarda archivos PNG de 1600 × 1000 en una
-carpeta nueva dentro de `capturas/`; muestra la ruta al terminar. Para elegir otra
-carpeta usa `CAPTURE_DIR=/ruta/de/salida npm run capturas`.
-
-Las capturas usan un proyecto, datos y métricas de demostración en una sesión de
-navegador aislada; no muestran proyectos ni entrenamientos reales y no modifican sus
-datos. Las imágenes de modelos corresponden a la primera tarea compatible de cada
-arquitectura y a su plantilla inicial. Los grafos extensos pueden quedar parcialmente
-fuera del área visible del constructor. La carpeta `capturas/` está ignorada por Git.
-
-## Validación
-
-```bash
+.venv/bin/python -m pip install pytest
+.venv/bin/python -m pytest -q
 npm run build
-pytest
-python3 backend/modelbuilder/engine.py <<<'{"action":"hello"}'
+npm run test:builder-graph
+npm run test:cnn-reuse
+npm run test:editor-ui
+npm run test:kaggle-ui
 ```
 
-La primera descarga de un dataset requiere conexión HTTPS a `huggingface.co`. Las siguientes preparaciones reutilizan la caché física. Los datasets médicos y algunos corpus tienen licencias de uso educativo/no comercial; la app muestra la licencia junto al tamaño antes de descargar.
+En Windows usa `.\.venv\Scripts\python.exe` en lugar de `.venv/bin/python`. Las pruebas de interfaz requieren Chrome/Chromium y usan backend simulado; las pruebas Python comprueban el motor. Las descargas autenticadas y el empaquetado nativo requieren comprobaciones adicionales en su entorno.
 
-La suite incluye las rutas originales, cobertura del catálogo público y de su reutilización física, pruebas adicionales de forward/backward para cada familia y un recorrido real entrenamiento→checkpoint→inferencia de texto.
+El [informe de cierre CNN](docs/17-cierre-revision-cnn.md) recoge las comprobaciones realizadas y sus límites. Los documentos de planificación anteriores son históricos y pueden contener propuestas que todavía no están implementadas.
 
-## Estructura
+## Regenerar estas capturas
+
+```bash
+npm ci
+CAPTURE_DIR=docs/img npm run capturas:readme
+```
+
+El script abre una sesión aislada de Chrome/Chromium a **1600 × 1000**, usa el acento naranja, inicia Vite en un puerto libre y genera las seis capturas del README. No modifica proyectos reales ni descarga datasets o pesos. Si es necesario, define `CHROME_PATH` con la ruta del navegador. En PowerShell establece primero `$env:CAPTURE_DIR = 'docs/img'` y luego ejecuta `node scripts/capture-readme.mjs`.
+
+Para capturas adicionales del catálogo completo puedes usar `npm run capturas`; su salida por defecto se guarda en `capturas/`, ignorada por Git.
+
+## Estructura del repositorio
 
 ```text
-frontend/           React, canvas y pantallas
-backend/            motor Python/PyTorch
-src-tauri/          shell y puente de procesos
-tests/              validación del motor y recorridos
-docs/               especificación de producto y arquitectura
-references/         referencias visuales conservadas
-workspace_data/     proyectos generados localmente en ejecución (ignorado por Git)
+assets/             logo y recursos de la aplicación
+frontend/           interfaz React, editor de grafos y gráficas
+backend/            motor Python/PyTorch y adaptadores de datos
+src-tauri/          shell de escritorio y puente de procesos
+tests/              pruebas del motor
+scripts/            instalación, capturas y comprobaciones de interfaz
+docs/               documentación, informes y capturas del README
+prototypes/         propuestas aisladas, aún sin integrar
+workspace_data/     proyectos, datasets, cachés y corridas locales (ignorado)
 ```
-
-La especificación completa comienza en [docs/01-producto-y-alcance.md](docs/01-producto-y-alcance.md). El plan y sus criterios están en [docs/07-plan-y-aceptacion.md](docs/07-plan-y-aceptacion.md).

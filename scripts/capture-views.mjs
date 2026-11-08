@@ -32,13 +32,13 @@ try {
   page.on('request', request => {
     if (request.url().includes('/api/backend')) {
       const action = JSON.parse(request.postData() || '{}').action;
-      const result = action === 'project.list' ? [] : action === 'system.gpu' ? { cuda: false, name: 'CPU', total_vram: 0, allocated_vram: 0 } : null;
+      const result = action === 'data.exists' ? { exists: true } : action === 'data.catalog' ? [] : action === 'project.list' ? [] : action === 'system.gpu' ? { cuda: false, name: 'CPU', total_vram: 0, allocated_vram: 0 } : null;
       request.respond({ status: 200, contentType: 'application/json', body: JSON.stringify(result === null ? { ok: false, error: { message: 'No disponible en capturas' } } : { ok: true, result }) });
     } else if (request.url().includes('/api/training-events')) request.abort();
     else request.continue();
   });
   const project = { id: 'captura-demo', name: 'Proyecto de demostración', description: 'Datos de ejemplo para capturas', path: 'demo', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), architecture: 'mlp', taskId: 'tabular.classification' };
-  await page.evaluateOnNewDocument(project => { localStorage.setItem('mb-language', 'es'); localStorage.setItem('mb-theme', 'dark'); if (!localStorage.getItem('mb-projects')) localStorage.setItem('mb-projects', JSON.stringify([project])); }, project);
+  await page.evaluateOnNewDocument(project => { localStorage.setItem('mb-language', 'es'); localStorage.setItem('mb-theme', 'dark'); localStorage.setItem('mb-accent', 'orange'); if (!localStorage.getItem('mb-projects')) localStorage.setItem('mb-projects', JSON.stringify([project])); }, project);
   await page.goto(url, { waitUntil: 'networkidle2' });
   const shot = async name => { await page.evaluate(() => document.fonts.ready); await new Promise(r => setTimeout(r, 350)); await page.screenshot({ path: resolve(output, `${name}.png`) }); console.log(`${name}.png`); };
   await page.waitForSelector('.project-row'); await shot('01-proyectos');
