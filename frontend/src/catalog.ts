@@ -142,6 +142,20 @@ export const BLOCKS: Record<Architecture, BlockDef[]> = {
   ]
 };
 
+// Merge operations are general graph primitives, not exclusive to residual recipes.
+const mergeLayers = BLOCKS.unet.filter(block => ["add", "concat"].includes(block.type));
+for (const architecture of Object.keys(BLOCKS) as Architecture[]) {
+  const missing = mergeLayers.filter(block => !BLOCKS[architecture].some(item => item.type === block.type));
+  BLOCKS[architecture] = [...missing.map(block => ({...block, defaults:{...block.defaults}})), ...BLOCKS[architecture]];
+}
+// A CNN may also be a decoder or image-to-image graph without switching families.
+for (const type of ["convtranspose2d", "resize2d", "reshape"]) {
+  if (!BLOCKS.cnn.some(block => block.type === type)) {
+    const definition = [...BLOCKS.unet, ...BLOCKS.autoencoder].find(block => block.type === type);
+    if (definition) BLOCKS.cnn.push({...definition, defaults:{...definition.defaults}});
+  }
+}
+
 export const BLOCK_INFO: Record<string, { description: string; usage: string; diagram: string[] }> = {
   linear: { description: "Learned transformation that combines all input features.", usage: "Use it as a hidden layer or output head after a vector/Flatten.", diagram: ["[B, F]", "Dense", "[B, N]"] },
   conv2d: { description: "Learns spatial filters over images or feature maps.", usage: "Connect it to [B, C, H, W] tensors; control channels, kernel, stride and padding.", diagram: ["[C,H,W]", "Conv 2D", "[N,H′,W′]"] },

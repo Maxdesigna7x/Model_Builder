@@ -145,5 +145,16 @@
   "TRAINING_RESUME_TASK_MISMATCH": "The resume checkpoint task has changed: {{detail}}.",
   "MODEL_BUNDLE_INVALID": "The selected model bundle is incomplete or invalid: {{detail}}.",
   "TRAINING_CONTROL_INVALID": "The requested training control state is invalid: {{detail}}.",
-  "INFERENCE_DATASET_ARTIFACT_MISSING": "Test-split inference needs the original dataset artifact: {{detail}}."
+  "INFERENCE_DATASET_ARTIFACT_MISSING": "Test-split inference needs the original dataset artifact: {{detail}}.",
+  "KAGGLE_HANDLE_INVALID": "Enter owner/dataset or a valid Kaggle HTTPS dataset URL.",
+  "KAGGLE_LIBRARY_MISSING": "Install kagglehub in the Python environment used by the app.",
+  "KAGGLE_DOWNLOAD_FAILED": "Dataset download failed. Check your connection, handle, Kaggle credentials and required consent.",
+  "KAGGLE_SUBDIRECTORY_INVALID": "The selected subdirectory or path is missing or outside the dataset.",
+  "KAGGLE_NO_IMAGES": "No supported images were found in the selected directory.",
+  "KAGGLE_IMAGE_TASK_MISMATCH": "This import requires image classification labels. Masks, pairs and boxes need their task-specific importer.",
+  "KAGGLE_LABEL_FILE_INVALID": "CSV labels need one image column (filename, image, image_id or path) and one class column (label, class, category or target), without empty values.",
+  "KAGGLE_LABEL_IMAGE_AMBIGUOUS": "Image {{detail}} is missing or matches multiple files. Use complete relative paths in the CSV.",
+  "KAGGLE_LABEL_CONFLICT": "Image {{detail}} has conflicting class labels.",
+  "KAGGLE_UNLABELED_IMAGES": "{{detail}} images have no class label. Select a labeled subdirectory or a CSV covering all images. Images will not be silently dropped or assigned invented labels.",
+  "KAGGLE_IMAGE_OPTIONS_INVALID": "Use an integer size between 8 and 2048 pixels and 1 or 3 channels."
 }

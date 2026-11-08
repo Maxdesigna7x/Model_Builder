@@ -1,0 +1,50 @@
+/* Compact working surfaces; stage navigation remains available above the tool. */
+.app-shell .page-intro,.model-catalog-header>div:first-child{display:none!important}
+.content{display:flex;flex-direction:column}
+.stage-nav,.stage-nav.on-toolbar{position:static!important;display:flex;justify-content:flex-end;gap:8px;flex:0 0 48px;height:48px;min-height:48px;padding:6px 18px;border-bottom:1px solid var(--border);background:var(--bg)}
+.content>.page,.content>.builder-page{flex:1;height:auto;min-height:0}
+.content:has(>.data-page){overflow:hidden}
+.content>.data-page{overflow:auto;min-height:0;height:auto;padding-top:14px}
+.content>.training-page{padding-top:14px}
+.model-catalog-header{height:auto;min-height:44px;margin-bottom:12px;justify-content:flex-end}
+.catalog-architecture-list>button{grid-template-columns:40px minmax(0,1fr) 16px}
+.catalog-architecture-list>button>svg{justify-self:end}
+/* Only icon and operation name on the compact pipeline nodes. */
+.data-page .data-main>.pipeline-panel{grid-template-rows:auto auto auto;min-height:0!important}
+.data-page .pipeline-canvas{min-height:76px;height:auto;padding:16px 12px}
+.data-page .pipeline-node{display:flex!important;flex-direction:row!important;align-items:center!important;gap:10px;width:auto!important;min-width:154px;flex:0 0 auto!important;min-height:44px!important;height:44px!important;padding:9px 12px}
+.data-page .pipeline-node small,.data-page .pipeline-node em,.data-page .pipeline-node .node-grip{display:none!important}
+.data-page .pipeline-node>span{flex:0 0 24px;margin:0}
+.data-page .pipeline-node strong{font-size:13px!important;line-height:1.3;margin:0;max-width:170px;text-align:left}
+.data-page .source-resolution-inline{margin-top:8px;padding-top:8px;border-top:0}
+.data-view-header{height:auto;min-height:38px}
+.data-view-switch{flex:none}
+/* Plain tensor dimension rows. */
+.tensor-axis-plain{display:grid;gap:10px;font-size:13px}
+.tensor-axis-row{display:flex;align-items:baseline;gap:12px;padding:4px 0;line-height:1.5}
+.tensor-axis-row code{min-width:32px;font-size:14px;color:var(--accent)}
+.tensor-axis-row span{color:var(--muted)}
+/* Keep training tabs entirely inside their row. */
+.run-tabs{height:36px!important;min-height:36px;flex:0 0 36px;align-items:stretch;overflow-x:auto;overflow-y:hidden;margin:0 0 12px;padding:0}
+.run-tabs .closable-tab{min-height:34px;height:34px;border-radius:7px 7px 0 0}
+.run-tabs .closable-tab>button{min-height:32px;height:32px;padding-top:4px;padding-bottom:4px}
+.run-tabs .closable-tab .tab-close{height:26px;min-height:26px;width:26px;min-width:26px}
+/* Project workspace fills the home page; branding is temporary. */
+.hub{display:flex;flex-direction:column}
+.hub-header{flex:0 0 76px;height:76px;padding:16px 32px;gap:16px;max-width:none;width:100%}
+.hub-header>.brand{display:flex;align-items:center;gap:12px;margin-right:auto}
+.hub-header>.brand strong{font-size:20px;letter-spacing:-.03em}
+.hub-header>.primary{display:flex;align-items:center;gap:8px}
+.hub-content{display:flex;flex-direction:column;flex:1;min-height:0;width:100%;max-width:none;padding:12px 32px 32px}
+.hub-content>.projects-card{flex:1;min-height:400px;display:flex;flex-direction:column;margin:0}
+.projects-card>.project-table{flex:1;min-height:0}
+.project-table-scroll{max-height:none;overflow:auto}
+@media(max-width:1280px){.hub-content{padding:12px 20px 20px}.hub-header{padding:14px 20px}.projects-toolbar{flex-wrap:wrap;gap:12px}}
+.flow-wrap .canvas-selection-toolbar button{width:32px;height:32px;justify-content:center;padding:0}
+.flow-wrap .canvas-selection-toolbar button span{display:none}
+.block-library{display:flex;flex-direction:column}
+.block-library>.library-tabs{order:-1;flex:none}
+.block-library>section,.block-library>div{flex-shrink:0}
+
+.main-screen-logo{display:block;width:48px;height:48px;object-fit:contain;filter:invert(1)}
+:root[data-theme="light"] .main-screen-logo{filter:none}

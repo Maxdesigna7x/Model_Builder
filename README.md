@@ -132,6 +132,13 @@ Windows:
 
 Los comandos Tauri usan automáticamente el Python de .venv mediante MODELBUILDER_PYTHON.
 
+## Datasets de Kaggle
+
+La tarea de clasificación de imágenes permite descargar y analizar datasets con
+`kagglehub`, reunir las clases de todas las particiones originales y elegir después
+el split en la app. Admite carpetas por clase y etiquetas CSV. Consulta los formatos,
+credenciales y límites en [la guía de Kaggle](docs/11-kaggle.md).
+
 ## Capturas de la interfaz
 
 Para generar imágenes actualizadas de las pantallas y del catálogo y constructor de

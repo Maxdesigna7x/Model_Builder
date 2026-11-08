@@ -35,3 +35,6 @@ venv/
 
 # Capturas locales de la interfaz
 capturas/
+
+# Capturas de revisión aportadas en la conversación
+revisiones/

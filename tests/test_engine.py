@@ -177,13 +177,24 @@ def test_train_checkpoint_and_inference(project):
     assert sampled["source"]=="Muestra #1 (Split Test)"
 
 
-def test_advanced_training_and_safe_resume(project):
+def test_advanced_training_and_safe_resume(project, monkeypatch):
     task_id="tabular.regression";dataset=generate(project,task_id,seed=23);graph=graph_for(task_id)
+    events=[]
+    monkeypatch.setattr("modelbuilder.training.emit",events.append)
     first=train({"project":project,"dataset":dataset,"task_id":task_id,"architecture":"mlp","graph":graph,"config":{"epochs":1,"batch_size":128,"device":"cpu","seed":23,"scheduler":"cosine","warmup_epochs":1,"gradient_accumulation":2,"gradient_clip_norm":1.0,"loss":"huber"}})
     saved=torch.load(first["lastCheckpoint"],weights_only=True)
     assert saved["schema_version"]==3 and saved["scheduler_state"] and saved["rng_state"]["numpy"]["state"].dtype==torch.uint32
+    first_point=first["history"][0]
+    assert torch.isfinite(torch.tensor(first_point["trainMetric"])) and torch.isfinite(torch.tensor(first_point["valMetric"]))
+    assert first_point["metric"]==first_point["valMetric"] and first_point["trainMetric"]!=first_point["valMetric"]
+    metric_event=next(event for event in events if event["type"]=="metric")
+    assert metric_event["train_metric"]==first_point["trainMetric"] and metric_event["val_metric"]==first_point["valMetric"]
+    assert saved["history"]==first["history"]
     resumed=train({"project":project,"dataset":dataset,"task_id":task_id,"architecture":"mlp","graph":graph,"config":{"epochs":2,"batch_size":128,"device":"cpu","seed":23,"scheduler":"cosine","warmup_epochs":1,"gradient_accumulation":2,"loss":"huber","resume_checkpoint":first["lastCheckpoint"]}})
     assert [point["epoch"] for point in resumed["history"]]==[1,2]
+    assert all("trainMetric" in point and point["valMetric"]==point["metric"] for point in resumed["history"])
+    resumed_state=torch.load(resumed["lastCheckpoint"],weights_only=True)
+    assert resumed_state["history"]==resumed["history"]
 
 
 def test_class_balancing_supports_weights_and_sampler(project):
@@ -240,6 +251,16 @@ def test_training_control_pauses_resumes_and_cancels(tmp_path):
     assert not wait_for_training_control(tmp_path,events.append)
 
 
+def test_training_can_be_cancelled_while_paused(tmp_path):
+    control=tmp_path/"control.json";control.write_text('{"state":"paused"}')
+    events=[]
+    def cancel(): time.sleep(.05);control.write_text('{"state":"cancelled"}')
+    thread=threading.Thread(target=cancel);thread.start()
+    assert not wait_for_training_control(tmp_path,events.append)
+    thread.join()
+    assert [event["type"] for event in events]==["paused"]
+
+
 def test_stage_policy_unfreezes_only_last_requested_stage():
     backbone=torch.nn.Module();backbone.layers=torch.nn.ModuleList([torch.nn.Linear(3,3) for _ in range(4)])
     apply_stage_policy(backbone,{"frozen":True,"trainable_stages":1})
@@ -259,6 +280,8 @@ def test_pretrained_catalog_is_curated_pinned_and_safe():
 def test_semantic_hash_ignores_canvas_position_and_labels():
     graph=graph_for("tabular.classification");copy=json.loads(json.dumps(graph))
     copy["nodes"][0]["position"]={"x":999,"y":123};copy["nodes"][0]["data"]["label"]="Otro nombre"
+    assert semantic_hash(graph)==semantic_hash(copy)
+    copy["nodes"][0]["data"].update({"groupId":"visual-only","groupName":"Encoder"})
     assert semantic_hash(graph)==semantic_hash(copy)
     copy["nodes"][1]["data"]["properties"]["out_features"]=99
     assert semantic_hash(graph)!=semantic_hash(copy)

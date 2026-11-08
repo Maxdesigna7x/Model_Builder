@@ -27,6 +27,7 @@
   "lockedNodeNote": "This node stays fixed at the {{position}}.",
   "position_start": "start",
   "position_end": "end",
+  "resizeContract": "After applying this step, its width and height become the model input size. Segmentation masks use nearest-neighbor; normalized box coordinates stay aligned.",
   "categories": {
     "source": "SOURCE",
     "inspect": "INSPECTION",
@@ -75,7 +76,7 @@
     },
     "resize": {
       "label": "Resize",
-      "description": "Changes the resolution of all images. For segmentation it applies the same change to the mask using nearest neighbor.",
+      "description": "Changes the resolution of all images and paired targets. Segmentation masks use nearest-neighbor so class IDs stay intact.",
       "scope": "Applied deterministically"
     },
     "center_crop": {

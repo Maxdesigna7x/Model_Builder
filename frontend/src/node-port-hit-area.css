@@ -1,0 +1,148 @@
+/* Keep the React Flow connection target larger than its fixed visual anchor.
+   Bias the hit area out of the node body so the remaining node surface still
+   starts normal selection and drag gestures. */
+.react-flow__node .model-node .react-flow__handle.model-node-port {
+  box-sizing: border-box !important;
+  width: 12px !important;
+  height: 12px !important;
+  min-width: 12px !important;
+  min-height: 12px !important;
+  transform: translate(-50%, -50%) !important;
+  clip-path: none !important;
+  overflow: visible !important;
+  background: transparent !important;
+  border: 0 !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+  transition: none !important;
+  pointer-events: all !important;
+  cursor: crosshair !important;
+}
+
+/* Keep the handle box the same size as its visible dot so React Flow computes
+   the wire endpoint at the dot. A pseudo element expands the hit target and
+   clips its overlap with the card, leaving only an 8px strip over the card. */
+.react-flow__node .model-node .react-flow__handle.model-node-port.react-flow__handle-left {
+  left: 0 !important;
+  right: auto !important;
+  top: 50% !important;
+  bottom: auto !important;
+}
+
+.react-flow__node .model-node .react-flow__handle.model-node-port.react-flow__handle-right {
+  left: 100% !important;
+  right: auto !important;
+  top: 50% !important;
+  bottom: auto !important;
+}
+
+.react-flow__node .model-node .react-flow__handle.model-node-port.react-flow__handle-top {
+  left: 50% !important;
+  right: auto !important;
+  top: 0 !important;
+  bottom: auto !important;
+}
+
+.react-flow__node .model-node .react-flow__handle.model-node-port.react-flow__handle-bottom {
+  left: 50% !important;
+  right: auto !important;
+  top: 100% !important;
+  bottom: auto !important;
+}
+
+.react-flow__node .model-node .react-flow__handle.model-node-port::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 36px;
+  height: 36px;
+  transform: translate(-50%, -50%);
+  background: transparent;
+  pointer-events: auto;
+}
+
+.react-flow__node .model-node .react-flow__handle.model-node-port.react-flow__handle-left::after {
+  clip-path: ellipse(26px 18px at 0% 50%);
+}
+
+.react-flow__node .model-node .react-flow__handle.model-node-port.react-flow__handle-right::after {
+  clip-path: ellipse(26px 18px at 100% 50%);
+}
+
+.react-flow__node .model-node .react-flow__handle.model-node-port.react-flow__handle-top::after {
+  clip-path: ellipse(18px 26px at 50% 0%);
+}
+
+.react-flow__node .model-node .react-flow__handle.model-node-port.react-flow__handle-bottom::after {
+  clip-path: ellipse(18px 26px at 50% 100%);
+}
+
+/* Multi-port labels sit outside the card while their zero-size wrapper keeps
+   each React Flow anchor on the exact border coordinate. */
+.model-node .model-port-anchor {
+  position: absolute;
+  z-index: 3;
+  width: 0;
+  height: 0;
+  pointer-events: none;
+}
+
+.model-node .model-port-name {
+  position: absolute;
+  display: block;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 14px;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+.model-node .model-port-anchor.horizontal-port.input-port .model-port-name {
+  left: 13px;
+  top: -7px;
+}
+
+.model-node .model-port-anchor.horizontal-port.output-port .model-port-name {
+  right: 13px;
+  top: -7px;
+}
+
+.model-node .model-port-anchor.vertical-port.input-port .model-port-name {
+  left: 0;
+  top: -22px;
+  transform: translateX(-50%);
+}
+
+.model-node .model-port-anchor.vertical-port.output-port .model-port-name {
+  left: 0;
+  top: 8px;
+  transform: translateX(-50%);
+}
+
+.model-node .react-flow__handle.model-node-port::before {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 12px;
+  height: 12px;
+  box-sizing: border-box;
+  border: 2px solid var(--surface);
+  border-radius: 50%;
+  background: var(--accent);
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+}
+
+.react-flow__node.selected .model-node .react-flow__handle.model-node-port::before {
+  background: var(--accent-hover);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+/* The global handle hover rule scales the whole handle. Preserve its React
+   Flow centering transform so the visible anchor and connection point stay put. */
+.react-flow__node .model-node .react-flow__handle.model-node-port:hover {
+  transform: translate(-50%, -50%) !important;
+  box-shadow: none !important;
+}

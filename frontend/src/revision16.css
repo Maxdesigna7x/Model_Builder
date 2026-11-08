@@ -1,0 +1,50 @@
+/* Centered home identity. Alpha mask preserves the supplied art and uses theme color. */
+.app-logo{display:block;flex:none;background:var(--accent);mask-size:contain;mask-position:center;mask-repeat:no-repeat;-webkit-mask-size:contain;-webkit-mask-position:center;-webkit-mask-repeat:no-repeat;filter:none}
+.hub-header{position:relative;flex:0 0 auto;height:auto;min-height:278px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:18px;padding:22px 24px 24px;border:0;background:transparent}
+.hub-header>.brand{flex-direction:column;gap:6px;margin:0;text-align:center}
+.hub-header>.brand strong{font-size:38px;line-height:1.15;font-weight:700;letter-spacing:-.04em}
+.hub-header .main-screen-logo{width:124px;height:124px;filter:none}
+.hub-header>.primary{min-height:44px;padding:10px 26px;border-radius:24px;font-size:15px}
+.hub-header>.appearance{position:absolute;right:24px;top:20px}
+.hub-content{padding-top:8px}.hub-content>.projects-card{min-height:260px}
+.sidebar-brand .sidebar-app-logo{width:38px;height:38px}
+/* Bound data to the viewport: only the middle explorer grows/shrinks. */
+.content>.data-page:has(.data-step-layout){height:100%;min-height:0;overflow:hidden;display:flex;flex-direction:column;padding:14px 20px}
+.data-page .data-step-layout{flex:1;height:100%;min-height:0;align-items:stretch}
+.data-page .data-main{display:grid;grid-template-rows:auto minmax(0,1fr) auto;height:100%;min-height:0;gap:12px;overflow:hidden}
+.data-page .data-main>.data-explorer-panel{height:100%!important;min-height:0!important;overflow:auto;padding:14px}
+.data-page .data-main>.data-split-panel{height:auto!important;min-height:0!important;padding:12px 14px}
+.data-split-panel .split-control{margin:12px 0 10px!important}
+.data-split-panel .split-legend{gap:8px;grid-template-columns:repeat(3,minmax(0,1fr))}
+.data-page .data-sidebar{position:static;min-height:0;height:100%;max-height:none;overflow:hidden;align-self:stretch}
+.data-page .data-config-panel{height:100%;max-height:100%;min-height:0;display:flex;flex-direction:column;overflow:hidden;padding:16px}
+.data-config-panel>#data-node-inspector{flex:1;min-height:0;overflow:auto}
+.data-config-panel>.data-classes-section{flex:none;margin-top:12px}
+.node-inspector-content>.pipeline-switch{margin:0 0 16px;padding:6px 0 10px;border-top:0;border-bottom:1px solid var(--border)}
+/* All floating actions use the same square geometry, without a parent card. */
+.flow-wrap .canvas-selection-toolbar{background:transparent;border:0;box-shadow:none;padding:0;gap:8px;align-items:center}
+.flow-wrap .canvas-selection-toolbar button,.flow-wrap .canvas-selection-toolbar button.danger{display:grid;place-items:center;flex:none;width:32px;height:32px;min-width:32px;min-height:32px;margin:0!important;padding:0!important;border:1px solid var(--border);border-radius:7px;background:var(--surface);line-height:1}
+.flow-wrap .canvas-selection-toolbar button svg{width:16px;height:16px;margin:0}
+/* Slim model tabs match training tabs. */
+.model-tabs{flex:0 0 36px;height:36px;min-height:36px;align-items:stretch;overflow-x:auto;overflow-y:hidden;padding-top:0}
+.model-tabs .closable-tab{height:34px;min-height:34px}
+.model-tabs .closable-tab>button{height:32px;min-height:32px;padding-top:4px;padding-bottom:4px}
+.model-tabs .closable-tab .tab-close{height:26px;min-height:26px;width:26px;min-width:26px}
+.inference-card .inference-run-button{flex:none;align-self:center;width:auto;min-width:220px;max-width:340px;padding:12px 24px;margin:16px auto 0}
+.architecture-detail-panel>footer{display:none}
+@media(max-height:760px){.hub-header{min-height:230px;gap:12px;padding-top:12px}.hub-header .main-screen-logo{width:100px;height:100px}.hub-header>.brand strong{font-size:32px}.data-page .data-main{gap:8px}.data-page .data-main>.data-split-panel{padding:9px 12px}}
+@media(max-height:620px){.content>.data-page:has(.data-step-layout){overflow:auto}.data-page .data-step-layout{height:auto;min-height:560px}.data-page .data-main{min-height:560px}}
+.inference-card .inference-run-button{width:auto!important;margin:0 auto!important;justify-self:center;min-width:220px;max-width:340px}
+.inference-page .inference-card{grid-template-rows:auto minmax(0,1fr)!important}
+.inference-card .inference-mode-selector{grid-row:1!important}
+.inference-card .inference-work-area{grid-row:2!important}
+.content>.inference-page .inference-card{grid-template-rows:auto minmax(0,1fr)!important}
+.inference-page .inference-card .inference-mode-selector{grid-row:1!important}
+.inference-page .inference-card .inference-work-area{grid-row:2!important}
+.data-page .data-main>.data-explorer-panel{display:flex!important;flex-direction:column;gap:8px}
+.data-explorer-panel>.data-view-header{flex:none}
+.data-explorer-panel .preview-image-grid{flex:1;min-height:0;grid-template-rows:minmax(0,1fr);align-items:stretch;margin:0}
+.data-page .data-explorer-panel .preview-image-card{height:100%;min-height:0}
+.data-page .data-explorer-panel .dataset-image-pair{flex:1 1 auto!important;min-height:0;display:flex}
+.data-page .data-explorer-panel .dataset-image-pair figure{display:flex!important;flex-direction:column;min-height:0;flex:1}
+.data-page .data-explorer-panel .dataset-image-pair img{flex:1;min-height:0;height:0;max-height:none;object-fit:contain}

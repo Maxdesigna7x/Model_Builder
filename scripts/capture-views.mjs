@@ -52,6 +52,8 @@ try {
     const slug = `${String(i + 1).padStart(2, '0')}-${name.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')}`;
     await shot(`modelos/${slug}-catalogo`.replace('/', '-'));
     await page.$eval('.available-tasks button', e => e.click());
+    await new Promise(resolve=>setTimeout(resolve,100));
+    if(await page.$('.app-dialog .primary')) await page.click('.app-dialog .primary');
     await page.evaluate(() => document.querySelectorAll('.sidebar nav button')[2].click());
     await page.waitForSelector('.react-flow__node');
     await shot(`modelo-${slug}-constructor`);

@@ -1,18 +1,24 @@
+import { KaggleImport, KaggleReport } from "./KaggleImport";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
-  ReactFlow, Background, Controls, MiniMap, addEdge, useEdgesState, useNodesState,
+  ReactFlow, Background, Controls, MiniMap, ViewportPortal, addEdge, useEdgesState, useNodesState,
   type Connection, type NodeMouseHandler, type ReactFlowInstance
 } from "@xyflow/react";
-import { Activity, AlertCircle, ArrowLeft, ArrowUpDown, BarChart3, Binary, Box, BrainCircuit, Check, CheckCircle2, ChevronRight, Clock3, Cloud, Cpu, Database, Download, FileText, FolderOpen, GitBranch, GitFork, Grid2X2, Image, LayoutGrid, Layers3, List, Network, Info, Moon, Palette, Play, Plus, RefreshCw, Repeat2, ScanLine, Search, Shield, Shrink, SlidersHorizontal, Save, Sparkles, Split, Sun, Table2, Upload, WandSparkles, Waves, Waypoints, X, Zap } from "lucide-react";
+import { Copy, Group, Ungroup, Activity, AlertCircle, ArrowDown, ArrowLeft, ArrowRight, ArrowUpDown, BarChart3, Binary, Box, BrainCircuit, Check, CheckCircle2, ChevronRight, Clock3, Cloud, Cpu, Database, Dice5, Download, FileText, FolderOpen, GitBranch, GitFork, Grid2X2, Image, LayoutGrid, Layers3, List, Network, Info, Moon, Palette, Pause, Play, Plus, RefreshCw, Repeat2, ScanLine, Search, Shield, Shrink, Square, SlidersHorizontal, Save, Sparkles, Split, Sun, Table2, Upload, WandSparkles, Waves, Waypoints, X, Zap } from "lucide-react";
 import { ARCHITECTURES, BLOCK_INFO, BLOCKS, TASKS, pretrainedTemplate, presetsFor, syncOutputContract, templateFor } from "./catalog";
 import { getPresetBenefit, getPresetDescription, getPresetName, getPresetTradeoff } from "./catalog-i18n";
 import { backend, isTauri, onTrainingEvent, pickDatasetDirectory, pickDatasetFile, startTraining } from "./bridge";
 import ModelNode from "./ModelNode";
+import { operationIcon } from "./operation-icons";
+import { TensorShapeSummary } from "./tensor-shape";
+import { previewOperationOutput } from "./operation-preview";
 import { TrainingChart } from "./Chart";
 import DataPipelineEditor, { defaultDataPipeline } from "./DataPipelineEditor";
 import DataCharts from "./DataCharts";
 import { extractCnnBackbone, featurePorts } from "./cnn-reuse";
+import { candidateEdgesForConnection, createCnnRecipe, duplicateGraphSelection, isValidGraphConnection, layoutConnectedGraph, type GraphLayoutDirection } from "./builder-graph";
+import "./canvas-actions.css";
 import { translateBackendError } from "./i18n/errors";
 import type { Architecture, DataPipeline, DatasetAnalytics, DatasetOptions, DatasetPreview, DatasetSummary, GpuInfo, GraphValidation, HuggingFaceDataset, MetricPoint, ModelEdge, ModelNode as ModelNodeT, PretrainedModelSpec, Project, ProjectModel, RunResult, RuntimeCatalog, Step, TaskId, TrainingRun } from "./types";
 
@@ -31,6 +37,11 @@ const ARCHITECTURE_ICONS: Record<Architecture, typeof BrainCircuit> = {
 const nodeTypes = { modelNode: ModelNode };
 const initialGraphNodes = (nodes: ModelNodeT[]) => [...nodes].sort((a,b)=>a.position.x-b.position.x).slice(0,3).map(({id})=>({id}));
 const initialGraphFit = (nodes: ModelNodeT[]) => ({nodes:initialGraphNodes(nodes),...(window.innerWidth<=1280?{padding:0,maxZoom:1}:{padding:.3,maxZoom:.85})});
+const inferLayoutDirection = (nodes:ModelNodeT[],edges:ModelEdge[]):GraphLayoutDirection => {
+  const byId=new Map(nodes.map(node=>[node.id,node]));let horizontal=0,vertical=0;
+  for(const edge of edges){const source=byId.get(edge.source),target=byId.get(edge.target);if(!source||!target)continue;const dx=Math.abs(target.position.x-source.position.x),dy=Math.abs(target.position.y-source.position.y);if(dx+dy<1)continue;if(dx>=dy)horizontal++;else vertical++;}
+  return vertical>horizontal?"vertical":"horizontal";
+};
 
 import { BaseEdge, EdgeLabelRenderer, getSmoothStepPath, type EdgeProps } from "@xyflow/react";
 import { Trash2 } from "lucide-react";
@@ -118,6 +129,15 @@ const loadProjects = (): Project[] => {
 };
 type Theme = "dark" | "light";
 type Accent = "blue" | "orange" | "green" | "violet";
+type AppDialogState = {
+  kind: "alert" | "confirm" | "prompt";
+  title: string;
+  message?: string;
+  inputLabel?: string;
+  initialValue?: string;
+  confirmLabel?: string;
+  onConfirm?: (value?: string) => void;
+};
 const loadTheme = (): Theme => localStorage.getItem("mb-theme") === "light" ? "light" : "dark";
 const loadAccent = (): Accent => {
   const value = localStorage.getItem("mb-accent");
@@ -149,10 +169,23 @@ function graphErrorMap(nodes:ModelNodeT[],edges:ModelEdge[],t:(key:string)=>stri
   return errors;
 }
 
+function graphValidationKey(project:Project|null,dataset:DatasetSummary|null,task:TaskId|null,architecture:Architecture|null,nodes:ModelNodeT[],edges:ModelEdge[]):string{
+  return JSON.stringify({
+    project:project?{id:project.id,path:project.path}:null,
+    task,
+    architecture,
+    dataset:dataset?{id:dataset.id,revision:dataset.revision,inputShape:dataset.inputShape,outputShape:dataset.outputShape,classes:dataset.classes,options:dataset.options}:null,
+    // Preserve array order because merge inputs and graph evaluation order are semantic. Layout, selection, and group metadata are not.
+    nodes:nodes.map(node=>({id:node.id,type:node.type,blockType:node.data.blockType,label:node.data.label,properties:node.data.properties,inputHandles:node.data.inputHandles,outputHandles:node.data.outputHandles})),
+    edges:edges.map(edge=>({source:edge.source,target:edge.target,sourceHandle:edge.sourceHandle,targetHandle:edge.targetHandle}))
+  });
+}
+
 export default function App() {
   const [projects, setProjects] = useState<Project[]>(loadProjects);
   const [project, setProject] = useState<Project | null>(null);
   const [step, setStep] = useState<Step>("model");
+  useEffect(()=>{document.querySelector(".content")?.scrollTo(0,0)},[step]);
   const [task, setTask] = useState<TaskId | null>(null);
   const [architecture, setArchitecture] = useState<Architecture | null>(null);
   const [dataset, setDataset] = useState<DatasetSummary | null>(null);
@@ -168,12 +201,18 @@ export default function App() {
   const [activeRunId, setActiveRunId] = useState(firstRun.current.id);
   const [graphValid, setGraphValid] = useState(false);
   const [validationStats, setValidationStats] = useState<GraphValidation | null>(null);
+  const [validationMessage,setValidationMessage]=useState("");
   const [training, setTraining] = useState(false);
   const runningRunId = useRef<string | null>(null);
   const backendRunId = useRef<string | null>(null);
+  const pendingStop=useRef(false);
+  const stoppingRef=useRef(false);
+  const projectRef=useRef(project);
+  const [stopping,setStopping]=useState(false);
   const [theme, setTheme] = useState<Theme>(loadTheme);
   const [accent, setAccent] = useState<Accent>(loadAccent);
   const [notice, setNotice] = useState<string>("");
+  const [dialog, setDialog] = useState<AppDialogState | null>(null);
   const [gpuInfo, setGpuInfo] = useState<GpuInfo | null>(null);
   const [runtimeCatalog,setRuntimeCatalog]=useState<RuntimeCatalog|null>(null);
   const dataContinue = useRef<() => Promise<boolean>>(async () => true);
@@ -210,12 +249,13 @@ export default function App() {
   useEffect(() => { let off = () => {}; onTrainingEvent(event => {
     const targetId = runningRunId.current;
     if (!targetId) return;
-    if (event.type === "started") backendRunId.current=String(event.run_id);
+    if (event.type === "started") { backendRunId.current=String(event.run_id);setNotice("");if(pendingStop.current && projectRef.current){pendingStop.current=false;backend("training.control",{project:projectRef.current,run_id:backendRunId.current,state:"cancelled"}).catch(error=>{stoppingRef.current=false;setStopping(false);setNotice(translateBackendError(String(error)))})} }
+    if(event.run_id&&backendRunId.current&&String(event.run_id)!==backendRunId.current)return;
     if (event.type === "paused") setTrainingRuns(runs=>runs.map(item=>item.id===targetId?{...item,status:"paused"}:item));
     if (event.type === "resumed") setTrainingRuns(runs=>runs.map(item=>item.id===targetId?{...item,status:"running"}:item));
-    if (event.type === "metric") setTrainingRuns(runs => runs.map(item => item.id === targetId ? { ...item, history: [...item.history.filter(p => p.epoch !== Number(event.epoch)), { epoch: Number(event.epoch), trainLoss: Number(event.train_loss), valLoss: Number(event.val_loss), metric: Number(event.metric), learningRate:Number(event.learning_rate), secondaryMetrics:(event.secondary_metrics||{}) as Record<string,number> }].sort((a,b) => a.epoch-b.epoch) } : item));
-    if (event.type === "complete") { const result=event.result as unknown as RunResult; setTraining(false); setTrainingRuns(runs => runs.map(item => item.id === targetId ? { ...item, status:result.status==="cancelled"?"cancelled":"completed", result, history:result.history || item.history, completedAt:now() } : item)); runningRunId.current=null;backendRunId.current=null; setNotice(result.status==="cancelled"?"Entrenamiento cancelado; se guardó last.pt.":t("app:notice.trainingComplete")); }
-    if (event.type === "error") { setTraining(false); setTrainingRuns(runs => runs.map(item => item.id === targetId ? { ...item, status:"error", error:String(event.message), completedAt:now() } : item)); runningRunId.current=null; setNotice(translateBackendError(String(event.message))); }
+    if (event.type === "metric") setTrainingRuns(runs => runs.map(item => item.id === targetId ? { ...item, history: [...item.history.filter(p => p.epoch !== Number(event.epoch)), { epoch: Number(event.epoch), trainLoss: Number(event.train_loss), valLoss: Number(event.val_loss), metric: Number(event.metric), trainMetric:event.train_metric == null ? undefined : Number(event.train_metric), valMetric:event.val_metric == null ? undefined : Number(event.val_metric), learningRate:Number(event.learning_rate), secondaryMetrics:(event.secondary_metrics||{}) as Record<string,number> }].sort((a,b) => a.epoch-b.epoch) } : item));
+    if (event.type === "complete") { const result=event.result as unknown as RunResult; setTraining(false); stoppingRef.current=false;setStopping(false);pendingStop.current=false; setTrainingRuns(runs => runs.map(item => item.id === targetId ? { ...item, status:result.status==="cancelled"?"cancelled":"completed", result, history:result.history || item.history, completedAt:now() } : item)); runningRunId.current=null;backendRunId.current=null; setNotice(result.status==="cancelled"?t("app:training.cancelled"):t("app:notice.trainingComplete")); }
+    if (event.type === "error") { setTraining(false); stoppingRef.current=false;setStopping(false);pendingStop.current=false; setTrainingRuns(runs => runs.map(item => item.id === targetId ? { ...item, status:"error", error:String(event.message), completedAt:now() } : item)); runningRunId.current=null;backendRunId.current=null; setNotice(translateBackendError(String(event.message))); }
   }).then(fn => off = fn); return () => off(); }, []);
 
   const activeTrainingRun = trainingRuns.find(item => item.id === activeRunId) || trainingRuns[0];
@@ -223,6 +263,12 @@ export default function App() {
   const run = activeTrainingRun?.result || null;
   const completed = useMemo(() => ({ model: !!task && !!architecture, data: !!dataset, builder: graphValid, training: trainingRuns.some(item=>!!item.result), inference: false }), [task, architecture, dataset, graphValid, trainingRuns]);
   const selected = nodes.find(n => n.id === selectedId) || null;
+  const validationKey = graphValidationKey(project,dataset,task,architecture,nodes,edges);
+  const validationKeyRef = useRef(validationKey);
+  validationKeyRef.current = validationKey;
+  const previousValidationKey = useRef(validationKey);
+  const validationRequest = useRef(0);
+  const autoValidationTimer = useRef<number | null>(null);
 
   const createProject = async (name: string, description: string) => {
     const p: Project = { id: uid(), name, description, path: `projects/${name.toLowerCase().replace(/[^a-z0-9áéíóúñ]+/gi, "-")}`, createdAt: now(), updatedAt: now() };
@@ -241,11 +287,11 @@ export default function App() {
   };
 
   const openPath = async () => {
-    if (!isTauri()) { window.alert(t("app:openFolder.notTauri")); return; }
-    const path = window.prompt(t("app:openFolder.prompt"));
-    if (!path) return;
-    try { const p=await backend<Project>("project.open",{path}); setProjects(v=>[p,...v.filter(item=>item.id!==p.id)]); openProject(p); }
-    catch(e) { window.alert(translateBackendError(String(e))); }
+    if (!isTauri()) { setDialog({kind:"alert",title:t("app:openFolder.title"),message:t("app:openFolder.notTauri")}); return; }
+    setDialog({kind:"prompt",title:t("app:openFolder.title"),inputLabel:t("app:openFolder.prompt"),onConfirm:value=>{
+      const path=value?.trim();if(!path)return;
+      void backend<Project>("project.open",{path}).then(p=>{setProjects(v=>[p,...v.filter(item=>item.id!==p.id)]);openProject(p)}).catch(e=>setDialog({kind:"alert",title:t("app:dialog.errorTitle"),message:translateBackendError(String(e))}));
+    }});
   };
 
   const deleteProject = async (p: Project) => {
@@ -263,13 +309,8 @@ export default function App() {
     }
   };
 
-  const choose = (a: Architecture, taskId: TaskId) => {
-    if (architecture === a && task === taskId) return;
+  const applyTaskChoice = (a: Architecture, taskId: TaskId) => {
     const taskChanged = Boolean(task && task !== taskId);
-    if (taskChanged && (dataset || nodes.length > 0 || trainingRuns.some(item => item.result))) {
-      const confirmed = window.confirm(t("app:notice.changeTaskWarning"));
-      if (!confirmed) return;
-    }
     const template = templateFor(a, taskId);
     const nextNodes = !taskChanged && dataset ? syncOutputContract(template.nodes, template.edges, dataset) : template.nodes;
     const freshRun=newTrainingRun(taskChanged ? 1 : trainingRuns.length + 1, t("app:trainingRun.defaultName", { index:taskChanged ? 1 : trainingRuns.length + 1 }));
@@ -281,6 +322,16 @@ export default function App() {
     if (project) { const updated = { ...project, architecture: a, taskId, updatedAt: now() }; setProject(updated); setProjects(v => v.map(p => p.id === updated.id ? updated : p)); }
   };
 
+  const choose = (a: Architecture, taskId: TaskId) => {
+    if (architecture === a && task === taskId) return;
+    const taskChanged = Boolean(task && task !== taskId);
+    if (taskChanged && (dataset || nodes.length > 0 || trainingRuns.some(item => item.result))) {
+      setDialog({kind:"confirm",title:t("app:notice.changeTaskTitle"),message:t("app:notice.changeTaskWarning"),onConfirm:()=>applyTaskChoice(a,taskId)});
+      return;
+    }
+    applyTaskChoice(a,taskId);
+  };
+
   const downloadData = async (datasetId: string, options?: DatasetOptions) => {
     if (!task || !architecture) return;
     try {
@@ -289,6 +340,13 @@ export default function App() {
       else throw new Error(t("app:data.noActiveProject"));
       setDataset(result); setNodes(current => syncOutputContract(current, edges, result)); setGraphValid(false); setNotice(t("app:data.datasetReady", { samples: result.samples }));
     } catch (e) { setNotice(translateBackendError(String(e))); }
+  };
+
+  const importKaggleData = async (handle: string, options: DatasetOptions) => {
+    if (!task || !architecture || !project) throw new Error(t("app:data.noActiveProject"));
+    const result = await backend<DatasetSummary>("data.kaggle.import", { project, task_id: task, handle, options });
+    setDataset(result); setNodes(current => syncOutputContract(current, edges, result)); setGraphValid(false);
+    setNotice(t("app:data.datasetReady", { samples: result.samples }));
   };
 
   const importData = async (path: string, options?: DatasetOptions) => {
@@ -319,31 +377,66 @@ export default function App() {
     if (!project || !dataset || !task) throw new Error(t("app:data.noActiveDataset"));
     try {
       const result=await backend<DatasetSummary>("data.pipeline.apply",{project,dataset,task_id:task,pipeline});
-      setDataset(result);setNodes(current=>syncOutputContract(current,edges,result));setGraphValid(false);setNotice(t("app:data.pipelineApplied", { revision: result.pipeline?.revision ?? result.revision }));
+      setDataset({...result,splitPending:false});setNodes(current=>syncOutputContract(current,edges,result));setGraphValid(false);setNotice(t("app:data.pipelineApplied", { revision: result.pipeline?.revision ?? result.revision }));
     } catch(e) { setNotice(translateBackendError(String(e))); throw e; }
   };
 
-  const validateGraph = async () => {
+  const validateGraph = async (source:"manual"|"automatic"="manual", expectedKey?:string) => {
+    if(source==="manual"&&autoValidationTimer.current!==null){window.clearTimeout(autoValidationTimer.current);autoValidationTimer.current=null}
+    const requestKey=expectedKey||validationKey;
+    if(requestKey!==validationKeyRef.current)return false;
+    const requestId=++validationRequest.current;
+    const isCurrent=()=>requestId===validationRequest.current&&requestKey===validationKeyRef.current;
+    if(isCurrent())setValidationMessage("");
     if (!project || !dataset || !task || !architecture) {
-      setGraphValid(false);
-      setNotice(t("app:notice.completeProjectData"));
+      if(isCurrent()){setGraphValid(false);setValidationStats(null);if(source==="manual")setNotice(t("app:notice.completeProjectData"))}
       return false;
     }
     const contractNodes = syncOutputContract(nodes, edges, dataset);
     if (contractNodes !== nodes) setNodes(contractNodes);
     const graphNodes = contractNodes;
     const errors=graphErrorMap(graphNodes,edges,t);
+    if(!isCurrent())return false;
     setNodes(items=>items.map(node=>({...node,data:{...node.data,error:errors.get(node.id)}})));
-    if (errors.size) { const [nodeId,message]=errors.entries().next().value as [string,string];setSelectedId(nodeId);setNotice(`${nodes.find(node=>node.id===nodeId)?.data.label || t("app:builder.graph")}: ${message}`);setGraphValid(false);return false; }
+    if (errors.size) {
+      const [nodeId,message]=errors.entries().next().value as [string,string];
+      setValidationStats(null);setGraphValid(false);setValidationMessage(message);
+      if(source==="manual"){setSelectedId(nodeId);setNotice(`${nodes.find(node=>node.id===nodeId)?.data.label || t("app:builder.graph")}: ${message}`)}
+      return false;
+    }
     {
       try {
         const r = await backend<GraphValidation>("graph.validate", { project, dataset, task_id: task, architecture, graph: { nodes: graphNodes, edges } });
+        if(!isCurrent())return false;
         if (r.node_shapes) setNodes(ns => ns.map(n => {const value=r.node_shapes?.[n.id];const shape=Array.isArray(value)?`[B, ${value.join(", ")}]`:value?Object.entries(value).map(([port,dims])=>`${port} [B, ${dims.join(", ")}]`).join(" · "):"?";return {...n,data:{...n.data,shape}}}));
-        setValidationStats(r.valid ? r : null); setGraphValid(r.valid); setNotice(r.message); return r.valid;
-      } catch (e) { const message=translateBackendError(String(e));const failed=nodes.find(node=>message.includes(node.data.label)||message.includes(node.id));if(failed){setNodes(items=>items.map(node=>node.id===failed.id?{...node,data:{...node.data,error:message}}:node));setSelectedId(failed.id)}setGraphValid(false);setNotice(message);return false; }
+        setValidationStats(r.valid ? r : null); setGraphValid(r.valid);setValidationMessage(r.valid?"":r.message); if(source==="manual")setNotice(r.message); return r.valid;
+      } catch (e) {
+        if(!isCurrent())return false;
+        const message=translateBackendError(String(e));setValidationMessage(message);const failed=nodes.find(node=>message.includes(node.data.label)||message.includes(node.id));if(failed){setNodes(items=>items.map(node=>node.id===failed.id?{...node,data:{...node.data,error:message}}:node));if(source==="manual")setSelectedId(failed.id)}setValidationStats(null);setGraphValid(false);if(source==="manual")setNotice(message);return false;
+      }
     }
     setGraphValid(false); return false;
   };
+
+  const validateGraphRef=useRef(validateGraph);
+  validateGraphRef.current=validateGraph;
+  useEffect(()=>{
+    if(previousValidationKey.current===validationKey)return;
+    previousValidationKey.current=validationKey;
+    validationRequest.current++;
+    setGraphValid(false);setValidationStats(null);setValidationMessage("");
+    setNodes(items=>items.map(node=>({...node,data:{...node.data,shape:undefined,error:undefined}})));
+  },[validationKey,setNodes]);
+  useEffect(()=>{
+    if(autoValidationTimer.current!==null){window.clearTimeout(autoValidationTimer.current);autoValidationTimer.current=null}
+    if(step!=="builder"||!project||!dataset||!task||!architecture)return;
+    const scheduledKey=validationKey;
+    autoValidationTimer.current=window.setTimeout(()=>{
+      autoValidationTimer.current=null;
+      if(validationKeyRef.current===scheduledKey)void validateGraphRef.current("automatic",scheduledKey);
+    },450);
+    return()=>{if(autoValidationTimer.current!==null){window.clearTimeout(autoValidationTimer.current);autoValidationTimer.current=null}};
+  },[validationKey,step]);
 
   const saveModelRevision = async () => {
     if (!(await validateGraph()) || !project || !activeModelId) return;
@@ -362,17 +455,22 @@ export default function App() {
 
   const train = async (config: Record<string, number | string | boolean>) => {
     if (!project || !dataset || !task || !architecture || !(await validateGraph())) return;
-    const targetId=activeTrainingRun?.id || newTrainingRun(trainingRuns.length+1, t("app:trainingRun.defaultName", { index: trainingRuns.length + 1 })).id;
-    runningRunId.current=targetId;
+    const makeNewRun=activeTrainingRun?.status==="completed"||!activeTrainingRun;
+    const targetRun=makeNewRun
+      ? newTrainingRun(trainingRuns.length+1, t("app:trainingRun.defaultName", { index: trainingRuns.length + 1 }))
+      : activeTrainingRun;
+    const targetId=targetRun.id;
+    runningRunId.current=targetId;backendRunId.current=null;pendingStop.current=false;stoppingRef.current=false;setStopping(false);projectRef.current=project;
     const trainedGraph={nodes:syncOutputContract(nodes,edges,dataset),edges};
-    setTraining(true); setTrainingRuns(runs=>runs.map(item=>item.id===targetId?{...item,modelId:activeModelId || undefined,modelTask:task,modelArchitecture:architecture,modelInputShape:[...(dataset.inputShape||[])],modelGraph:trainedGraph,status:"running",config,history:[],result:null,error:undefined,startedAt:now(),completedAt:undefined}:item)); setNotice(t("app:training.preparing"));
+    const nextRun={...targetRun,modelId:activeModelId || undefined,modelTask:task,modelArchitecture:architecture,modelInputShape:[...(dataset.inputShape||[])],modelGraph:trainedGraph,status:"running" as const,config,history:[],result:null,error:undefined,startedAt:now(),completedAt:undefined};
+    setTraining(true);setActiveRunId(targetId);setTrainingRuns(runs=>runs.some(item=>item.id===targetId)?runs.map(item=>item.id===targetId?nextRun:item):[...runs,nextRun]);setNotice(t("app:training.preparing"));
     try {
       await startTraining({ project, dataset, task_id: task, architecture, model_spec:models.find(model=>model.id===activeModelId), graph: { nodes: syncOutputContract(nodes, edges, dataset), edges }, config });
     } catch (e) {
-      setTraining(false); runningRunId.current=null; setTrainingRuns(runs=>runs.map(item=>item.id===targetId?{...item,status:"error",error:translateBackendError(String(e)),completedAt:now()}:item));setNotice(translateBackendError(String(e)));
+      setTraining(false); runningRunId.current=null;backendRunId.current=null;pendingStop.current=false;stoppingRef.current=false;setStopping(false); setTrainingRuns(runs=>runs.map(item=>item.id===targetId?{...item,status:"error",error:translateBackendError(String(e)),completedAt:now()}:item));setNotice(translateBackendError(String(e)));
     }
   };
-  const controlTraining=async(state:"running"|"paused"|"cancelled")=>{if(!project||!backendRunId.current)return;await backend("training.control",{project,run_id:backendRunId.current,state});};
+  const controlTraining=async(state:"running"|"paused"|"cancelled")=>{if(!projectRef.current)return;if(state==="cancelled"){if(stoppingRef.current)return;stoppingRef.current=true;setStopping(true);if(!backendRunId.current){pendingStop.current=true;return}}if(!backendRunId.current)return;try{await backend("training.control",{project:projectRef.current,run_id:backendRunId.current,state})}catch(error){if(state==="cancelled")stoppingRef.current=false;setStopping(false);setNotice(translateBackendError(String(error)))}};
 
   const infer = async (payload: { mode: string; values?: string; index?: number }) => {
     if (!project || !task || !architecture || !dataset) throw new Error(t("app:data.completeProjectData"));
@@ -388,9 +486,14 @@ export default function App() {
     setModels(items=>items.map(model=>model.id===activeModelId?{...model,architecture:architecture || model.architecture,nodes,edges,graphValid}:model));
     setActiveModelId(id); setArchitecture(target.architecture); setNodes(target.nodes); setEdges(target.edges); setGraphValid(target.graphValid); setSelectedId(null);
   };
+  const closeModel=(id:string)=>{const i=models.findIndex(m=>m.id===id);if(models.length<=1||i<0||trainingRuns.some(r=>r.id===runningRunId.current&&r.modelId===id))return;if(id===activeModelId)switchModel(models[i===models.length-1?i-1:i+1].id);setModels(items=>items.filter(m=>m.id!==id))};
+  const closeRun=(id:string)=>{const i=trainingRuns.findIndex(r=>r.id===id);if(trainingRuns.length<=1||i<0||id===runningRunId.current)return;if(id===activeRunId)setActiveRunId(trainingRuns[i===trainingRuns.length-1?i-1:i+1].id);setTrainingRuns(items=>items.filter(r=>r.id!==id))};
   const addModel = () => {
-    if(!architecture || !task)return; const defaultName=t("app:projectModel.defaultName", { index: models.length + 1 }); const name=window.prompt(t("app:model.namePrompt"),defaultName)?.trim(); if(!name)return;
-    const model=newProjectModel(models.length+1,architecture,task,defaultName); model.name=name; model.nodes=syncOutputContract(model.nodes,model.edges,dataset); setModels(items=>[...items,model]); switchModelAfterCreate(model);
+    if(!architecture || !task)return; const defaultName=t("app:projectModel.defaultName", { index: models.length + 1 });
+    setDialog({kind:"prompt",title:t("app:model.createTitle"),inputLabel:t("app:model.namePrompt"),initialValue:defaultName,onConfirm:value=>{
+      const name=value?.trim();if(!name||!architecture||!task)return;
+      const model=newProjectModel(models.length+1,architecture,task,defaultName);model.name=name;model.nodes=syncOutputContract(model.nodes,model.edges,dataset);setModels(items=>[...items,model]);switchModelAfterCreate(model);
+    }});
   };
   const switchModelAfterCreate=(model:ProjectModel)=>{setActiveModelId(model.id);setArchitecture(model.architecture);setNodes(model.nodes);setEdges(model.edges);setGraphValid(false);setSelectedId(null)};
   const createCheckpointBackbone=(payload:{name:string;nodes:ModelNodeT[];edges:ModelEdge[];checkpoint:string;sourceRunId:string;sourceModelId:string;sourceNodeId:string;sourceHandle?:string})=>{
@@ -416,31 +519,58 @@ export default function App() {
     <main className="main-area">
       {notice && <div className="notice"><span>{notice}</span><button onClick={() => setNotice("")}><X size={14}/></button></div>}
       <section className={`content ${step === "training" ? "no-scroll" : ""}`}>
-        <div className={`stage-nav ${step==="builder"?"on-toolbar":""}`}><button className="secondary" onClick={goPrevious} disabled={stepIndex===0}><ArrowLeft/> {t("common:previous")}</button>{stepIndex<steps.length-1&&<button className="primary" onClick={goNext}>{t("common:next")} <ChevronRight/></button>}</div>
+
         {step === "model" && <ModelTask architecture={architecture} task={task} runtimeCatalog={runtimeCatalog} onChoose={choose} onContinue={goNext} />}
-        {step === "data" && <DataStep project={project} task={task} dataset={dataset} dataContinue={dataContinue} setNotice={setNotice} onDownload={downloadData} onImport={importData} onImportFiles={importDataFiles} onChooseAnother={()=>setDataset(null)} onApplyPipeline={applyDataPipeline} onSplitsChange={splits => setDataset(current => current ? { ...current, splits } : current)} />}
-        {step === "builder" && architecture && task && <Builder architecture={architecture} task={task} dataset={dataset} validationStats={validationStats} models={models} trainingRuns={trainingRuns} activeModelId={activeModelId} onSelectModel={switchModel} onAddModel={addModel} onReuseCheckpoint={createCheckpointBackbone} onApplyPretrained={spec=>setModels(items=>items.map(model=>model.id===activeModelId?{...model,source:"huggingface",pretrained:spec,schemaVersion:2,graphValid:false}:model))} theme={theme} nodes={nodes} edges={edges} setNodes={setNodes} setEdges={setEdges} onNodesChange={(changes: Parameters<typeof onNodesChange>[0]) => { if(changes.some(change=>["remove","add","replace"].includes(change.type))){setGraphValid(false);setNodes(items=>items.map(node=>({...node,data:{...node.data,shape:undefined,error:undefined}})))} onNodesChange(changes); }} onEdgesChange={(changes: Parameters<typeof onEdgesChange>[0]) => { if(changes.some(change=>["remove","add","replace"].includes(change.type))){setGraphValid(false);setNodes(items=>items.map(node=>({...node,data:{...node.data,shape:undefined,error:undefined}})))} onEdgesChange(changes); }} onDirty={()=>{setGraphValid(false);setValidationStats(null);setNodes(items=>items.map(node=>({...node,data:{...node.data,shape:undefined,error:undefined}})))}} selected={selected} selectedId={selectedId} setSelectedId={setSelectedId} onValidate={validateGraph} onSaveRevision={saveModelRevision} />}
-        {step === "training" && task && <Training task={task} dataset={dataset} models={models} activeModelId={activeModelId} onSelectModel={switchModel} runs={trainingRuns} activeRunId={activeRunId} training={training} accent={accent} onSelectRun={setActiveRunId} onAddRun={addTrainingRun} onTrain={train} onControl={controlTraining} />}
+        {step === "data" && <DataStep project={project} task={task} dataset={dataset} dataContinue={dataContinue} setNotice={setNotice} onDownload={downloadData} onKaggle={importKaggleData} onImport={importData} onImportFiles={importDataFiles} onChooseAnother={()=>setDataset(null)} onApplyPipeline={applyDataPipeline} onSplitsChange={splits => setDataset(current => current ? { ...current, splits, splitCounts:undefined, splitPending:true } : current)} />}
+        {step === "builder" && architecture && task && <Builder architecture={architecture} task={task} dataset={dataset} validationStats={validationStats} validationMessage={validationMessage} models={models} trainingRuns={trainingRuns} activeModelId={activeModelId} onSelectModel={switchModel} onCloseModel={closeModel} onAddModel={addModel} onReuseCheckpoint={createCheckpointBackbone} onApplyPretrained={spec=>setModels(items=>items.map(model=>model.id===activeModelId?{...model,source:"huggingface",pretrained:spec,schemaVersion:2,graphValid:false}:model))} theme={theme} nodes={nodes} edges={edges} setNodes={setNodes} setEdges={setEdges} onNodesChange={(changes: Parameters<typeof onNodesChange>[0]) => { if(changes.some(change=>["remove","add","replace"].includes(change.type))){setGraphValid(false);setNodes(items=>items.map(node=>({...node,data:{...node.data,shape:undefined,error:undefined}})))} onNodesChange(changes); }} onEdgesChange={(changes: Parameters<typeof onEdgesChange>[0]) => { if(changes.some(change=>["remove","add","replace"].includes(change.type))){setGraphValid(false);setNodes(items=>items.map(node=>({...node,data:{...node.data,shape:undefined,error:undefined}})))} onEdgesChange(changes); }} onDirty={()=>{setGraphValid(false);setValidationStats(null);setNodes(items=>items.map(node=>({...node,data:{...node.data,shape:undefined,error:undefined}})))}} selected={selected} selectedId={selectedId} setSelectedId={setSelectedId} onValidate={validateGraph} onSaveRevision={saveModelRevision} />}
+        {step === "training" && task && <Training task={task} dataset={dataset} models={models} activeModelId={activeModelId} onSelectModel={switchModel} runs={trainingRuns} activeRunId={activeRunId} training={training} stopping={stopping} accent={accent} onSelectRun={setActiveRunId} onCloseRun={closeRun} onAddRun={addTrainingRun} onTrain={train} onControl={controlTraining} />}
         {step === "inference" && task && dataset && <Inference task={task} dataset={dataset} run={run} runName={activeTrainingRun?.name || t("app:inference.activeRun")} onInfer={infer} />}
       </section>
     </main>
+    <AppDialog dialog={dialog} onClose={()=>setDialog(null)}/>
   </div>;
 }
 
-function Builder({ architecture, task, dataset, validationStats, models, trainingRuns, activeModelId, onSelectModel, onAddModel, onReuseCheckpoint, onApplyPretrained, theme, nodes, edges, setNodes, setEdges, onNodesChange, onEdgesChange, onDirty, selected, selectedId, setSelectedId, onValidate, onSaveRevision }: { architecture: Architecture; task:TaskId; dataset:DatasetSummary|null; validationStats:GraphValidation|null; models:ProjectModel[]; trainingRuns:TrainingRun[]; activeModelId:string|null; onSelectModel:(id:string)=>void; onAddModel:()=>void; onReuseCheckpoint:(payload:{name:string;nodes:ModelNodeT[];edges:ModelEdge[];checkpoint:string;sourceRunId:string;sourceModelId:string;sourceNodeId:string;sourceHandle?:string})=>void; onApplyPretrained:(spec:PretrainedModelSpec)=>void; theme: Theme; nodes: ModelNodeT[]; edges: ModelEdge[]; setNodes: React.Dispatch<React.SetStateAction<ModelNodeT[]>>; setEdges: React.Dispatch<React.SetStateAction<ModelEdge[]>>; onNodesChange: any; onEdgesChange: any; onDirty: () => void; selected: ModelNodeT | null; selectedId:string|null; setSelectedId: (id: string | null) => void; onValidate: () => void; onSaveRevision: () => void }) {
+function AppDialog({dialog,onClose}:{dialog:AppDialogState|null;onClose:()=>void}){
+  const {t}=useTranslation(["app","common"]);const [value,setValue]=useState(dialog?.initialValue||"");
+  useEffect(()=>{setValue(dialog?.initialValue||"")},[dialog]);
+  if(!dialog)return null;
+  const submit=(inputValue?:string)=>{onClose();dialog.onConfirm?.(inputValue)};
+  return <div className="modal-backdrop app-dialog-backdrop" onMouseDown={event=>{if(event.target===event.currentTarget)onClose()}}><section className="modal app-dialog" role="dialog" aria-modal="true" aria-labelledby="app-dialog-title" aria-describedby={dialog.message?"app-dialog-message":undefined} onMouseDown={event=>event.stopPropagation()} onKeyDown={event=>{if(event.key==="Escape"){event.preventDefault();onClose();return}if(event.key==="Tab"){const controls=Array.from(event.currentTarget.querySelectorAll<HTMLElement>("button:not([disabled]),input:not([disabled]),select:not([disabled]),textarea:not([disabled])"));const first=controls[0],last=controls.at(-1);if(event.shiftKey&&document.activeElement===first){event.preventDefault();last?.focus()}else if(!event.shiftKey&&document.activeElement===last){event.preventDefault();first?.focus()}}}}>
+    <span className="eyebrow">{dialog.kind==="confirm"?t("common:warning"):dialog.kind==="alert"?t("app:dialog.noticeEyebrow"):t("app:dialog.inputEyebrow")}</span>
+    <h2 id="app-dialog-title">{dialog.title}</h2>
+    {dialog.message&&<p id="app-dialog-message">{dialog.message}</p>}
+    {dialog.kind==="prompt"&&<label>{dialog.inputLabel||t("common:name")}<input autoFocus value={value} onChange={event=>setValue(event.target.value)} onKeyDown={event=>{if(event.key==="Enter"){event.preventDefault();submit(value)}}}/></label>}
+    <div className="modal-actions">
+      {dialog.kind!=="alert"&&<button type="button" className="secondary" onClick={onClose}>{t("common:cancel")}</button>}
+      {dialog.kind==="alert"?<button type="button" className="primary" autoFocus onClick={onClose}>{t("common:close")}</button>:dialog.kind==="confirm"?<button type="button" className="primary" autoFocus onClick={()=>submit()}>{dialog.confirmLabel||t("common:continue")}</button>:<button type="button" className="primary" onClick={()=>submit(value)}>{dialog.confirmLabel||t("common:continue")}</button>}
+    </div>
+  </section></div>;
+}
+
+function Builder({ architecture, task, dataset, validationStats, validationMessage, models, trainingRuns, activeModelId, onSelectModel, onCloseModel, onAddModel, onReuseCheckpoint, onApplyPretrained, theme, nodes, edges, setNodes, setEdges, onNodesChange, onEdgesChange, onDirty, selected, selectedId, setSelectedId, onValidate, onSaveRevision }: { architecture: Architecture; task:TaskId; dataset:DatasetSummary|null; validationStats:GraphValidation|null; validationMessage:string; models:ProjectModel[]; trainingRuns:TrainingRun[]; activeModelId:string|null; onSelectModel:(id:string)=>void; onCloseModel:(id:string)=>void; onAddModel:()=>void; onReuseCheckpoint:(payload:{name:string;nodes:ModelNodeT[];edges:ModelEdge[];checkpoint:string;sourceRunId:string;sourceModelId:string;sourceNodeId:string;sourceHandle?:string})=>void; onApplyPretrained:(spec:PretrainedModelSpec)=>void; theme: Theme; nodes: ModelNodeT[]; edges: ModelEdge[]; setNodes: React.Dispatch<React.SetStateAction<ModelNodeT[]>>; setEdges: React.Dispatch<React.SetStateAction<ModelEdge[]>>; onNodesChange: any; onEdgesChange: any; onDirty: () => void; selected: ModelNodeT | null; selectedId:string|null; setSelectedId: (id: string | null) => void; onValidate: () => void; onSaveRevision: () => void }) {
   const { t } = useTranslation(["app", "common", "catalog"]);
   const [libraryOpen, setLibraryOpen] = useState(true);
+  const [inspectorOpen, setInspectorOpen] = useState(true);
+  const [libraryTab,setLibraryTab]=useState<"layers"|"blocks">("layers");
+  const canvasRef=useRef<HTMLDivElement>(null);
+  const insertionCount=useRef(0);
   const [flow, setFlow] = useState<ReactFlowInstance<ModelNodeT, ModelEdge> | null>(null);
+  const [selectedGroupId, setSelectedGroupId] = useState<string | null>(null);
+  const [layoutDirection, setLayoutDirection] = useState<GraphLayoutDirection>("horizontal");
   const [hoveredBlock,setHoveredBlock]=useState<(typeof BLOCKS)[Architecture][number]|null>(null);
   const [pinnedBlock,setPinnedBlock]=useState<(typeof BLOCKS)[Architecture][number]|null>(null);
+  const [hoveredPreset,setHoveredPreset]=useState<{name:string;description:string;nodes:ModelNodeT[];edges:ModelEdge[];benefit?:string;tradeoff?:string}|null>(null);
   const infoCard=useRef<HTMLDivElement>(null);
   const [presetsOpen,setPresetsOpen]=useState(false);
+  const [presetTab,setPresetTab]=useState<"scratch"|"pretrained">("scratch");
   const [pretrainedModels,setPretrainedModels]=useState<PretrainedModelSpec[]>([]);
   const [pretrainedLoading,setPretrainedLoading]=useState(false);
   const [scratchGuidance,setScratchGuidance]=useState("");
   const [presetName,setPresetName]=useState("");
   const [customPresets,setCustomPresets]=useState<Array<{id:string;name:string;description:string;nodes:ModelNodeT[];edges:ModelEdge[]}>>(()=>JSON.parse(localStorage.getItem(`mb-presets-${architecture}`)||"[]"));
   const [reuseBackboneOpen,setReuseBackboneOpen]=useState(false);
+  const [builderDialog,setBuilderDialog]=useState<AppDialogState|null>(null);
   const [reuseRunId,setReuseRunId]=useState("");
   const [reuseFeatureKey,setReuseFeatureKey]=useState("");
   const [reuseBackboneError,setReuseBackboneError]=useState("");
@@ -451,6 +581,7 @@ function Builder({ architecture, task, dataset, validationStats, models, trainin
   useEffect(()=>{if(reuseBackboneOpen){setReuseRunId(reusableRuns.at(-1)?.id||"");setReuseFeatureKey("");setReuseBackboneError("")}},[reuseBackboneOpen]);
   useEffect(()=>{if(!reuseFeatures.some(feature=>`${feature.nodeId}::${feature.handle||""}`===reuseFeatureKey))setReuseFeatureKey(reuseFeatures[0]?`${reuseFeatures[0].nodeId}::${reuseFeatures[0].handle||""}`:"")},[reuseFeatures,reuseFeatureKey]);
   useEffect(()=>localStorage.setItem(`mb-presets-${architecture}`,JSON.stringify(customPresets)),[architecture,customPresets]);
+  useEffect(()=>setLayoutDirection(inferLayoutDirection(nodes,edges)),[activeModelId]);
   useEffect(()=>{if(!presetsOpen)return;setPretrainedLoading(true);Promise.all([backend<PretrainedModelSpec[]>("model.catalog",{task_id:task,architecture}),backend<{reason?:string}>("model.catalog.guidance",{architecture})]).then(([items,guidance])=>{setPretrainedModels(items);setScratchGuidance(guidance.reason||"")}).catch(()=>{setPretrainedModels([]);setScratchGuidance("")}).finally(()=>setPretrainedLoading(false))},[presetsOpen,architecture,task]);
   useEffect(()=>{
     if(!pinnedBlock)return;
@@ -459,15 +590,6 @@ function Builder({ architecture, task, dataset, validationStats, models, trainin
     return()=>document.removeEventListener("pointerdown",close);
   },[pinnedBlock]);
 
-  const removeNode = useCallback((id: string) => {
-    const target=nodes.find(node=>node.id===id);
-    if(target?.data.blockType==="input"||(target?.data.blockType==="output"&&nodes.filter(node=>node.data.blockType==="output").length<=1))return;
-    onDirty();
-    setNodes(ns => ns.filter(n => n.id !== id));
-    setEdges(es => es.filter(e => e.source !== id && e.target !== id));
-    setSelectedId(null);
-  }, [nodes,setNodes, setEdges, setSelectedId, onDirty]);
-
   const removeEdge = useCallback((edgeId: string) => {
     onDirty();
     setEdges(es => es.filter(e => e.id !== edgeId));
@@ -475,20 +597,44 @@ function Builder({ architecture, task, dataset, validationStats, models, trainin
   const toggleExpanded=useCallback((id:string)=>setNodes(items=>items.map(item=>item.id===id?{...item,data:{...item.data,expanded:!item.data.expanded}}:item)),[setNodes]);
 
   const liveErrors=useMemo(()=>graphErrorMap(nodes,edges,t),[nodes,edges,t]);
+  const selectedNodes=useMemo(()=>nodes.filter(node=>node.selected),[nodes]);
+  const selectedEdges=useMemo(()=>edges.filter(edge=>edge.selected),[edges]);
+  const validationState=validationStats?"valid":validationMessage||liveErrors.size?"errors":"pending";
+  const validationStateLabel=validationState==="valid"?t("common:success"):validationState==="errors"?t("common:error"):t("common:loading");
+  const validationIssueCount=Math.max(liveErrors.size,validationMessage?1:0);
+  const selectionToolbarRef=useRef<HTMLDivElement>(null);
+  const updateSelectionToolbarPosition=useCallback(()=>{
+    const toolbar=selectionToolbarRef.current,canvas=canvasRef.current;
+    if(!toolbar||!canvas||!flow||(!selectedNodes.length&&!selectedEdges.length))return;
+    const rect=canvas.getBoundingClientRect();
+    let anchor:{x:number;y:number};
+    if(selectedNodes.length){
+      const left=Math.min(...selectedNodes.map(node=>node.position.x));
+      const right=Math.max(...selectedNodes.map(node=>node.position.x+(node.measured?.width||190)));
+      const top=Math.min(...selectedNodes.map(node=>node.position.y));
+      anchor={x:(left+right)/2,y:top};
+    }else anchor=flow.screenToFlowPosition({x:rect.left+rect.width/2,y:rect.top+rect.height/2});
+    const screen=flow.flowToScreenPosition(anchor);
+    const inset=Math.min(126,Math.max(8,rect.width/2-8));
+    toolbar.style.left=`${Math.max(inset,Math.min(rect.width-inset,screen.x-rect.left))}px`;
+    toolbar.style.top=`${Math.max(72,screen.y-rect.top-12)}px`;
+  },[flow,selectedNodes,selectedEdges]);
+  useEffect(()=>{updateSelectionToolbarPosition()},[updateSelectionToolbarPosition,libraryOpen,inspectorOpen]);
+  const selectedError=selected?(liveErrors.get(selected.id)||selected.data.error):undefined;
   const nodesWithHandler = useMemo(() => {
     return nodes.map(n => ({
       ...n,
-      deletable: n.data.blockType !== "input" && (n.data.blockType !== "output"||nodes.filter(node=>node.data.blockType==="output").length>1),
       data: {
         ...n.data,
-        error: liveErrors.get(n.id),
-        canDelete:n.data.blockType==="output"?nodes.filter(node=>node.data.blockType==="output").length>1:n.data.blockType!=="input",
-        inputHandles:["concat","add"].includes(n.data.blockType)?Array.from({length:Math.max(2,edges.filter(edge=>edge.target===n.id).length+1)},(_,index)=>`input_${index}`):undefined,
-        onDelete: removeNode,
+        layoutDirection,
+        tensorTask:task,
+        tensorArchitecture:architecture,
+        error: liveErrors.get(n.id)||n.data.error,
+        inputHandles:["concat","add"].includes(n.data.blockType)?Array.from({length:Math.max(2,edges.filter(edge=>edge.target===n.id).length+1,...edges.filter(edge=>edge.target===n.id).map(edge=>Number(edge.targetHandle?.match(/^input_(\d+)$/)?.[1]??-1)+2))},(_,index)=>`input_${index}`):undefined,
         onToggleExpanded: toggleExpanded
       }
     }));
-  }, [nodes,edges, removeNode,toggleExpanded,liveErrors]);
+  }, [nodes,edges,task,architecture,layoutDirection,toggleExpanded,liveErrors]);
 
   const edgesWithHandler = useMemo(() => {
     return edges.map(e => ({
@@ -501,34 +647,17 @@ function Builder({ architecture, task, dataset, validationStats, models, trainin
     }));
   }, [edges, removeEdge]);
 
-  const isValidConnection = useCallback((connection: Connection | ModelEdge) => {
-    if (!connection.source || !connection.target) return false;
-    if (connection.source === connection.target) return false;
-    const sourceNode=nodes.find(node=>node.id===connection.source);const targetNode=nodes.find(node=>node.id===connection.target);
-    if(!sourceNode||!targetNode||sourceNode.data.blockType==="output"||targetNode.data.blockType==="input")return false;
-    if(edges.some(edge=>edge.source===connection.source&&edge.target===connection.target&&edge.sourceHandle===connection.sourceHandle&&edge.targetHandle===connection.targetHandle&&edge.id!==(connection as ModelEdge).id))return false;
-    const existingIncoming = edges.filter(e => e.target === connection.target && e.id !== (connection as ModelEdge).id);
-    if(["concat","add"].includes(targetNode.data.blockType)&&connection.targetHandle&&existingIncoming.some(edge=>edge.targetHandle===connection.targetHandle))return false;
-    if (!["concat","add"].includes(targetNode.data.blockType)&&existingIncoming.length > 0) return false;
-
-    const isReachable = (src: string, tgt: string, visited = new Set<string>()): boolean => {
-      if (src === tgt) return true;
-      if (visited.has(tgt)) return false;
-      visited.add(tgt);
-      const children = edges.filter(e => e.source === tgt).map(e => e.target);
-      return children.some(c => isReachable(src, c, visited));
-    };
-
-    if (isReachable(connection.source, connection.target)) return false;
-
-    return true;
-  }, [edges,nodes]);
-
-  const connect = useCallback((p: Connection) => {
-    if (!isValidConnection(p)) return;
-    onDirty();
-    setEdges(es => addEdge({ ...p, type: "smoothstep", data: { onDelete: removeEdge } }, es));
-  }, [setEdges, onDirty, isValidConnection, removeEdge]);
+  const candidateEdges = useCallback((connection: Connection | ModelEdge, removedId?: string) => candidateEdgesForConnection(connection,nodes,edges,removedId),[edges,nodes]);
+  const validCandidate = useCallback((connection: Connection | ModelEdge, removedId?: string) => isValidGraphConnection(connection,nodes,edges,removedId),[nodes,edges]);
+  const isValidConnection = useCallback((connection: Connection | ModelEdge) => validCandidate(connection,(connection as ModelEdge).id),[validCandidate]);
+  const connect = useCallback((connection: Connection) => {
+    if(!validCandidate(connection))return;
+    onDirty();setEdges(addEdge({...connection,type:"smoothstep"},candidateEdges(connection)));
+  },[validCandidate,candidateEdges,onDirty,setEdges]);
+  const reconnect = useCallback((old:ModelEdge, connection:Connection)=>{
+    if(!validCandidate(connection,old.id))return;
+    onDirty();setEdges(addEdge({...connection,id:old.id,type:"smoothstep"},candidateEdges(connection,old.id)));
+  },[validCandidate,candidateEdges,onDirty,setEdges]);
 
   const insertMergeBranch = (kind:"add"|"concat") => {
     const source=nodes.find(node=>node.id===selectedId);
@@ -572,12 +701,88 @@ function Builder({ architecture, task, dataset, validationStats, models, trainin
     window.setTimeout(()=>flow?.fitView({nodes:[{id:source.id},{id:mergeId},{id:nextId}],duration:250,padding:.5}),20);
   };
 
-  const select: NodeMouseHandler<ModelNodeT> = (_, n) => setSelectedId(n.id);
-  const addBlock = (b: typeof BLOCKS[Architecture][number], position = { x: 300 + Math.random() * 300, y: 120 + Math.random() * 220 }) => {
+  const select: NodeMouseHandler<ModelNodeT> = (_, n) => { setSelectedId(n.id); setSelectedGroupId(null); };
+  const centerFlowPoint=()=>{const rect=canvasRef.current?.getBoundingClientRect();return rect&&flow?flow.screenToFlowPosition({x:rect.left+rect.width/2,y:rect.top+rect.height/2}):{x:400,y:250}};
+  const nextInsertionCenter=()=>{const point=centerFlowPoint();const index=insertionCount.current++;const radius=index?10+Math.sqrt(index)*5:0;const angle=index*2.399963229728653;return {x:point.x+Math.cos(angle)*radius,y:point.y+Math.sin(angle)*radius}};
+  const centerPosition=()=>{const point=nextInsertionCenter();return {x:point.x-95,y:point.y-55}};
+  const addBlock = (b: typeof BLOCKS[Architecture][number], position = centerPosition()) => {
     onDirty();
     const id = `${b.type}-${uid().slice(0, 6)}`;
-    setNodes(ns => [...ns, { id, type: "modelNode", position, deletable: true, data: { blockType: b.type, label: b.label, category: b.category, properties: { ...b.defaults } } }]);
+    setNodes(ns => [...ns.map(node=>({...node,selected:false})), { id, type: "modelNode", position, selected:true, deletable: true, data: { blockType: b.type, label: b.label, category: b.category, properties: { ...b.defaults } } }]);
     setSelectedId(id);
+  };
+
+  const duplicateSelection=useCallback(()=>{
+    const duplicate=duplicateGraphSelection(nodes,edges,type=>`${type}-${uid()}`);
+    if(!duplicate.selectedId)return;
+    onDirty();setNodes(duplicate.nodes);setEdges(duplicate.edges);setSelectedId(duplicate.selectedId);const groupId=duplicate.nodes.find(node=>node.id===duplicate.selectedId)?.data.groupId;setSelectedGroupId(typeof groupId==="string"?groupId:null);
+  },[nodes,edges,onDirty,setNodes,setEdges,setSelectedId]);
+
+  const deleteNodeIds=useCallback((requested:Set<string>)=>{
+    if(!requested.size)return;
+    const groupedIds=new Set(nodes.filter(node=>requested.has(node.id)&&typeof node.data.groupId==="string").map(node=>node.data.groupId as string));
+    const outputs=nodes.filter(node=>node.data.blockType==="output");
+    const keepOutputId=outputs.find(node=>!requested.has(node.id))?.id||outputs[0]?.id;
+    const deleting=new Set([...requested].filter(id=>{
+      const node=nodes.find(item=>item.id===id);
+      return node&&node.data.blockType!=="input"&&!(node.data.blockType==="output"&&id===keepOutputId);
+    }));
+    const remaining=nodes.filter(node=>!deleting.has(node.id));
+    const protectedGroupMembers=remaining.filter(node=>groupedIds.has(String(node.data.groupId)));
+    if(!deleting.size&&protectedGroupMembers.length===0)return;
+    onDirty();
+    setNodes(items=>items.filter(node=>!deleting.has(node.id)).map(node=>({
+      ...node,
+      selected:false,
+      ...(groupedIds.has(String(node.data.groupId))?{data:{...node.data,groupId:undefined,groupName:undefined}}:{}),
+    })));
+    setEdges(items=>items.filter(edge=>!deleting.has(edge.source)&&!deleting.has(edge.target)));
+    setSelectedId(selectedId&&deleting.has(selectedId)?null:selectedId);
+    setSelectedGroupId(null);
+  },[nodes,selectedId,onDirty,setNodes,setEdges,setSelectedId]);
+  const deleteSelection=useCallback(()=>{
+    const selectedGroups=new Set(nodes.filter(node=>node.selected&&typeof node.data.groupId==="string").map(node=>node.data.groupId as string));
+    const requested=new Set(nodes.filter(node=>node.selected||selectedGroups.has(String(node.data.groupId))).map(node=>node.id));
+    if(requested.size){deleteNodeIds(requested);return;}
+    const selectedEdges=edges.filter(edge=>edge.selected);
+    if(selectedEdges.length){onDirty();const ids=new Set(selectedEdges.map(edge=>edge.id));setEdges(items=>items.filter(edge=>!ids.has(edge.id)));}
+  },[nodes,edges,deleteNodeIds,onDirty,setEdges]);
+  useEffect(()=>{
+    const key=(event:KeyboardEvent)=>{
+      const target=event.target as HTMLElement|null;
+      if(target?.closest("input,textarea,select,[contenteditable]:not([contenteditable='false'])"))return;
+      if((event.ctrlKey||event.metaKey)&&event.key.toLowerCase()==="d"){event.preventDefault();duplicateSelection();return;}
+      if(event.key==="Delete"||event.key==="Backspace"){
+        if(!nodes.some(node=>node.selected)&&!edges.some(edge=>edge.selected))return;
+        event.preventDefault();deleteSelection();
+      }
+    };
+    window.addEventListener("keydown",key);
+    return()=>window.removeEventListener("keydown",key);
+  },[duplicateSelection,deleteSelection,nodes,edges]);
+
+  const visualGroups=useMemo(()=>{
+    const grouped=new Map<string,ModelNodeT[]>();for(const node of nodes){const id=node.data.groupId;if(typeof id==="string"){const members=grouped.get(id)||[];members.push(node);grouped.set(id,members)}}
+    return [...grouped].map(([id,members])=>({id,members,name:String(members[0].data.groupName||"Group"),selected:selectedGroupId===id,x:Math.min(...members.map(n=>n.position.x))-24,y:Math.min(...members.map(n=>n.position.y))-48,right:Math.max(...members.map(n=>n.position.x+(n.measured?.width||190)))+24,bottom:Math.max(...members.map(n=>n.position.y+(n.measured?.height||110)))+24}));
+  },[nodes,selectedGroupId]);
+  const groupSelection=()=>{const members=nodes.filter(n=>n.selected);if(members.length<2)return;const memberIds=new Set(members.map(node=>node.id));setBuilderDialog({kind:"prompt",title:t("app:builder.groupCreateTitle"),inputLabel:t("app:builder.groupName"),initialValue:t("app:builder.groupDefault"),onConfirm:name=>{if(!name?.trim())return;const id=uid();onDirty();setNodes(items=>items.map(n=>memberIds.has(n.id)?{...n,data:{...n.data,groupId:id,groupName:name.trim()}}:n));setSelectedGroupId(id);setSelectedId(members[0]?.id||null)}})};
+  const ungroupSelection=()=>{const ids=new Set(nodes.filter(n=>n.selected&&n.data.groupId).map(n=>n.data.groupId));if(!ids.size)return;onDirty();setNodes(items=>items.map(n=>ids.has(n.data.groupId)?{...n,data:{...n.data,groupId:undefined,groupName:undefined}}:n));setSelectedGroupId(null)};
+  const selectGroup=(id:string)=>{const first=nodes.find(node=>node.data.groupId===id);setNodes(items=>items.map(n=>({...n,selected:n.data.groupId===id})));setSelectedId(first?.id||null);setSelectedGroupId(id)};
+  const renameGroup=(id:string,name:string)=>setBuilderDialog({kind:"prompt",title:t("app:builder.groupRenameTitle"),inputLabel:t("app:builder.groupName"),initialValue:name,onConfirm:value=>{const next=value?.trim();if(next)setNodes(items=>items.map(n=>n.data.groupId===id?{...n,data:{...n.data,groupName:next}}:n))}});
+  const dragGroup=(event:React.PointerEvent,id:string)=>{if(event.button!==0||!flow)return;event.preventDefault();event.stopPropagation();selectGroup(id);let previous=flow.screenToFlowPosition({x:event.clientX,y:event.clientY});const move=(e:PointerEvent)=>{const current=flow.screenToFlowPosition({x:e.clientX,y:e.clientY});const dx=current.x-previous.x,dy=current.y-previous.y;previous=current;setNodes(items=>items.map(n=>n.data.groupId===id?{...n,position:{x:n.position.x+dx,y:n.position.y+dy}}:n))};const up=()=>{window.removeEventListener("pointermove",move);window.removeEventListener("pointerup",up);window.removeEventListener("pointercancel",up)};window.addEventListener("pointermove",move);window.addEventListener("pointerup",up);window.addEventListener("pointercancel",up)};
+  const applyLayout=(direction:GraphLayoutDirection)=>{
+    setLayoutDirection(direction);
+    const laidOut=layoutConnectedGraph(nodes,edges,direction);
+    setNodes(laidOut);
+    const ordered=[...laidOut].sort((a,b)=>direction==="vertical"?a.position.y-b.position.y:a.position.x-b.position.x);
+    const focus=ordered.slice(0,2).map(({id})=>({id}));
+    window.requestAnimationFrame(()=>{if(focus.length)void flow?.fitView({nodes:focus,duration:250,padding:.15,minZoom:1,maxZoom:1})});
+  };
+
+  const addCnnRecipe=(kind:0|1|2|3)=>{
+    const name=kind===0?t("app:builder.recipeResidual"):t("app:builder.recipeConv",{count:kind});
+    const recipe=createCnnRecipe(kind,nextInsertionCenter(),name,type=>`${type}-${uid().slice(0,8)}`,type=>t(`catalog:blocks.${type}.label`,{defaultValue:type}));
+    onDirty();setNodes(items=>[...items.map(node=>({...node,selected:false})),...recipe.nodes]);setEdges(items=>[...items,...recipe.edges]);setSelectedId(recipe.nodes[0]?.id||null);
   };
 
   const addOutput=()=>{
@@ -623,9 +828,10 @@ function Builder({ architecture, task, dataset, validationStats, models, trainin
   }, [nodes]);
   const builtinPresets = useMemo(() => presetsFor(architecture, task), [architecture, task]);
 
-  const applyPreset=(preset:{nodes:ModelNodeT[];edges:ModelEdge[]})=>{onDirty();setNodes(syncOutputContract(preset.nodes,preset.edges,dataset).map(node=>({...node,data:{...node.data,error:undefined}})));setEdges(preset.edges);setSelectedId(null);setPresetsOpen(false);window.setTimeout(()=>flow?.fitView(initialGraphFit(preset.nodes)),20)};
+  const applyPreset=(preset:{nodes:ModelNodeT[];edges:ModelEdge[]})=>{onDirty();setNodes(syncOutputContract(preset.nodes,preset.edges,dataset).map(node=>({...node,data:{...node.data,error:undefined}})));setEdges(preset.edges);setSelectedId(null);setSelectedGroupId(null);setLayoutDirection(inferLayoutDirection(preset.nodes,preset.edges));setPresetsOpen(false);window.setTimeout(()=>flow?.fitView(initialGraphFit(preset.nodes)),20)};
   const applyPretrained=async(spec:PretrainedModelSpec)=>{await backend("model.license.accept",{model_id:spec.id});onApplyPretrained(spec);applyPreset(pretrainedTemplate(spec,task))};
-  const savePreset=()=>{if(!presetName.trim())return;setCustomPresets(items=>[...items,{id:uid(),name:presetName.trim(),description:t("app:customPreset.description"),nodes,edges}]);setPresetName("")};
+  const savePreset=(requestedName=presetName)=>{const name=requestedName.trim();if(!name)return;const preset={id:uid(),name,description:t("app:customPreset.description"),nodes:nodes.map(node=>({...node,selected:false})),edges:edges.map(edge=>({...edge,selected:false}))};setCustomPresets(items=>[...items,preset]);setPresetName("")};
+  const requestSaveRevision=()=>setBuilderDialog({kind:"prompt",title:t("app:savePreset.label"),inputLabel:t("common:name"),initialValue:presetName,onConfirm:name=>{if(!name?.trim())return;savePreset(name);void onSaveRevision()}});
   const presetI18n = (preset: typeof builtinPresets[number]) => {
     return {
       name: getPresetName(architecture, preset.id),
@@ -637,17 +843,17 @@ function Builder({ architecture, task, dataset, validationStats, models, trainin
 
   return (
     <div className="builder-page">
-      <div className="model-tabs" role="tablist" aria-label={t("app:model.modelsAria")}>{models.map(model=><button key={model.id} role="tab" aria-selected={model.id===activeModelId} className={model.id===activeModelId?"active":""} onClick={()=>onSelectModel(model.id)}><BrainCircuit size={13}/>{model.name}<small>{t(`catalog:architectures.${model.architecture}.name`)}</small></button>)}<button className="add-model" onClick={onAddModel} title={t("app:model.createTitle")} aria-label={t("app:model.createTitle")}><Plus size={15}/></button></div>
+      <div className="model-tabs" role="tablist" aria-label={t("app:model.modelsAria")}>{models.map(model=>{const modelRunning=trainingRuns.some(run=>run.modelId===model.id&&(run.status==="running"||run.status==="paused"));const closeTitle=modelRunning?t("app:builder.closeModelTraining"):models.length<=1?t("app:builder.closeModelLast"):t("app:builder.closeModel");return <div className="closable-tab model-tab" role="presentation" key={model.id}><button role="tab" aria-selected={model.id===activeModelId} className={model.id===activeModelId?"active":""} onClick={()=>onSelectModel(model.id)}><BrainCircuit size={13}/>{model.name}<small>{t(`catalog:architectures.${model.architecture}.name`)}</small></button><button className="tab-close" disabled={models.length<=1||modelRunning} onClick={event=>{event.stopPropagation();onCloseModel(model.id)}} title={closeTitle} aria-label={closeTitle}><X size={12}/></button></div>})}<button className="add-model" onClick={onAddModel} title={t("app:model.createTitle")} aria-label={t("app:model.createTitle")}><Plus size={15}/></button></div>
       <div className="builder-toolbar">
-        <button className={libraryOpen ? "active" : ""} onClick={() => setLibraryOpen(!libraryOpen)}><Plus /> {t("common:blocks")}</button>
-        <button className={presetsOpen ? "active" : ""} onClick={()=>setPresetsOpen(true)}><Layers3/> {t("common:presets")}</button>
+        <button className={presetsOpen ? "active" : ""} onClick={()=>{setPresetTab("scratch");setPresetsOpen(true)}}><Layers3/> {t("common:presets")}</button>
         {reusableRuns.length>0&&<button onClick={()=>setReuseBackboneOpen(true)}><Network/> {t("app:builder.reuseBackbone")}</button>}
         <button onClick={addOutput} title={t("app:builder.addOutputHelp")}><Plus/> {t("app:builder.addOutput")}</button>
         <button disabled={!selected?.data.shape?.match(/^\[B,\s*\d+,\s*\d+,\s*\d+\]$/)||edges.filter(edge=>edge.source===selectedId).length!==1} onClick={()=>insertMergeBranch("add")} title={t("app:builder.residualHelp")}><GitFork/> {t("app:builder.addResidual")}</button>
         <button disabled={!selected?.data.shape?.match(/^\[B,\s*\d+,\s*\d+,\s*\d+\]$/)||edges.filter(edge=>edge.source===selectedId).length!==1} onClick={()=>insertMergeBranch("concat")} title={t("app:builder.concatHelp")}><Split/> {t("app:builder.addConcat")}</button>
         <span className="toolbar-separator" />
-        <button onClick={onValidate}><Check /> {t("common:validate")}</button>
-        <button onClick={onSaveRevision}><Save /> {t("app:builder.saveRevision")}</button>
+        <div className="builder-layout-toggle" role="group" aria-label={t("app:builder.layout") }><span>{t("app:builder.layout")}</span><button type="button" className={layoutDirection==="horizontal"?"active":""} aria-pressed={layoutDirection==="horizontal"} title={t("app:builder.layoutHorizontalHelp")} onClick={()=>applyLayout("horizontal")}><ArrowRight/>{t("app:builder.layoutHorizontal")}</button><button type="button" className={layoutDirection==="vertical"?"active":""} aria-pressed={layoutDirection==="vertical"} title={t("app:builder.layoutVerticalHelp")} onClick={()=>applyLayout("vertical")}><ArrowDown/>{t("app:builder.layoutVertical")}</button></div>
+        <span className="toolbar-separator" />
+        <button onClick={requestSaveRevision}><Save /> {t("app:builder.saveRevision")}</button>
         <div className="toolbar-spacer" />
         <span>{t("app:builder.graphSummary", { blocks: nodes.length, connections: edges.length })}</span>
       </div>
@@ -656,32 +862,59 @@ function Builder({ architecture, task, dataset, validationStats, models, trainin
         {libraryOpen && (
           <aside className="block-library">
             <div><span className="eyebrow">{t("app:builder.libraryEyebrow")}</span><h3>{t(`catalog:architectures.${architecture}.name`)}</h3></div>
-            {Object.entries(groups).map(([cat, blocks]) => (
-              <section key={cat}>
+            <div className="library-tabs" role="tablist" aria-label={t("app:builder.libraryEyebrow")}>
+              <button role="tab" aria-selected={libraryTab==="layers"} className={libraryTab==="layers"?"active":""} onClick={()=>{setLibraryTab("layers");setHoveredPreset(null)}}>{t("app:builder.libraryLayersTab")}</button>
+              <button role="tab" aria-selected={libraryTab==="blocks"} className={libraryTab==="blocks"?"active":""} onClick={()=>{setLibraryTab("blocks");setHoveredBlock(null)}}>{t("app:builder.libraryBlocksTab")}</button>
+            </div>
+            {libraryTab==="layers"&&Object.entries(groups).map(([cat, blocks]) => {
+              const layers=blocks.filter(block=>block.type!=="multi_scale_cnn");
+              return layers.length?<section key={cat}>
                 <small>{t(`catalog:blockCategories.${cat}`)}</small>
-                {blocks.map(b => <div className="library-item" key={b.type} onMouseEnter={()=>{if(!pinnedBlock)setHoveredBlock(b)}} onMouseLeave={()=>setHoveredBlock(null)}><button draggable onClick={() => addBlock(b)} onDragStart={e => { e.dataTransfer.setData("application/modelbuilder", b.type); e.dataTransfer.effectAllowed = "move"; }}><Plus size={13} />{t(`catalog:blocks.${b.type}.label`)}</button><button className={`block-info-button ${pinnedBlock?.type===b.type?"active":""}`} onClick={event=>{event.stopPropagation();setPinnedBlock(b);setHoveredBlock(null)}} title={t("app:blockInfo.pinTitle", { block: t(`catalog:blocks.${b.type}.label`) })} aria-label={t("app:blockInfo.pinTitle", { block: t(`catalog:blocks.${b.type}.label`) })}><Info size={13}/></button></div>)}
+                {layers.map(b => { const Icon=operationIcon(b.type);return <div className="library-item" key={b.type} onMouseEnter={()=>{if(!pinnedBlock){setHoveredPreset(null);setHoveredBlock(b)}}} onMouseLeave={()=>setHoveredBlock(null)}><button draggable onClick={() => addBlock(b)} onDragStart={e => { e.dataTransfer.setData("application/modelbuilder", b.type); e.dataTransfer.effectAllowed = "move"; }}><Icon size={13} />{t(`catalog:blocks.${b.type}.label`)}</button><button className={`block-info-button ${pinnedBlock?.type===b.type?"active":""}`} onClick={event=>{event.stopPropagation();setPinnedBlock(b);setHoveredBlock(null)}} title={t("app:blockInfo.pinTitle", { block: t(`catalog:blocks.${b.type}.label`) })} aria-label={t("app:blockInfo.pinTitle", { block: t(`catalog:blocks.${b.type}.label`) })}><Info size={13}/></button></div>})}
+              </section>:null;
+            })}
+            {libraryTab==="blocks"&&<>
+              {architecture==="cnn"&&<section><small>{t("app:builder.libraryRecipes")}</small>{([1,2,3,0] as const).map(kind=>{const name=kind===0?t("app:builder.recipeResidual"):t("app:builder.recipeConv",{count:kind});return <div className="library-item library-preset-item" key={kind} onMouseEnter={()=>{if(!pinnedBlock)setHoveredPreset({name,description:t("app:builder.recipePreviewDescription"),nodes:[],edges:[]})}} onMouseLeave={()=>setHoveredPreset(null)}><button onClick={()=>addCnnRecipe(kind)}><Layers3 size={13}/>{kind===0?t("app:builder.recipeResidualShort"):t("app:builder.recipeConvShort",{count:kind})}</button></div>})}</section>}
+              {architecture==="cnn"&&BLOCKS[architecture].filter(block=>block.type==="multi_scale_cnn").map(block=>{const Icon=operationIcon(block.type);return <section key={block.type}><small>{t("app:builder.libraryComposite")}</small><div className="library-item" onMouseEnter={()=>{if(!pinnedBlock){setHoveredPreset(null);setHoveredBlock(block)}}} onMouseLeave={()=>setHoveredBlock(null)}><button draggable onClick={()=>addBlock(block)} onDragStart={event=>{event.dataTransfer.setData("application/modelbuilder",block.type);event.dataTransfer.effectAllowed="move"}}><Icon size={13}/>{t(`catalog:blocks.${block.type}.shortLabel`,{defaultValue:t(`catalog:blocks.${block.type}.label`)})}</button><button className={`block-info-button ${pinnedBlock?.type===block.type?"active":""}`} onClick={event=>{event.stopPropagation();setPinnedBlock(block);setHoveredBlock(null)}} title={t("app:blockInfo.pinTitle",{block:t(`catalog:blocks.${block.type}.label`)})} aria-label={t("app:blockInfo.pinTitle",{block:t(`catalog:blocks.${block.type}.label`)})}><Info size={13}/></button></div></section>})}
+              <section><small>{t("app:builder.libraryPresets")}</small>{builtinPresets.map(preset=>{const info=presetI18n(preset);return <div className="library-item library-preset-item" key={preset.id} onMouseEnter={()=>setHoveredPreset({name:info.name,description:info.description,nodes:preset.nodes,edges:preset.edges,benefit:info.benefit,tradeoff:info.tradeoff})} onMouseLeave={()=>setHoveredPreset(null)}><button onClick={()=>applyPreset(preset)}><Sparkles size={13}/>{info.name.split(" · ").at(-1)||info.name}</button></div>})}{customPresets.map(preset=><div className="library-item library-preset-item" key={preset.id} onMouseEnter={()=>setHoveredPreset(preset)} onMouseLeave={()=>setHoveredPreset(null)}><button onClick={()=>applyPreset(preset)}><Save size={13}/>{preset.name}</button></div>)}
+                <div className="library-save-preset"><input value={presetName} onChange={event=>setPresetName(event.target.value)} placeholder={t("app:savePreset.placeholder")} aria-label={t("app:savePreset.label")}/><button disabled={!presetName.trim()} onClick={()=>savePreset()}><Save size={12}/>{t("common:save")}</button></div>
               </section>
-            ))}
+            </>}
           </aside>
         )}
 
-        <div className="flow-wrap">
+        <div className="flow-wrap" ref={canvasRef}>
+          <button type="button" className={`builder-panel-toggle builder-panel-toggle-library ${libraryOpen?"panel-open":"panel-closed"}`} onClick={()=>setLibraryOpen(value=>!value)} title={`${libraryOpen?t("common:close"):t("common:open")} ${t("common:blocks")}`} aria-label={`${libraryOpen?t("common:close"):t("common:open")} ${t("common:blocks")}`}><ChevronRight size={15}/></button>
+          <button type="button" className={`builder-panel-toggle builder-panel-toggle-inspector ${inspectorOpen?"panel-open":"panel-closed"}`} onClick={()=>setInspectorOpen(value=>!value)} title={`${inspectorOpen?t("common:close"):t("common:open")} ${t("app:inspector.properties")}`} aria-label={`${inspectorOpen?t("common:close"):t("common:open")} ${t("app:inspector.properties")}`}><ChevronRight size={15}/></button>
           <div className="canvas-navigation-hint">{t("app:builder.canvasNavigation")}</div>
           <div className="canvas-param-badge">
             <Cpu size={13} />
             <span>{validationStats ? `${validationStats.parameters.toLocaleString()} total · ${validationStats.trainable_parameters.toLocaleString()} entrenables · ~${Math.ceil(validationStats.parameters*4/1048576)} MB` : t("app:builder.paramEstimate", { count: paramEstimate > 0 ? paramEstimate.toLocaleString() : "---" })}</span>
           </div>
+          <div className={`builder-validation-status ${validationState}`} role="status" aria-live="polite" title={validationMessage||`${t("common:validation")}: ${validationStateLabel}`}>
+            {validationState==="valid"?<CheckCircle2 size={13}/>:validationState==="errors"?<AlertCircle size={13}/>:<Clock3 size={13}/>}
+            <span>{t("common:validation")}</span><strong>{validationState==="errors"?`${validationIssueCount} ${validationStateLabel}`:validationStateLabel}</strong>
+          </div>
+          {selectedNodes.length>0||selectedEdges.length>0?<div className="canvas-selection-toolbar nodrag nopan" ref={selectionToolbarRef} role="toolbar" aria-label={t("app:builder.deleteSelection")}>
+            {selectedNodes.length>0&&<button type="button" onClick={duplicateSelection} title={t("app:builder.duplicateShortcut")}><Copy size={14}/><span>{t("app:builder.duplicateSelection")}</span></button>}
+            {selectedNodes.length>=2&&<button type="button" onClick={groupSelection} title={t("app:builder.groupSelection")}><Group size={14}/><span>{t("app:builder.groupSelection")}</span></button>}
+            {selectedNodes.length>=2&&selectedNodes.some(node=>typeof node.data.groupId==="string")&&<button type="button" onClick={ungroupSelection} title={t("app:builder.ungroup")}><Ungroup size={14}/><span>{t("app:builder.ungroup")}</span></button>}
+            <button type="button" className="danger" onClick={deleteSelection} title={t("app:builder.deleteSelection")}><Trash2 size={14}/><span>{t("app:builder.deleteSelection")}</span></button>
+          </div>:null}
 
           <ReactFlow
             nodes={nodesWithHandler}
             edges={edgesWithHandler}
             onInit={setFlow}
+            onMove={updateSelectionToolbarPosition}
             onNodesChange={onNodesChange}
             onEdgesChange={onEdgesChange}
             onConnect={connect}
+            onReconnect={reconnect}
             isValidConnection={isValidConnection}
+            multiSelectionKeyCode="Shift"
             onNodeClick={select}
-            onPaneClick={() => setSelectedId(null)}
+            onPaneClick={() => { setSelectedId(null); setSelectedGroupId(null); }}
             onDragOver={e => { e.preventDefault(); e.dataTransfer.dropEffect = "move"; }}
             onDrop={onDrop}
             nodeTypes={nodeTypes}
@@ -689,15 +922,24 @@ function Builder({ architecture, task, dataset, validationStats, models, trainin
             fitView
             fitViewOptions={initialGraphFit(nodes)}
             colorMode={theme === "dark" ? "dark" : "light"}
-            deleteKeyCode={["Backspace", "Delete"]}
+            deleteKeyCode={null}
           >
+            <ViewportPortal>{visualGroups.map(group=><div className={`visual-group${group.selected?" selected":""}`} role="group" aria-label={group.name} key={group.id} style={{left:group.x,top:group.y,width:group.right-group.x,height:group.bottom-group.y}}>
+              <div className="visual-group-hit visual-group-hit-top" onPointerDown={event=>dragGroup(event,group.id)} />
+              <div className="visual-group-hit visual-group-hit-left" onPointerDown={event=>dragGroup(event,group.id)} />
+              <div className="visual-group-hit visual-group-hit-right" onPointerDown={event=>dragGroup(event,group.id)} />
+              <div className="visual-group-hit visual-group-hit-bottom" onPointerDown={event=>dragGroup(event,group.id)} />
+              <div className="visual-group-header" onPointerDown={event=>{if(!(event.target as HTMLElement).closest("button"))dragGroup(event,group.id)}}>
+                <button type="button" className="visual-group-title" aria-pressed={group.selected} title={t("app:builder.groupDragHint")} onPointerDown={event=>dragGroup(event,group.id)} onClick={()=>selectGroup(group.id)} onDoubleClick={()=>renameGroup(group.id,group.name)}>{group.name}</button>
+              </div>
+            </div>)}</ViewportPortal>
             <Background color={theme === "dark" ? "#35373b" : "#d1d2d5"} gap={22} />
             <Controls />
             <MiniMap nodeColor="var(--accent)" maskColor={theme === "dark" ? "rgba(16,17,18,.75)" : "rgba(240,240,242,.75)"} pannable zoomable />
           </ReactFlow>
         </div>
 
-        <aside className="inspector">
+        {inspectorOpen&&<aside className="inspector">
           {selected ? (
             <>
               <div className="inspector-head">
@@ -706,16 +948,16 @@ function Builder({ architecture, task, dataset, validationStats, models, trainin
                 <code>{selected.data.blockType}</code>
               </div>
       {Object.entries(selected.data.properties).length ? Object.entries(selected.data.properties).map(([k, v]) => (
-                <Property key={k} name={k} value={v} disabled={(selected.data.blockType.startsWith("hf_")&&!["frozen","trainable_stages","max_length","offline"].includes(k)) || (!!dataset && ((selected.data.blockType==="linear"&&k==="out_features")||(selected.data.blockType==="conv2d"&&k==="out_channels")) && edges.some(edge=>edge.source===selected.id&&nodes.find(node=>node.id===edge.target)?.data.blockType==="output"))} onChange={nv => updateProp(k, nv)} />
+                <Property key={k} name={k} label={["out_channels","in_channels","base_channels"].includes(k)?t(`app:inspector.${k}`):undefined} value={v} disabled={(selected.data.blockType.startsWith("hf_")&&!["frozen","trainable_stages","max_length","offline"].includes(k)) || (!!dataset && ((selected.data.blockType==="linear"&&k==="out_features")||(selected.data.blockType==="conv2d"&&k==="out_channels")) && edges.some(edge=>edge.source===selected.id&&nodes.find(node=>node.id===edge.target)?.data.blockType==="output"))} onChange={nv => updateProp(k, nv)} />
               )) : <p className="muted">{t("app:inspector.noParams")}</p>}
               {selected.data.blockType!=="input"&&selected.data.blockType!=="output"&&estimateNodeParameters(selected)>0&&<label className="property trainable-property"><span>{t("app:inspector.frozen")}</span><button type="button" role="switch" aria-checked={Boolean(selected.data.properties.frozen)} className={selected.data.properties.frozen?"toggle on":"toggle"} onClick={()=>updateProp("frozen",!selected.data.properties.frozen)}><i/></button></label>}
               {["batchnorm1d","batchnorm2d"].includes(selected.data.blockType)&&<label className="property trainable-property"><span>{t("app:inspector.freezeBatchNormStats")}</span><button type="button" role="switch" aria-checked={Boolean(selected.data.properties.freeze_batchnorm_stats)} className={selected.data.properties.freeze_batchnorm_stats?"toggle on":"toggle"} onClick={()=>updateProp("freeze_batchnorm_stats",!selected.data.properties.freeze_batchnorm_stats)}><i/></button></label>}
               <div className="inspector-section">
                 <span className="eyebrow">{t("app:inspector.tensor")}</span>
-                <div className="shape-box">{selected.data.shape || t("app:inspector.shapePlaceholder")}</div>
+                <TensorShapeSummary shape={selected.data.shape} blockType={selected.data.blockType} task={task} architecture={architecture} properties={selected.data.properties} label={selected.data.label} variant="inspector" />
               </div>
               <div className="inspector-section parameter-summary"><span className="eyebrow">{t("app:inspector.parameters")}</span><strong>{estimateNodeParameters(selected).toLocaleString()}</strong><small>{t("app:inspector.parametersPerBlock")}</small><div><span>{t("app:inspector.totalModel")}</span><b>{paramEstimate.toLocaleString()}</b></div></div>
-              {liveErrors.get(selected.id)&&<div className="inspector-error"><AlertCircle/>{translateBackendError(liveErrors.get(selected.id)!)}</div>}
+              {selectedError&&<div className="inspector-error"><AlertCircle/>{translateBackendError(selectedError)}</div>}
             </>
           ) : (
             <div className="inspector-empty">
@@ -728,20 +970,41 @@ function Builder({ architecture, task, dataset, validationStats, models, trainin
             <summary>{t("app:builder.shapeSummary",{count:nodes.length})}</summary>
             <div className="shape-summary-list">{nodes.map(node=><button key={node.id} className={node.id===selectedId?"active":""} onClick={()=>{setSelectedId(node.id);flow?.fitView({nodes:[{id:node.id}],duration:250,padding:.7,maxZoom:1})}}><span>{node.data.label}</span><code>{node.data.shape||"?"}</code></button>)}</div>
           </details>
-        </aside>
+        </aside>}
+        <AppDialog dialog={builderDialog} onClose={()=>setBuilderDialog(null)}/>
       </div>
-      {(pinnedBlock||hoveredBlock)&&(()=>{const block=pinnedBlock||hoveredBlock!;const blockLabel=t(`catalog:blocks.${block.type}.label`, { defaultValue: block.label });const description=t(`catalog:blocks.${block.type}.description`, { defaultValue: BLOCK_INFO[block.type]?.description });const usage=t(`catalog:blocks.${block.type}.usage`, { defaultValue: BLOCK_INFO[block.type]?.usage });const diagram=t(`catalog:blocks.${block.type}.diagram`, { returnObjects: true, defaultValue: BLOCK_INFO[block.type]?.diagram || [t("common:input"), blockLabel, t("common:output")] }) as string[];return <div ref={infoCard} className={`block-info-popover ${pinnedBlock?"pinned":"preview"}`}><div className="block-info-head"><span className="eyebrow">{pinnedBlock?t("app:blockInfo.pinnedEyebrow"):t("app:blockInfo.previewEyebrow")}</span>{pinnedBlock&&<button className="modal-close" onClick={()=>setPinnedBlock(null)} aria-label={t("app:blockInfo.closeInfo")}><X/></button>}</div><h2>{blockLabel}</h2><p>{description || t("app:blockInfo.fallbackDescription")}</p><div className="node-diagram">{diagram.map((part,index)=><div key={`${part}-${index}`}>{index>0&&<ChevronRight/>}<span className={index===1?"operation":""}>{part}</span></div>)}</div><h3>{t("app:blockInfo.usageTitle")}</h3><p>{usage || t("app:blockInfo.fallbackUsage")}</p><div className="default-properties"><span>{t("app:blockInfo.defaults")}</span><code>{Object.keys(block.defaults).length?JSON.stringify(block.defaults):t("app:blockInfo.noEditableDefaults")}</code></div>{!pinnedBlock&&<small className="pin-hint">{t("app:blockInfo.pinHint")}</small>}</div>})()}
+      <LibraryHoverInfo block={pinnedBlock||hoveredBlock} pinned={Boolean(pinnedBlock)} preset={!pinnedBlock&&!hoveredBlock?hoveredPreset:null} selected={selected} architecture={architecture} task={task} dataset={dataset} onClose={()=>setPinnedBlock(null)} />
       {reuseBackboneOpen&&<div className="modal-backdrop" onMouseDown={()=>setReuseBackboneOpen(false)}><section className="modal reuse-backbone-modal" role="dialog" aria-modal="true" aria-labelledby="reuse-backbone-title" onMouseDown={event=>event.stopPropagation()}><button className="modal-close" onClick={()=>setReuseBackboneOpen(false)} aria-label={t("common:close")}><X/></button><span className="eyebrow">{t("app:builder.reuseBackboneEyebrow")}</span><h2 id="reuse-backbone-title">{t("app:builder.reuseBackboneTitle")}</h2><p>{t("app:builder.reuseBackboneDescription")}</p>{reusableRuns.length>0?<><label>{t("app:builder.reuseRunLabel")}<select value={selectedReuseRun?.id||""} onChange={event=>{setReuseRunId(event.target.value);setReuseFeatureKey("");setReuseBackboneError("")}}>{reusableRuns.map(run=><option key={run.id} value={run.id}>{run.name} · {run.modelGraph?.nodes.length||0} bloques · {new Date(run.createdAt).toLocaleDateString()}</option>)}</select></label>{reuseFeatures.length>0?<label>{t("app:builder.reuseFeatureLabel")}<select value={selectedReuseFeature?`${selectedReuseFeature.nodeId}::${selectedReuseFeature.handle||""}`:""} onChange={event=>setReuseFeatureKey(event.target.value)}>{reuseFeatures.map(feature=><option key={`${feature.nodeId}::${feature.handle||""}`} value={`${feature.nodeId}::${feature.handle||""}`}>{feature.label} · [B,{feature.channels},{feature.height},{feature.width}]</option>)}</select></label>:<p className="inspector-error">{t("app:builder.reuseNoFeatures")}</p>}{selectedReuseFeature&&<div className="reuse-backbone-summary"><Network/><span><strong>{selectedReuseFeature.label}</strong><small>[B, {selectedReuseFeature.channels}, {selectedReuseFeature.height}, {selectedReuseFeature.width}] · {t("app:builder.reuseFrozenHint")}</small></span></div>}{reuseBackboneError&&<p className="inspector-error">{reuseBackboneError}</p>}<div className="modal-actions"><button className="secondary" onClick={()=>setReuseBackboneOpen(false)}>{t("common:cancel")}</button><button className="primary" disabled={!selectedReuseFeature} onClick={createFromCheckpointBackbone}>{t("app:builder.reuseCreateButton")} <ChevronRight size={16}/></button></div></>:<p>{t("app:builder.reuseNoRuns")}</p>}</section></div>}
-      {presetsOpen&&<div className="modal-backdrop"><div className="modal presets-modal"><button className="modal-close" onClick={()=>setPresetsOpen(false)}><X/></button><span className="eyebrow">{t("app:presets.modalEyebrow")}</span><h2>{t("app:presets.modalTitle")}</h2>{(pretrainedLoading||pretrainedModels.length>0)&&<><h3>Modelos preentrenados · Hugging Face</h3><div className="preset-list">{pretrainedLoading?<p>Consultando catálogo…</p>:pretrainedModels.map(spec=><article key={spec.id}><div><Cloud/><span><strong>{spec.name}</strong><small>{spec.repoId} · {spec.size} · {spec.cached?"en caché":"requiere descarga"}</small></span></div><p>{spec.description}<br/><b>Licencia:</b> {spec.license} · <b>Revisión:</b> {spec.revision.slice(0,8)} · <b>Biblioteca:</b> {spec.library} / {spec.processor}{spec.parameterCount?" · "+(spec.parameterCount/1e6).toFixed(1)+" M parámetros":""}{spec.inputContract?" · "+spec.inputContract:""}.<br/>{spec.limitations||"Backbone congelado inicialmente y cabeza nueva."}</p><button className="secondary" onClick={()=>applyPretrained(spec)}>Aceptar licencia y usar</button></article>)}</div></>}<h3>Plantillas desde cero</h3>{scratchGuidance&&<p className="muted">{scratchGuidance}</p>}<div className="preset-list">{builtinPresets.map(preset=>{const info=presetI18n(preset);return <article key={preset.id}><div><Sparkles/><span><strong>{info.name}</strong><small>{info.description}</small></span></div><p><b>{t("app:presets.benefitLabel")}</b> {info.benefit}. <b>{t("app:presets.tradeoffLabel")}</b> {info.tradeoff}.</p><button className="secondary" onClick={()=>applyPreset(preset)}>{t("app:presets.apply")}</button></article>;})}{customPresets.map(preset=><article key={preset.id}><div><Save/><span><strong>{preset.name}</strong><small>{preset.description}</small></span></div><p><b>{t("app:presets.benefitLabel")}</b> {t("app:customPreset.benefit")}. <b>{t("app:presets.tradeoffLabel")}</b> {t("app:customPreset.tradeoff")}.</p><button className="secondary" onClick={()=>applyPreset(preset)}>{t("app:presets.apply")}</button></article>)}</div><div className="save-preset"><label>{t("app:savePreset.label")}<input value={presetName} onChange={event=>setPresetName(event.target.value)} placeholder={t("app:savePreset.placeholder")}/></label><button className="primary" disabled={!presetName.trim()} onClick={savePreset}><Save/> {t("common:save")}</button></div></div></div>}
+      {presetsOpen&&<div className="modal-backdrop" onMouseDown={event=>{if(event.target===event.currentTarget)setPresetsOpen(false)}}><section className="modal presets-modal" role="dialog" aria-modal="true" aria-labelledby="presets-modal-title"><button className="modal-close" onClick={()=>setPresetsOpen(false)} aria-label={t("common:close")}><X/></button><span className="eyebrow">{t("app:presets.modalEyebrow")}</span><h2 id="presets-modal-title">{t("app:presets.modalTitle")}</h2><div className="preset-tabs" role="tablist" aria-label={t("app:presets.modalTitle")}><button type="button" role="tab" aria-selected={presetTab==="scratch"} className={presetTab==="scratch"?"active":""} onClick={()=>setPresetTab("scratch")}><Sparkles/>{t("app:presets.scratchTab")}</button><button type="button" role="tab" aria-selected={presetTab==="pretrained"} className={presetTab==="pretrained"?"active":""} onClick={()=>setPresetTab("pretrained")}><Cloud/>{t("app:presets.pretrainedTab")}</button></div>{presetTab==="pretrained"?<div className="preset-view" role="tabpanel"><h3>{t("app:presets.pretrainedHeading")}</h3>{pretrainedLoading?<p className="muted">{t("app:presets.pretrainedLoading")}</p>:pretrainedModels.length>0?<div className="preset-list">{pretrainedModels.map(spec=><article key={spec.id}><div><Cloud/><span><strong>{spec.name}</strong><small>{spec.repoId} · {spec.size} · {spec.cached?t("app:presets.cached"):t("app:presets.requiresDownload")}</small></span></div><p>{spec.description}<br/><b>{t("app:presets.licenseLabel")}</b> {spec.license} · <b>{t("app:presets.revisionLabel")}</b> {spec.revision.slice(0,8)} · <b>{t("app:presets.libraryLabel")}</b> {spec.library} / {spec.processor}{spec.parameterCount?" · "+(spec.parameterCount/1e6).toFixed(1)+" M "+t("app:presets.parameters"):""}{spec.inputContract?" · "+spec.inputContract:""}.<br/>{spec.limitations||t("app:presets.defaultLimitations")}</p><button className="secondary" onClick={()=>applyPretrained(spec)}>{t("app:presets.acceptLicenseUse")}</button></article>)}</div>:<p className="muted">{scratchGuidance||t("app:presets.pretrainedEmpty")}</p>}</div>:<div className="preset-view" role="tabpanel"><h3>{t("app:presets.scratchHeading")}</h3>{scratchGuidance&&<p className="muted">{scratchGuidance}</p>}<div className="preset-list">{builtinPresets.map(preset=>{const info=presetI18n(preset);return <article key={preset.id}><div><Sparkles/><span><strong>{info.name}</strong><small>{info.description}</small></span></div><p><b>{t("app:presets.benefitLabel")}</b> {info.benefit}. <b>{t("app:presets.tradeoffLabel")}</b> {info.tradeoff}.</p><button className="secondary" onClick={()=>applyPreset(preset)}>{t("app:presets.apply")}</button></article>;})}{customPresets.map(preset=><article key={preset.id}><div><Save/><span><strong>{preset.name}</strong><small>{preset.description}</small></span></div><p><b>{t("app:presets.benefitLabel")}</b> {t("app:customPreset.benefit")}. <b>{t("app:presets.tradeoffLabel")}</b> {t("app:customPreset.tradeoff")}.</p><button className="secondary" onClick={()=>applyPreset(preset)}>{t("app:presets.apply")}</button></article>)}</div><div className="save-preset"><label>{t("app:savePreset.label")}<input value={presetName} onChange={event=>setPresetName(event.target.value)} placeholder={t("app:savePreset.placeholder")}/></label><button className="primary" disabled={!presetName.trim()} onClick={()=>savePreset()}><Save/> {t("common:save")}</button></div></div>}</section></div>}
     </div>
   );
 }
 
-function Property({ name, value, disabled=false, onChange }: { name: string; value: string | number | boolean; disabled?:boolean; onChange: (v: string | number | boolean) => void }) {
+type LibraryPresetPreview={name:string;description:string;nodes:ModelNodeT[];edges:ModelEdge[];benefit?:string;tradeoff?:string};
+
+function LibraryHoverInfo({block,pinned,preset,selected,architecture,task,dataset,onClose}:{block:(typeof BLOCKS)[Architecture][number]|null;pinned:boolean;preset:LibraryPresetPreview|null;selected:ModelNodeT|null;architecture:Architecture;task:TaskId;dataset:DatasetSummary|null;onClose:()=>void}){
+  const {t}=useTranslation(["app","common","catalog"]);
+  if(block){
+    const label=t(`catalog:blocks.${block.type}.label`,{defaultValue:block.label});
+    const description=t(`catalog:blocks.${block.type}.description`,{defaultValue:BLOCK_INFO[block.type]?.description||t("app:blockInfo.fallbackDescription")});
+    const usage=t(`catalog:blocks.${block.type}.usage`,{defaultValue:BLOCK_INFO[block.type]?.usage||t("app:blockInfo.fallbackUsage")});
+    const diagram=t(`catalog:blocks.${block.type}.diagram`,{returnObjects:true,defaultValue:BLOCK_INFO[block.type]?.diagram||[t("common:input"),label,t("common:output")]}) as string[];
+    const calculated=previewOperationOutput(block.type,block.defaults,selected?.data.shape);
+    return <div className={`block-info-popover ${pinned?"pinned":"preview"}`}><div className="block-info-head"><span className="eyebrow">{pinned?t("app:blockInfo.pinnedEyebrow"):t("app:blockInfo.previewEyebrow")}</span>{pinned&&<button className="modal-close" onClick={onClose} aria-label={t("app:blockInfo.closeInfo")}><X/></button>}</div><h2>{label}</h2><p>{description}</p><div className="node-diagram">{diagram.map((part,index)=><div key={`${part}-${index}`}>{index>0&&<ChevronRight/>}<span className={index===1?"operation":""}>{part}</span></div>)}</div><h3>{t("app:blockInfo.usageTitle")}</h3><p>{usage}</p><div className="shape-preview"><span>{t("app:blockInfo.outputPreview")}</span><code>{calculated||diagram.at(-1)||"?"}</code><small>{t(calculated?"app:blockInfo.calculatedPreview":"app:blockInfo.examplePreview")}</small></div><div className="default-properties"><span>{t("app:blockInfo.defaults")}</span><code>{Object.keys(block.defaults).length?JSON.stringify(block.defaults):t("app:blockInfo.noEditableDefaults")}</code></div>{!pinned&&<small className="pin-hint">{t("app:blockInfo.pinHint")}</small>}</div>;
+  }
+  if(!preset)return null;
+  const outputs=preset.nodes.filter(node=>node.data.blockType==="output");
+  const outputNames=outputs.map(node=>String(node.data.properties.output_name||node.data.label)).filter(Boolean);
+  const targetShape=dataset?.outputShape?.length?`[B, ${dataset.outputShape.join(", ")}]`:"?";
+  const outputExample=outputNames.length>1?outputNames.join(" · "):targetShape;
+  return <div className="block-info-popover preview"><div className="block-info-head"><span className="eyebrow">{t("app:blockInfo.previewEyebrow")}</span></div><h2>{preset.name}</h2><p>{preset.description}</p><div className="node-diagram"><div><span>{t("app:builder.graph")}</span><ChevronRight/><span className="operation">{preset.nodes.length?t("app:builder.libraryPresets"):t("app:builder.libraryRecipes")}</span><ChevronRight/><span>{outputExample}</span></div></div><div className="shape-preview"><span>{t("app:blockInfo.outputPreview")}</span><code>{outputExample}</code><small>{t("app:blockInfo.examplePreview")}</small></div>{preset.benefit&&<p className="library-preset-benefit"><strong>{t("app:presets.benefitLabel")}</strong> {preset.benefit}{preset.tradeoff?<> · <strong>{t("app:presets.tradeoffLabel")}</strong> {preset.tradeoff}</>:null}</p>}</div>;
+}
+
+function Property({ name, label, value, disabled=false, onChange }: { name: string; label?:string; value: string | number | boolean; disabled?:boolean; onChange: (v: string | number | boolean) => void }) {
   const { t } = useTranslation(["app", "common"]);
   return (
     <label className="property">
-      <span>{name.replaceAll("_", " ")}</span>
+      <span>{label||name.replaceAll("_", " ")}</span>
       {typeof value === "boolean" ? (
         <button disabled={disabled} className={`toggle ${value ? "on" : ""}`} onClick={() => onChange(!value)} type="button"><i /></button>
       ) : (
@@ -751,9 +1014,10 @@ function Property({ name, value, disabled=false, onChange }: { name: string; val
   );
 }
 
-function Training({ task, dataset, models, activeModelId, onSelectModel, runs, activeRunId, training, accent, onSelectRun, onAddRun, onTrain, onControl }: { task: TaskId; dataset:DatasetSummary|null; models:ProjectModel[]; activeModelId:string|null; onSelectModel:(id:string)=>void; runs: TrainingRun[]; activeRunId: string; training: boolean; accent: Accent; onSelectRun:(id:string)=>void; onAddRun:()=>void; onTrain: (c: Record<string, number | string | boolean>) => void; onControl:(state:"running"|"paused"|"cancelled")=>void }) {
+function Training({ task, dataset, models, activeModelId, onSelectModel, runs, activeRunId, training, stopping, accent, onSelectRun, onCloseRun, onAddRun, onTrain, onControl }: { task: TaskId; dataset:DatasetSummary|null; models:ProjectModel[]; activeModelId:string|null; onSelectModel:(id:string)=>void; runs: TrainingRun[]; activeRunId: string; training: boolean; stopping:boolean; accent: Accent; onSelectRun:(id:string)=>void; onCloseRun:(id:string)=>void; onAddRun:()=>void; onTrain: (c: Record<string, number | string | boolean>) => void; onControl:(state:"running"|"paused"|"cancelled")=>void }) {
   const { t } = useTranslation(["app", "common", "catalog"]);
   const activeRun=runs.find(item=>item.id===activeRunId) || runs[0];
+  const runningRun=runs.find(item=>item.status==="running"||item.status==="paused");
   const history=activeRun?.history || [];
   const run=activeRun?.result || null;
   const defaultEpochs=task==="text.language_model"?10:task.startsWith("image.segmentation")?40:20;
@@ -765,7 +1029,8 @@ function Training({ task, dataset, models, activeModelId, onSelectModel, runs, a
   const [bestModelCriterion, setBestModelCriterion] = useState(defaultBestCriterion);
   const [scheduler,setScheduler]=useState("none");
   const [warmup,setWarmup]=useState(0);
-  const [patience,setPatience]=useState(0);
+  const [earlyStoppingEnabled,setEarlyStoppingEnabled]=useState(false);
+  const [patience,setPatience]=useState(5);
   const [accumulation,setAccumulation]=useState(1);
   const [precision,setPrecision]=useState("fp32");
   const [clipNorm,setClipNorm]=useState(5);
@@ -779,8 +1044,9 @@ function Training({ task, dataset, models, activeModelId, onSelectModel, runs, a
   const [initialCheckpoint,setInitialCheckpoint]=useState("");
   useEffect(()=>{
     const config=activeRun?.config || {};
-    setEpochs(Number(config.epochs || defaultEpochs));setLr(Number(config.learning_rate || .001));setBatch(Number(config.batch_size || dataset?.options?.batchSize || 32));setOptimizer(String(config.optimizer || "adamw"));setBestModelCriterion(String(config.best_model_criterion || defaultBestCriterion));setScheduler(String(config.scheduler||"none"));setWarmup(Number(config.warmup_epochs||0));setPatience(Number(config.early_stopping_patience||0));setAccumulation(Number(config.gradient_accumulation||1));setPrecision(String(config.precision||"fp32"));setClipNorm(Number(config.gradient_clip_norm||5));setLossName(String(config.loss||"auto"));setFinetuningRecipe(String(config.finetuning_recipe||"auto"));setBackboneLr(Number(config.backbone_learning_rate||.0001));setHeadLr(Number(config.head_learning_rate||.001));setClassWeights(Boolean(config.class_weights));setBalancedSampler(Boolean(config.balanced_sampler));setResumeCheckpoint(String(config.resume_checkpoint||""));setInitialCheckpoint(String(config.initial_checkpoint||""));
-  },[activeRunId,dataset?.options?.batchSize,defaultEpochs,defaultBestCriterion]);
+    const savedPatience=Math.max(0,Math.floor(Number(config.early_stopping_patience)||0));
+    setEpochs(Number(config.epochs || defaultEpochs));setLr(Number(config.learning_rate || .001));setBatch(Number(config.batch_size || dataset?.options?.batchSize || 32));setOptimizer(String(config.optimizer || "adamw"));setBestModelCriterion(String(config.best_model_criterion || defaultBestCriterion));setScheduler(String(config.scheduler||"none"));setWarmup(Number(config.warmup_epochs||0));setEarlyStoppingEnabled(savedPatience>0);setPatience(savedPatience||5);setAccumulation(Number(config.gradient_accumulation||1));setPrecision(String(config.precision||"fp32"));setClipNorm(Number(config.gradient_clip_norm||5));setLossName(String(config.loss||"auto"));setFinetuningRecipe(String(config.finetuning_recipe||"auto"));setBackboneLr(Number(config.backbone_learning_rate||.0001));setHeadLr(Number(config.head_learning_rate||.001));setClassWeights(Boolean(config.class_weights));setBalancedSampler(Boolean(config.balanced_sampler));setResumeCheckpoint(String(config.resume_checkpoint||""));setInitialCheckpoint(String(config.initial_checkpoint||""));
+  },[activeRunId,activeRun?.config?.early_stopping_patience,dataset?.options?.batchSize,defaultEpochs,defaultBestCriterion]);
   const currentEpoch=history.at(-1)?.epoch || 0;
   const targetEpochs=Number(activeRun?.config.epochs || epochs || 1);
   const progress=Math.min(100,Math.round(currentEpoch/targetEpochs*100));
@@ -803,7 +1069,7 @@ function Training({ task, dataset, models, activeModelId, onSelectModel, runs, a
       </div>
 
       <div className="run-tabs" role="tablist" aria-label={t("app:training.runsAriaLabel")}>
-        {runs.map(item=><button key={item.id} role="tab" aria-selected={item.id===activeRunId} className={item.id===activeRunId?"active":""} onClick={()=>onSelectRun(item.id)}><i className={`run-dot ${item.status}`}/><span>{item.name}</span>{item.status==="completed"&&<Check size={12}/>}</button>)}
+        {runs.map(item=>{const runActive=item.status==="running"||item.status==="paused";const closeTitle=runActive?t("app:training.closeRunActive"):runs.length<=1?t("app:training.closeRunLast"):t("app:training.closeRun");return <div className="closable-tab run-tab" role="presentation" key={item.id}><button role="tab" aria-selected={item.id===activeRunId} className={item.id===activeRunId?"active":""} onClick={()=>onSelectRun(item.id)}><i className={`run-dot ${item.status}`}/><span>{item.name}</span>{item.status==="completed"&&<Check size={12}/>}</button><button className="tab-close" disabled={runs.length<=1||runActive} onClick={event=>{event.stopPropagation();onCloseRun(item.id)}} title={closeTitle} aria-label={closeTitle}><X size={12}/></button></div>})}
         <button className="add-run" onClick={onAddRun} disabled={training} title={t("app:training.addRunTitle")}><Plus size={15}/></button>
       </div>
 
@@ -848,6 +1114,14 @@ function Training({ task, dataset, models, activeModelId, onSelectModel, runs, a
               <option value="sgd">SGD</option>
             </select>
           </label>
+          <div className="early-stopping-setting">
+            <div className="early-stopping-toggle-row">
+              <span id="training-early-stopping-label">{t("app:training.advanced.earlyStopping")}</span>
+              <button type="button" role="switch" aria-checked={earlyStoppingEnabled} aria-labelledby="training-early-stopping-label" aria-describedby="training-early-stopping-help" className={`toggle ${earlyStoppingEnabled?"on":""}`} onClick={()=>setEarlyStoppingEnabled(value=>!value)}><i/></button>
+            </div>
+            <small id="training-early-stopping-help" className="early-stopping-help">{t("app:training.advanced.earlyStoppingHelp")}</small>
+            {earlyStoppingEnabled&&<label htmlFor="training-early-stopping-patience">{t("app:training.advanced.earlyStoppingPatience")}<input id="training-early-stopping-patience" aria-describedby="training-early-stopping-help" type="number" min="1" step="1" value={patience} onChange={event=>setPatience(Math.max(1,Math.floor(Number(event.target.value)||1)))}/></label>}
+          </div>
           <details className="advanced-training"><summary>{t("app:training.advanced.title")}</summary>
             <label>{t("app:training.advanced.recipe")}<select value={finetuningRecipe} onChange={e=>setFinetuningRecipe(e.target.value)}><option value="auto">{t("app:training.advanced.recipeAuto")}</option><option value="head">{t("app:training.advanced.recipeHead")}</option><option value="gradual">{t("app:training.advanced.recipeGradual")}</option><option value="full">{t("app:training.advanced.recipeFull")}</option><option value="lora">LoRA</option><option value="smoke">{t("app:training.advanced.recipeSmoke")}</option></select></label>
             <label>{t("app:training.advanced.backboneLr")}<input type="number" step="0.00001" value={backboneLr} onChange={e=>setBackboneLr(Number(e.target.value))}/></label>
@@ -858,7 +1132,6 @@ function Training({ task, dataset, models, activeModelId, onSelectModel, runs, a
             <label>{t("app:training.advanced.loss")}<select value={lossName} onChange={e=>setLossName(e.target.value)}><option value="auto">{t("app:training.advanced.automatic")}</option>{!task.includes("classification")&&<><option value="mse">MSE</option><option value="mae">MAE</option><option value="huber">Huber</option></>}{task.includes("classification")&&<option value="focal">Focal</option>}</select></label>
             <label>{t("app:training.advanced.scheduler")}<select value={scheduler} onChange={e=>setScheduler(e.target.value)}><option value="none">{t("app:training.advanced.none")}</option><option value="cosine">{t("app:training.advanced.cosineWarmup")}</option><option value="step">{t("app:training.advanced.stepSchedule")}</option><option value="plateau">{t("app:training.advanced.reducePlateau")}</option></select></label>
             <label>{t("app:training.advanced.warmup")}<input type="number" min="0" value={warmup} onChange={e=>setWarmup(Number(e.target.value))}/></label>
-            <label>{t("app:training.advanced.earlyStopping")}<input type="number" min="0" value={patience} onChange={e=>setPatience(Number(e.target.value))}/></label>
             <label>{t("app:training.advanced.accumulation")}<input type="number" min="1" value={accumulation} onChange={e=>setAccumulation(Number(e.target.value))}/></label>
             <label>{t("app:training.advanced.gradientClip")}<input type="number" min="0" step="0.5" value={clipNorm} onChange={e=>setClipNorm(Number(e.target.value))}/></label>
             <label>{t("app:training.advanced.precision")}<select value={precision} onChange={e=>setPrecision(e.target.value)}><option value="fp32">FP32</option><option value="fp16">FP16 (CUDA)</option><option value="bf16">BF16 (CUDA)</option></select></label>
@@ -880,7 +1153,7 @@ function Training({ task, dataset, models, activeModelId, onSelectModel, runs, a
           {run?.test&&<div className="test-summary"><CheckCircle2/><span><small>{t("app:training.testResult")}</small><strong>{run.metricName}: {run.test.metric.toFixed(4)}</strong></span></div>}
           {activeRun?.error&&<div className="run-error"><AlertCircle/>{translateBackendError(activeRun.error)}</div>}
           </div>
-          <div className="run-config-footer">{training?<><button className="secondary" onClick={()=>onControl(activeRun?.status==="paused"?"running":"paused")}>{activeRun?.status==="paused"?"Reanudar":"Pausar"}</button><button className="secondary" onClick={()=>onControl("cancelled")}>Cancelar</button></>:<button className="primary full" disabled={activeRun?.status==="completed"} onClick={() => onTrain({ epochs, learning_rate: lr, backbone_learning_rate:backboneLr, head_learning_rate:headLr, batch_size: batch, optimizer, best_model_criterion: bestModelCriterion, scheduler, warmup_epochs:warmup, early_stopping_patience:patience, gradient_accumulation:accumulation, gradient_clip_norm:clipNorm, precision, loss:lossName, finetuning_recipe:finetuningRecipe, class_weights:classWeights, balanced_sampler:balancedSampler, resume_checkpoint:resumeCheckpoint, initial_checkpoint:initialCheckpoint })}>{activeRun?.status==="completed" ? <><Check/> {t("app:training.completedButton")}</> : <><Play /> {t("app:training.startButton")}</>}</button>}{activeRun?.status==="completed"&&<small>{t("app:training.newRunHint")}</small>}</div>
+          <div className="run-config-footer">{training?<div className="training-control-actions"><button className="stop-training" disabled={stopping} onClick={()=>onControl("cancelled")}><Square size={15} fill="currentColor"/> {stopping?t("app:training.stopping"):t("app:training.stop")}</button><button className="secondary pause-training" disabled={stopping||!runningRun} onClick={()=>onControl(runningRun?.status==="paused"?"running":"paused")}>{runningRun?.status==="paused"?<Play size={15}/>:<Pause size={15}/>} {runningRun?.status==="paused"?t("app:training.resume"):t("app:training.pause")}</button></div>:<button className="primary full" onClick={() => onTrain({ epochs, learning_rate: lr, backbone_learning_rate:backboneLr, head_learning_rate:headLr, batch_size: batch, optimizer, best_model_criterion: bestModelCriterion, scheduler, warmup_epochs:warmup, early_stopping_patience:earlyStoppingEnabled?patience:0, gradient_accumulation:accumulation, gradient_clip_norm:clipNorm, precision, loss:lossName, finetuning_recipe:finetuningRecipe, class_weights:classWeights, balanced_sampler:balancedSampler, resume_checkpoint:resumeCheckpoint, initial_checkpoint:initialCheckpoint })}>{activeRun?.status==="completed" ? <><Play/> {t("app:training.retrainButton")}</> : <><Play /> {t("app:training.startButton")}</>}</button>}{activeRun?.status==="completed"&&!training&&<small>{t("app:training.newRunHint")}</small>}</div>
         </aside>
       </div>
     </div>
@@ -920,6 +1193,10 @@ function AppearanceMenu({ theme, setTheme, accent, setAccent }: { theme:Theme; s
   </div>;
 }
 
+const mainLogoUrl = new URL("../../assets/Logo_Icon.png", import.meta.url).href;
+
+function AppLogo({className}:{className:string}){return <span className={`app-logo ${className}`} role="img" aria-label="ModelBuilder" style={{maskImage:`url(${mainLogoUrl})`,WebkitMaskImage:`url(${mainLogoUrl})`}}/>}
+
 function ProjectHub({ projects, onCreate, onOpen, onDelete, theme, setTheme, accent, setAccent }: { projects: Project[]; onCreate: (n:string,d:string)=>void; onOpen:(p:Project)=>void; onDelete:(p:Project)=>void; theme:Theme; setTheme:(v:Theme)=>void; accent:Accent; setAccent:(v:Accent)=>void }) {
   const { t } = useTranslation(["app", "common", "catalog"]);
   const [creating, setCreating] = useState(false); const [name, setName] = useState(""); const [description, setDescription] = useState("");
@@ -931,15 +1208,8 @@ function ProjectHub({ projects, onCreate, onOpen, onDelete, theme, setTheme, acc
   const modelCounts=projects.reduce<Record<string,number>>((counts,item)=>{const key=item.architecture||"unconfigured";counts[key]=(counts[key]||0)+1;return counts},{});
   const maxCount=Math.max(1,...Object.values(modelCounts));
   const recentActivity=projects.slice().sort((a,b)=>new Date(b.updatedAt).getTime()-new Date(a.updatedAt).getTime()).slice(0,4);
-  return <div className="hub"><header className="hub-header"><div className="brand" title={t("common:appName")} aria-label={t("common:appName")}><span className="brand-mark"><BrainCircuit /></span></div><AppearanceMenu theme={theme} setTheme={setTheme} accent={accent} setAccent={setAccent}/></header>
+  return <div className="hub"><header className="hub-header"><div className="brand" title={t("common:appName")} aria-label={t("common:appName")}><AppLogo className="main-screen-logo"/><strong>{t("common:appName")}</strong></div><button className="primary" onClick={()=>setCreating(true)}><Plus size={17}/>{t("app:hub.newProjectButton")}</button><AppearanceMenu theme={theme} setTheme={setTheme} accent={accent} setAccent={setAccent}/></header>
     <div className="hub-content">
-      <section className="hub-dashboard-top">
-        <div className="hub-hero-card"><div className="hero"><span className="eyebrow">{t("app:hub.heroEyebrow")}</span><h1>{t("app:hub.heroTitle")}<br/><em>{t("app:hub.heroTitleEmphasis")}</em></h1><p>{t("app:hub.heroSubtitle")}</p><div className="hero-actions"><button className="primary" onClick={() => setCreating(true)}><Plus size={17}/> {t("app:hub.newProjectButton")}</button></div></div><div className="hub-cubes" aria-hidden="true"><i/><i/><i/></div><div className="hub-benefits"><span><Box/><b>{t("app:hub.flexible")}</b><small>{t("app:hub.flexibleHint")}</small></span><span><Zap/><b>{t("app:hub.local")}</b><small>{t("app:hub.localHint")}</small></span><span><Shield/><b>{t("app:hub.open")}</b><small>{t("app:hub.openHint")}</small></span></div></div>
-        <div className="hub-summary-stack">
-          <article className="hub-summary-card"><h2>{t("app:hub.recentModelTypes")}</h2><div className="model-usage-list">{Object.entries(modelCounts).sort((a,b)=>b[1]-a[1]).slice(0,4).map(([id,count])=><div key={id}><span>{id==="unconfigured"?t("app:hub.unconfigured"):t(`catalog:architectures.${id}.name`)}</span><i><b style={{width:`${Math.max(12,count/maxCount*100)}%`}}/></i><strong>{count}</strong></div>)}{!Object.keys(modelCounts).length&&<p>{t("app:hub.noModelStats")}</p>}</div></article>
-          <article className="hub-summary-card activity-card"><div className="summary-title"><h2>{t("app:hub.recentActivity")}</h2><small>{t("app:hub.viewAll")}</small></div><div className="activity-list">{recentActivity.map(item=><button key={item.id} onClick={()=>onOpen(item)}><span><CheckCircle2/></span><b>{item.name}</b><time>{new Date(item.updatedAt).toLocaleDateString()}</time></button>)}{!recentActivity.length&&<p>{t("app:hub.noActivity")}</p>}</div></article>
-        </div>
-      </section>
       <section className="projects-card">
         <div className="projects-toolbar"><div><h2>{t("app:hub.recentProjects")}</h2><p>{projects.length ? t("app:hub.projectCount", { count: projects.length }) : t("app:hub.noProjects")}</p></div><div className="project-controls"><label><Search/><input value={query} onChange={event=>setQuery(event.target.value)} placeholder={t("app:hub.searchProjects")}/></label><select value={modelFilter} onChange={event=>setModelFilter(event.target.value)} aria-label={t("app:hub.filterModels")}><option value="all">{t("app:hub.allModels")}</option>{Object.keys(modelCounts).filter(id=>id!=="unconfigured").map(id=><option value={id} key={id}>{t(`catalog:architectures.${id}.name`)}</option>)}</select><div className="view-toggle"><button className={projectView==="list"?"active":""} onClick={()=>setProjectView("list")} aria-label={t("app:hub.listView")}><List/></button><button className={projectView==="grid"?"active":""} onClick={()=>setProjectView("grid")} aria-label={t("app:hub.gridView")}><Grid2X2/></button></div></div></div>
       {filteredProjects.length ? (
@@ -996,10 +1266,10 @@ function Sidebar({ step, setStep, completed, onHome, gpuInfo, nodes, dataset, th
 
   return <aside className="sidebar">
     <div className="sidebar-top">
-      <button className="brand sidebar-brand" onClick={onHome} title={t("app:sidebar.homeTitle")} aria-label={t("app:sidebar.homeTitle")}><span className="brand-mark"><BrainCircuit/></span></button>
+      <button className="brand sidebar-brand" onClick={onHome} title={t("app:sidebar.homeTitle")} aria-label={t("app:sidebar.homeTitle")}><AppLogo className="sidebar-app-logo"/></button>
       <AppearanceMenu theme={theme} setTheme={setTheme} accent={accent} setAccent={setAccent}/>
     </div>
-    <nav><small>{t("app:sidebar.flowLabel")}</small>{steps.map((s,i) => { const Icon=s.icon; return <button key={s.id} className={step===s.id?"active":""} onClick={()=>setStep(s.id)}><span className="step-index">{completed[s.id]?<Check size={13}/>:i+1}</span><Icon size={16}/><span>{s.label}</span></button>; })}</nav>
+    <nav>{steps.map((s,i) => { const Icon=s.icon; return <button key={s.id} className={step===s.id?"active":""} onClick={()=>setStep(s.id)}><span className="step-index">{completed[s.id]?<Check size={13}/>:i+1}</span><Icon size={16}/><span>{s.label}</span></button>; })}</nav>
     <div className="sidebar-bottom">
       <div><Cpu size={16}/><span><strong>{t("app:sidebar.engineLabel")}</strong><small>{t("app:sidebar.engineSublabel")}</small></span></div>
       <div className="vram-widget">
@@ -1040,19 +1310,20 @@ function ModelTask({ architecture, task, runtimeCatalog, onChoose, onContinue }:
     <div className="model-catalog-header"><div><span className="eyebrow">{t("app:modelTask.stepEyebrow")}</span><h2>{t("app:modelTask.catalogTitle")}</h2><p>{t("app:modelTask.catalogSubtitle")}</p></div><div className="catalog-tools"><label><Search/><input value={query} onChange={event=>setQuery(event.target.value)} placeholder={t("app:modelTask.searchPlaceholder")}/><kbd>⌘ K</kbd></label><button><ArrowUpDown/>{t("app:modelTask.popularFirst")}<ChevronRight/></button></div></div>
     <div className="model-catalog-layout">
       <section className="family-panel"><header><h3>{t("app:modelTask.familiesTitle")}</h3><p>{t("app:modelTask.familiesSubtitle")}</p></header><div className="family-list">{families.map(item=>{const Icon=item.icon;return <button key={item.id} className={family===item.id?"active":""} onClick={()=>{setFamily(item.id);if(!item.architectures.includes(preview))setPreview(item.architectures[0])}}><span><Icon/></span><div><strong>{item.label}</strong><small>{item.hint}</small></div><b>{item.architectures.length}</b></button>})}</div></section>
-      <section className="architecture-list-panel"><header><h3>{t("app:modelTask.architecturesTitle")}</h3><p>{t("app:modelTask.architectureCount",{count:visibleArchitectures.length})}</p></header><div className="catalog-architecture-list">{visibleArchitectures.map(([id,a],index)=>{const Icon=ARCHITECTURE_ICONS[id];return <button key={id} className={preview===id?"active":""} onClick={()=>setPreview(id)}><span><Icon/></span><div><strong>{t(`catalog:architectures.${id}.name`)}</strong><small>{t(`catalog:architectures.${id}.description`)}</small><em>{t(`catalog:tasks.${a.tasks[0]}.modality`)}</em></div>{index===0&&<b>◆ {t("app:modelTask.popular")}</b>}<ChevronRight/></button>})}</div></section>
-      <section className="architecture-detail-panel"><div className="detail-scroll"><header><span className="detail-arch-icon"><DetailIcon/></span><div><h2>{t(`catalog:architectures.${preview}.name`)}</h2><span className="eyebrow">{t("app:modelTask.architectureEyebrow")}</span><p>{t(`catalog:architectures.${preview}.description`)}</p></div><b>◆ {t("app:modelTask.popular")}</b></header><nav><button className="active">{t("app:modelTask.overview")}</button><button>{t("app:modelTask.tasks")}</button><button>{t("app:modelTask.details")}</button></nav><div className="architecture-overview"><div><p>{t("app:modelTask.overviewText",{architecture:t(`catalog:architectures.${preview}.name`)})}</p><div className="detail-tags"><span>{t(`catalog:tasks.${detail.tasks[0]}.modality`)}</span><span>{t("app:modelTask.scalable")}</span><span>{t("app:modelTask.localReady")}</span></div></div><div className="mini-architecture-diagram"><small>{t("app:modelTask.inputSequence")}</small><i/><b>{t(`catalog:architectures.${preview}.name`)}</b><i/><small>{t("app:modelTask.representation")}</small><div>{[1,2,3,4,5,6].map(n=><span key={n}/>)}</div></div></div><div className="available-tasks"><h3>{t("app:modelTask.availableTasks")}</h3><p>{t("app:modelTask.availableTasksHint")}</p><div>{detail.tasks.map(taskId=><button key={taskId} className={activeTask===taskId?"selected":""} onClick={()=>onChoose(preview,taskId)}><span><FileText/></span><div><strong>{t(`catalog:tasks.${taskId}.name`)}</strong><small>{t(`catalog:tasks.${taskId}.input`)} → {t(`catalog:tasks.${taskId}.output`)}</small></div><ChevronRight/></button>)}</div></div>{activeTask&&<div className="detail-contract"><div><small>{t("app:contract.compatibleInput")}</small><strong>{t(`catalog:tasks.${activeTask}.format`)}</strong></div><div><small>{t("app:contract.mainMetric")}</small><strong>{t(`catalog:tasks.${activeTask}.metric`)}</strong></div><div><small>{t("app:contract.modality")}</small><strong>{t(`catalog:tasks.${activeTask}.modality`)}</strong></div></div>}</div><footer><span>{activeTask?t(`catalog:tasks.${activeTask}.name`):t("app:modelTask.chooseTaskHint")}</span><button className="primary" disabled={!activeTask} onClick={onContinue}>{t("app:modelTask.continueWith",{task:activeTask?t(`catalog:tasks.${activeTask}.name`):t("app:modelTask.taskFallback")})}<ChevronRight/></button></footer></section>
+      <section className="architecture-list-panel"><header><h3>{t("app:modelTask.architecturesTitle")}</h3><p>{t("app:modelTask.architectureCount",{count:visibleArchitectures.length})}</p></header><div className="catalog-architecture-list">{visibleArchitectures.map(([id,a],index)=>{const Icon=ARCHITECTURE_ICONS[id];return <button key={id} className={preview===id?"active":""} onClick={()=>setPreview(id)}><span><Icon/></span><div><strong>{t(`catalog:architectures.${id}.name`)}</strong><small>{t(`catalog:architectures.${id}.description`)}</small><em>{t(`catalog:tasks.${a.tasks[0]}.modality`)}</em></div><ChevronRight/></button>})}</div></section>
+      <section className="architecture-detail-panel"><div className="detail-scroll"><header><span className="detail-arch-icon"><DetailIcon/></span><div><h2>{t(`catalog:architectures.${preview}.name`)}</h2><span className="eyebrow">{t("app:modelTask.architectureEyebrow")}</span><p>{t(`catalog:architectures.${preview}.description`)}</p></div></header><div className="architecture-overview"><div><p>{t("app:modelTask.overviewText",{architecture:t(`catalog:architectures.${preview}.name`)})}</p><div className="detail-tags"><span>{t(`catalog:tasks.${detail.tasks[0]}.modality`)}</span><span>{t("app:modelTask.scalable")}</span><span>{t("app:modelTask.localReady")}</span></div></div><div className="mini-architecture-diagram"><small>{t("app:modelTask.inputSequence")}</small><i/><b>{t(`catalog:architectures.${preview}.name`)}</b><i/><small>{t("app:modelTask.representation")}</small><div>{[1,2,3,4,5,6].map(n=><span key={n}/>)}</div></div></div><div className="available-tasks"><h3>{t("app:modelTask.availableTasks")}</h3><p>{t("app:modelTask.availableTasksHint")}</p><div>{detail.tasks.map(taskId=><button key={taskId} className={activeTask===taskId?"selected":""} onClick={()=>onChoose(preview,taskId)}><span><FileText/></span><div><strong>{t(`catalog:tasks.${taskId}.name`)}</strong><small>{t(`catalog:tasks.${taskId}.input`)} → {t(`catalog:tasks.${taskId}.output`)}</small></div><ChevronRight/></button>)}</div></div>{activeTask&&<div className="detail-contract"><div><small>{t("app:contract.compatibleInput")}</small><strong>{t(`catalog:tasks.${activeTask}.format`)}</strong></div><div><small>{t("app:contract.mainMetric")}</small><strong>{t(`catalog:tasks.${activeTask}.metric`)}</strong></div><div><small>{t("app:contract.modality")}</small><strong>{t(`catalog:tasks.${activeTask}.modality`)}</strong></div></div>}</div><footer><span>{activeTask?t(`catalog:tasks.${activeTask}.name`):t("app:modelTask.chooseTaskHint")}</span><button className="primary" disabled={!activeTask} onClick={onContinue}>{t("app:modelTask.continueWith",{task:activeTask?t(`catalog:tasks.${activeTask}.name`):t("app:modelTask.taskFallback")})}<ChevronRight/></button></footer></section>
     </div>
   </div>;
 }
 
-function DataStep({ project, task, dataset, dataContinue, setNotice, onDownload, onImport, onImportFiles, onChooseAnother, onApplyPipeline, onSplitsChange }: {
+function DataStep({ project, task, dataset, dataContinue, setNotice, onDownload, onKaggle, onImport, onImportFiles, onChooseAnother, onApplyPipeline, onSplitsChange }: {
   project: Project | null;
   task: TaskId | null;
   dataset: DatasetSummary | null;
   dataContinue: React.MutableRefObject<() => Promise<boolean>>;
   setNotice: (message: string) => void;
   onDownload: (datasetId: string, opts?: DatasetOptions) => Promise<void>;
+  onKaggle: (handle: string, opts: DatasetOptions) => Promise<void>;
   onImport: (path: string, opts?: DatasetOptions) => Promise<void>;
   onImportFiles: (files: File[], opts?: DatasetOptions) => Promise<void>;
   onChooseAnother: () => void;
@@ -1061,6 +1332,7 @@ function DataStep({ project, task, dataset, dataContinue, setNotice, onDownload,
 }) {
   const { t } = useTranslation(["app", "common", "catalog"]);
   const [path, setPath] = useState(dataset?.sourcePath || "");
+  const [sourceChoice,setSourceChoice]=useState<"kaggle"|"huggingface"|"local"|null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
   const [loading, setLoading] = useState(false);
   const [loadingLabel, setLoadingLabel] = useState("");
@@ -1070,10 +1342,18 @@ function DataStep({ project, task, dataset, dataContinue, setNotice, onDownload,
   const [pendingFiles, setPendingFiles] = useState<File[]>([]);
   const [pipelineDraft, setPipelineDraft] = useState<DataPipeline | null>(null);
   const [pipelineDirty, setPipelineDirty] = useState(false);
-  const [dataView,setDataView]=useState<"preview"|"charts">("preview");
+  const [dataView,setDataView]=useState<"preview"|"charts"|"info">("preview");
   const [analytics,setAnalytics]=useState<DatasetAnalytics|undefined>(dataset?.analytics);
   const [catalog,setCatalog]=useState<HuggingFaceDataset[]>([]);
   const [catalogError,setCatalogError]=useState("");
+  const [randomPreview,setRandomPreview]=useState<(DatasetPreview & {sampleIndices?:number[]})|null>(null);
+  const [previewLoading,setPreviewLoading]=useState(false);
+  const [previewError,setPreviewError]=useState("");
+  const previewDatasetKey=useRef("");
+  previewDatasetKey.current=`${dataset?.id||""}:${dataset?.revision||0}`;
+  useEffect(()=>{setRandomPreview(null);setPreviewError("");setPreviewLoading(false)},[dataset?.id,dataset?.revision]);
+  const refreshSamples=async()=>{if(!dataset||!task||previewLoading)return;const key=`${dataset.id}:${dataset.revision||0}`;setPreviewLoading(true);setPreviewError("");try{const result=await backend<DatasetPreview & {sampleIndices?:number[]}>("data.preview",{dataset,task_id:task});if(previewDatasetKey.current===key)setRandomPreview(result)}catch(error){if(previewDatasetKey.current===key)setPreviewError(translateBackendError(String(error)))}finally{if(previewDatasetKey.current===key)setPreviewLoading(false)}};
+  const shownPreview=randomPreview||dataset?.preview;
   const isImage = task ? (task.startsWith("image") || task.includes("segmentation")) : false;
   const isText = task?.startsWith("text.") || false;
 
@@ -1084,6 +1364,7 @@ function DataStep({ project, task, dataset, dataContinue, setNotice, onDownload,
   const [batchSize, setBatchSize] = useState<number>(dataset?.options?.batchSize || 32);
   const [maxLength,setMaxLength]=useState<number>(dataset?.options?.max_length || 64);
   const [vocabSize,setVocabSize]=useState<number>(dataset?.options?.vocab_size || 2048);
+  const resetSource=()=>{setSourceChoice(null);onChooseAnother()};
   const onPipelineDraftChange = useCallback((pipeline: DataPipeline, dirty: boolean) => {
     setPipelineDraft(pipeline);
     setPipelineDirty(dirty);
@@ -1110,8 +1391,8 @@ function DataStep({ project, task, dataset, dataContinue, setNotice, onDownload,
   }, [dataset, isImage]);
   useEffect(()=>{if(!dataset||!task)return;setAnalytics(dataset.analytics);if(!dataset.analytics)backend<DatasetAnalytics>("data.analytics",{dataset,task_id:task}).then(setAnalytics).catch(()=>{})},[dataset?.id,dataset?.revision,task]);
   useEffect(()=>{
-    if(dataset?.source!=="huggingface")return;
-    backend<{exists:boolean}>("data.exists",{dataset}).then(result=>{if(!result.exists)onChooseAnother()}).catch(()=>onChooseAnother());
+    if(dataset?.source!=="huggingface" && dataset?.source!=="kaggle")return;
+    backend<{exists:boolean}>("data.exists",{dataset}).then(result=>{if(!result.exists)resetSource()}).catch(()=>resetSource());
   },[dataset?.id,dataset?.revision]);
   useEffect(()=>{
     if(!task||!project){setCatalog([]);return}
@@ -1123,6 +1404,7 @@ function DataStep({ project, task, dataset, dataContinue, setNotice, onDownload,
   const trainCount = dataset ? (dataset.splitCounts?.train ?? Math.round(dataset.samples * dataset.splits.train / 100)) : 0;
   const validationCount = dataset ? (dataset.splitCounts?.validation ?? Math.round(dataset.samples * dataset.splits.validation / 100)) : 0;
   const testCount = dataset ? (dataset.splitCounts?.test ?? dataset.samples - trainCount - validationCount) : 0;
+  const formatImageSize=(size:{width:number;height:number}|null|undefined)=>size?`${size.width.toLocaleString()} × ${size.height.toLocaleString()} px`:t("app:data.sourceResolutionUnknown");
 
   const currentOpts: DatasetOptions = {
     ...(isImage ? { channels, resolution, ...(task==="image.translation"?{target_channels:targetChannels}:{}) } : isText ? {max_length:maxLength,vocab_size:vocabSize} : { normalization }),
@@ -1138,7 +1420,7 @@ function DataStep({ project, task, dataset, dataContinue, setNotice, onDownload,
   };
   useEffect(() => {
     dataContinue.current = async () => {
-      if (!dataset || !pipelineDraft || (!pipelineDirty && dataset.pipeline)) return true;
+      if (!dataset || !pipelineDraft || (!pipelineDirty && !dataset.splitPending && dataset.pipeline)) return true;
       try {
         await runLoading(t("app:data.applyingPipeline"), () => onApplyPipeline(pipelineDraft));
         return true;
@@ -1218,73 +1500,81 @@ function DataStep({ project, task, dataset, dataContinue, setNotice, onDownload,
       </div>
 
       {!dataset ? (
-        <div className="dataset-source-layout">
-          <section className="hf-catalog">
-            <div className="hf-catalog-heading"><div><Cloud/><span><span className="eyebrow">{t("app:data.hfEyebrow")}</span><h3>{t("app:data.hfTitle")}</h3><p>{t("app:data.hfSubtitle")}</p></span></div></div>
-            {catalogError&&<div className="catalog-error"><AlertCircle/>{catalogError}</div>}
-            <div className="hf-dataset-list">
-              {catalog.map(item=><article className="hf-dataset-card" key={item.id}>
+        <div className="dataset-source-flow">
+          {!sourceChoice ? <section className="source-selection"><span className="eyebrow">{t("app:data.sourceEyebrow")}</span><h3>{t("app:data.sourceTitle")}</h3><p>{t("app:data.sourceSubtitle")}</p><div className="source-choice-grid">
+            <button className="source-choice-card" onClick={()=>setSourceChoice("kaggle")}><span><Cloud/></span><strong>{t("app:data.kaggleChoice")}</strong><small>{t("app:data.kaggleChoiceHint")}</small><ChevronRight/></button>
+            <button className="source-choice-card" onClick={()=>setSourceChoice("huggingface")}><span><Layers3/></span><strong>{t("app:data.hfChoice")}</strong><small>{t("app:data.hfChoiceHint")}</small><ChevronRight/></button>
+            <button className="source-choice-card" onClick={()=>setSourceChoice("local")}><span><Upload/></span><strong>{t("app:data.localChoice")}</strong><small>{t("app:data.localChoiceHint")}</small><ChevronRight/></button>
+          </div></section> : <>
+            <div className="source-flow-toolbar"><button className="secondary" onClick={()=>setSourceChoice(null)}><ArrowLeft/> {t("app:data.changeSource")}</button><span>{t(`app:data.sourceNames.${sourceChoice}`)}</span></div>
+            {sourceChoice==="kaggle"&&(task==="image.classification"?<KaggleImport onImport={onKaggle}/>:<section className="source-detail-card"><Cloud/><h3>{t("app:data.kaggleChoice")}</h3><p>{t("app:data.kaggleUnsupported")}</p></section>)}
+            {sourceChoice==="huggingface"&&<section className="hf-catalog"><div className="hf-catalog-heading"><div><Cloud/><span><span className="eyebrow">{t("app:data.hfEyebrow")}</span><h3>{t("app:data.hfTitle")}</h3><p>{t("app:data.hfSubtitle")}</p></span></div></div>
+              {catalogError&&<div className="catalog-error"><AlertCircle/>{catalogError}</div>}
+              <div className="hf-dataset-list">{catalog.map(item=><article className="hf-dataset-card" key={item.id}>
                 <div className="hf-dataset-copy"><div className="hf-dataset-title"><Database/><div><h4>{item.name}</h4><a href={`https://huggingface.co/datasets/${item.repoId}`} target="_blank" rel="noreferrer">{item.repoId}</a></div></div><p>{item.description}</p><div className="hf-dataset-meta"><span>{formatBytes(item.sizeBytes)}</span><span>{item.license}</span>{item.installed?<span className="installed"><CheckCircle2/>{t("app:data.installed")}</span>:item.cached?<span className="cached"><Save/>{t("app:data.cached")}</span>:<span><Cloud/>{t("app:data.remote")}</span>}</div></div>
                 <button className="primary" disabled={loading} onClick={()=>runLoading(item.installed?t("app:data.openingDataset"):item.cached?t("app:data.preparingCached"):t("app:data.downloadingDataset",{name:item.name}),()=>onDownload(item.id,item.defaultOptions))}>{item.installed?<><Check/> {t("app:data.useDataset")}</>:item.cached?<><Database/> {t("app:data.prepareDataset")}</>:<><Download/> {t("app:data.downloadDataset")}</>}</button>
-              </article>)}
-            </div>
-          </section>
-
-          <article className="source-card">
-            <Upload />
-            <h3>{t("app:data.importTitle")}</h3>
-            <p>{t("app:data.importSubtitle")}</p>
-            <p className="muted dataset-format-hint">{t(TASKS[task].formatKey || "",{defaultValue:TASKS[task].format})}</p>
-            <input ref={fileInput} type="file" hidden multiple={isImage} accept={isImage ? ".png,.jpg,.jpeg,.webp,.bmp,.csv,.txt,.json" : isText ? ".txt,.csv,.tsv" : ".csv,.tsv"} onChange={importSelectedFiles} />
-            {task==="image.translation"&&<label className="app-field"><span>{t("app:data.targetChannels")}</span><select value={targetChannels} onChange={event=>setTargetChannels(Number(event.target.value))}><option value={1}>{t("app:data.grayscale")}</option><option value={3}>{t("app:data.rgb")}</option></select></label>}
-            {task.startsWith("tabular") && <>{task !== "tabular.reconstruction" && <label className="app-field"><span>{t("app:data.targetColumnLabel")}</span>{csvColumns.length ? <select value={targetColumn || "__auto__"} onChange={event=>chooseTargetColumn(event.target.value === "__auto__" ? "" : event.target.value)}><option value="__auto__">{t("app:data.targetAuto")}</option>{csvColumns.map(column=><option key={column} value={column}>{column}</option>)}</select> : <input value={targetColumn} onChange={event=>setTargetColumn(event.target.value)} placeholder={t("app:data.targetColumnPlaceholder")} />}</label>}{csvColumns.length>0&&<fieldset className="column-selection"><legend>{t("app:data.featureColumnsLabel")}</legend>{csvColumns.filter(column=>task==="tabular.reconstruction"||column!==(targetColumn || (csvColumns.includes("target")?"target":csvColumns.at(-1)))).map(column=><label key={column}><input type="checkbox" checked={selectedFeatures.includes(column)} onChange={event=>setSelectedFeatures(current=>event.target.checked?[...current,column]:current.filter(value=>value!==column))}/><span>{column}</span></label>)}</fieldset>}</>}
-            <label className="app-field">
-              <span>{t("app:data.localPathLabel")}</span>
-              <div className="path-picker"><input value={path} onChange={e => { setPath(e.target.value); setCsvColumns([]); setPendingFiles([]); setSelectedFeatures([]); setTargetColumn(""); }} placeholder={t("app:data.pathPlaceholder")} /><button type="button" className="secondary" onClick={browseFolder}><FolderOpen size={15}/> {t("app:data.browse")}</button></div>
-            </label>
-            {pendingFiles.length>0&&<p className="muted">{t("app:data.selectedFile",{name:pendingFiles[0].name})}</p>}
-            <button className="secondary" disabled={(!path&&!pendingFiles.length)||loading} onClick={inspectOrImportPath}>
-              {task.startsWith("tabular") && !csvColumns.length ? t("app:data.inspectColumns") : t("app:data.inspectImport")}
-            </button>
-          </article>
+              </article>)}</div>
+            </section>}
+            {sourceChoice==="local"&&<article className="source-card local-source-card">
+              <Upload/><h3>{t("app:data.importTitle")}</h3><p>{t("app:data.importSubtitle")}</p><p className="muted dataset-format-hint">{t(TASKS[task].formatKey || "",{defaultValue:TASKS[task].format})}</p>
+              <input ref={fileInput} type="file" hidden multiple={isImage} accept={isImage ? ".png,.jpg,.jpeg,.webp,.bmp,.csv,.txt,.json" : isText ? ".txt,.csv,.tsv" : ".csv,.tsv"} onChange={importSelectedFiles} />
+              {task==="image.translation"&&<label className="app-field"><span>{t("app:data.targetChannels")}</span><select value={targetChannels} onChange={event=>setTargetChannels(Number(event.target.value))}><option value={1}>{t("app:data.grayscale")}</option><option value={3}>{t("app:data.rgb")}</option></select></label>}
+              {task.startsWith("tabular") && <>{task !== "tabular.reconstruction" && <label className="app-field"><span>{t("app:data.targetColumnLabel")}</span>{csvColumns.length ? <select value={targetColumn || "__auto__"} onChange={event=>chooseTargetColumn(event.target.value === "__auto__" ? "" : event.target.value)}><option value="__auto__">{t("app:data.targetAuto")}</option>{csvColumns.map(column=><option key={column} value={column}>{column}</option>)}</select> : <input value={targetColumn} onChange={event=>setTargetColumn(event.target.value)} placeholder={t("app:data.targetColumnPlaceholder")} />}</label>}{csvColumns.length>0&&<fieldset className="column-selection"><legend>{t("app:data.featureColumnsLabel")}</legend>{csvColumns.filter(column=>task==="tabular.reconstruction"||column!==(targetColumn || (csvColumns.includes("target")?"target":csvColumns.at(-1)))).map(column=><label key={column}><input type="checkbox" checked={selectedFeatures.includes(column)} onChange={event=>setSelectedFeatures(current=>event.target.checked?[...current,column]:current.filter(value=>value!==column))}/><span>{column}</span></label>)}</fieldset>}</>}
+              <label className="app-field"><span>{t("app:data.localPathLabel")}</span><div className="path-picker"><input value={path} onChange={e => { setPath(e.target.value); setCsvColumns([]); setPendingFiles([]); setSelectedFeatures([]); setTargetColumn(""); }} placeholder={t("app:data.pathPlaceholder")} /><button type="button" className="secondary" onClick={browseFolder}><FolderOpen size={15}/> {t("app:data.browse")}</button></div></label>
+              {pendingFiles.length>0&&<p className="muted">{t("app:data.selectedFile",{name:pendingFiles[0].name})}</p>}
+              <button className="secondary" disabled={(!path&&!pendingFiles.length)||loading} onClick={inspectOrImportPath}>{task.startsWith("tabular") && !csvColumns.length ? t("app:data.inspectColumns") : t("app:data.inspectImport")}</button>
+            </article>}
+          </>}
         </div>
       ) : (
         <div className="data-step-layout">
           <div className="data-main">
-            <DataPipelineEditor task={task} dataset={dataset} onApply={onApplyPipeline} onDraftChange={onPipelineDraftChange}/>
-            <article className="panel">
-              <div className="data-view-header"><span className="eyebrow">{t("app:data.explorerEyebrow")}</span><div className="data-view-switch" role="tablist" aria-label={t("app:data.viewAria")}><button role="tab" aria-selected={dataView==="preview"} className={dataView==="preview"?"active":""} onClick={()=>setDataView("preview")}>{t("app:data.samplesTab")}</button><button role="tab" aria-selected={dataView==="charts"} className={dataView==="charts"?"active":""} onClick={()=>setDataView("charts")}>{t("app:data.chartsTab")}</button></div></div>
+            <DataPipelineEditor task={task} dataset={dataset} externalDirty={dataset.splitPending} onApply={onApplyPipeline} onDraftChange={onPipelineDraftChange}/>
+            <article className="panel data-explorer-panel">
+              <div className="data-view-header"><span className="eyebrow">{t("app:data.explorerEyebrow")}</span><div className="data-view-switch" role="tablist" aria-label={t("app:data.viewAria")}><button role="tab" aria-selected={dataView==="info"} className={dataView==="info"?"active":""} onClick={()=>setDataView("info")}>{t("app:data.infoTab")}</button><button role="tab" aria-selected={dataView==="preview"} className={dataView==="preview"?"active":""} onClick={()=>setDataView("preview")}>{t("app:data.samplesTab")}</button><button role="tab" aria-selected={dataView==="charts"} className={dataView==="charts"?"active":""} onClick={()=>setDataView("charts")}>{t("app:data.chartsTab")}</button>{dataView==="preview"&&<button className="secondary" onClick={refreshSamples} disabled={previewLoading} title={t(previewLoading?"app:data.loadingSamples":"app:data.randomSamples")} aria-label={t("app:data.randomSamples")}><Dice5 size={16}/></button>}</div></div>
+              {previewError&&<p role="alert" className="source-resolution-unavailable">{previewError}</p>}
+              {dataView==="info"&&<div className="source-resolution-inline" aria-label={t("app:data.sourceResolutionTitle")}>
+                <div><span className="eyebrow">{t("app:data.sourceResolutionTitle")}</span><p>{t("app:data.sourceResolutionDescription")}</p></div>
+                {dataset.imageResolution&&dataset.imageResolution.count>0?<div className="source-resolution-values">
+                  <span><small>{t("app:data.resolutionMin")}</small><strong>{formatImageSize(dataset.imageResolution.min)}</strong></span>
+                  <span><small>{t("app:data.resolutionMean")}</small><strong>{formatImageSize(dataset.imageResolution.mean)}</strong></span>
+                  <span><small>{t("app:data.resolutionMax")}</small><strong>{formatImageSize(dataset.imageResolution.max)}</strong></span>
+                  <span className="source-resolution-note"><small>{t("app:data.nonSquareImages")}</small><strong>{dataset.imageResolution.nonSquareCount.toLocaleString()} / {dataset.imageResolution.count.toLocaleString()}</strong></span>
+                  {isImage&&<span className="source-resolution-model"><small>{t("app:data.modelInputSize")}</small><strong>{dataset.inputShape.join(" × ")}</strong></span>}
+                  {dataset.imageResolution.unavailable>0&&<small className="source-resolution-unavailable">{t("app:data.sourceResolutionUnavailable",{count:dataset.imageResolution.unavailable})}</small>}
+                </div>:<p className="source-resolution-empty">{dataset.imageResolution?.unavailable?t("app:data.sourceResolutionUnavailable",{count:dataset.imageResolution.unavailable}):isImage?t("app:data.sourceResolutionLegacyMissing"):t("app:data.noImages")}</p>}
+              </div>}
 
-              {dataView==="charts"?<DataCharts analytics={analytics} task={task}/>:dataset.preview?.type === "image" && dataset.preview.items?.length ? (
+              {dataView==="info"?null:dataView==="charts"?<DataCharts analytics={analytics} task={task}/>:shownPreview?.type === "image" && shownPreview.items?.length ? (
                 <div className="preview-image-grid">
-                  {dataset.preview.items.slice(0,4).map((item, i) => (
+                  {shownPreview.items.slice(0,4).map((item, i) => (
                     <div className="preview-image-card" key={i}>
                       <div className={`dataset-image-pair ${item.targetUrl ? "with-target" : ""}`}><figure><img src={item.url} alt={item.label || t("app:data.sampleLabel", { number: i + 1 })} /><figcaption>{t("app:data.inputCaption")}</figcaption></figure>{item.targetUrl&&<figure><img src={item.targetUrl} alt={item.targetLabel || t("app:data.targetCaption")} /><figcaption>{item.targetLabel || t("app:data.outputCaption")}</figcaption></figure>}</div>
-                      <span className="preview-image-label">{t("app:data.sampleLabel", { number: i + 1 })}</span>
+                      <span className="preview-image-label">{t("app:data.sampleLabel", { number: (randomPreview?.sampleIndices?.[i] ?? i) + 1 })}</span>
                     </div>
                   ))}
                 </div>
-              ) : dataset.preview?.type === "text" && dataset.preview.items?.length ? (
+              ) : shownPreview?.type === "text" && shownPreview.items?.length ? (
                 <div className="preview-table-wrap preview-text-wrap">
                   <table className="preview-table preview-text-table">
                     <thead><tr><th>{t("app:data.samplesTab")}</th></tr></thead>
-                    <tbody>{dataset.preview.items.map((item, i) => <tr key={i}><td>{item.text}</td></tr>)}</tbody>
+                    <tbody>{shownPreview.items.map((item, i) => <tr key={i}><td>{item.text}</td></tr>)}</tbody>
                   </table>
                 </div>
-              ) : dataset.preview?.type === "tabular" && dataset.preview.items?.length ? (
+              ) : shownPreview?.type === "tabular" && shownPreview.items?.length ? (
                 <div className="preview-table-wrap">
                   <table className="preview-table">
                     <thead>
                       <tr>
                         <th>#</th>
-                        {dataset.preview.columns?.map((c, i) => <th key={i}>{c}</th>)}
+                        {shownPreview.columns?.map((c, i) => <th key={i}>{c}</th>)}
                         <th>Target</th>
                       </tr>
                     </thead>
                     <tbody>
-                      {dataset.preview.items.map((item, i) => (
+                      {shownPreview.items.map((item, i) => (
                         <tr key={i}>
-                          <td>{i + 1}</td>
+                          <td>{(randomPreview?.sampleIndices?.[i] ?? i) + 1}</td>
                           {item.features?.map((f, j) => <td key={j}>{f}</td>)}
                           <td className="target-cell">{item.target}</td>
                         </tr>
@@ -1303,7 +1593,7 @@ function DataStep({ project, task, dataset, dataContinue, setNotice, onDownload,
               )}
             </article>
 
-            <article className="panel">
+            <article className="panel data-split-panel">
               <span className="eyebrow">{t("app:data.partitionsEyebrow")}</span>
               <SplitControl splits={dataset.splits} onChange={onSplitsChange} disabled={dataset.splitSource==="official"||dataset.splitSource==="temporal"} t={t} />
               {dataset.splitSource==="official"&&<small className="locked-node-note"><GitBranch/> {t("app:split.officialLocked")}</small>}
@@ -1316,7 +1606,7 @@ function DataStep({ project, task, dataset, dataContinue, setNotice, onDownload,
             </article>
           </div>
 
-          <aside className="data-sidebar"><div className="panel data-config-panel"><span className="eyebrow">{t("app:data.nodePropertiesEyebrow")}</span>{dataset.source==="huggingface"&&<div className="active-hf-source"><Database/><span><strong>{catalog.find(item=>item.id===dataset.catalogId)?.name||dataset.catalogId}</strong><small>{dataset.repoId}</small><small>{dataset.cacheStatus==="project"?t("app:data.loadedFromProject"):dataset.cacheStatus==="disk"?t("app:data.loadedFromCache"):t("app:data.downloadComplete")}</small></span></div>}<button className="secondary dataset-change-button" onClick={onChooseAnother}><Database/> {t("app:data.changeDataset")}</button><div id="data-node-inspector"/>{dataset.classes&&<div className="data-classes-section"><div className="data-classes-heading"><span className="eyebrow">{t("app:data.classesEyebrow", { count: dataset.classes.length })}</span><small>{t("common:samples")}: <strong>{dataset.samples.toLocaleString()}</strong></small></div><div className="class-tags">{dataset.classes.slice(0,20).map(c=><span key={c}>{c}</span>)}{dataset.classes.length>20&&<span className="class-tags-more" aria-label={`${dataset.classes.length-20} more classes`}>...</span>}</div></div>}</div></aside>
+          <aside className="data-sidebar"><div className="panel data-config-panel"><span className="eyebrow">{t("app:data.nodePropertiesEyebrow")}</span>{dataset.source === "kaggle" && dataset.importReport && <details className="kaggle-provenance"><summary>Kaggle · {dataset.kaggleHandle}</summary><KaggleReport report={dataset.importReport}/></details>}{dataset.source==="huggingface"&&<div className="active-hf-source"><Database/><span><strong>{catalog.find(item=>item.id===dataset.catalogId)?.name||dataset.catalogId}</strong><small>{dataset.repoId}</small><small>{dataset.cacheStatus==="project"?t("app:data.loadedFromProject"):dataset.cacheStatus==="disk"?t("app:data.loadedFromCache"):t("app:data.downloadComplete")}</small></span></div>}<button className="secondary dataset-change-button" onClick={resetSource}><Database/> {t("app:data.changeDataset")}</button><div id="data-node-inspector"/>{dataset.classes&&<div className="data-classes-section"><div className="data-classes-heading"><span className="eyebrow">{t("app:data.classesEyebrow", { count: dataset.classes.length })}</span><small>{t("common:samples")}: <strong>{dataset.samples.toLocaleString()}</strong></small></div><div className="class-tags">{dataset.classes.slice(0,20).map(c=><span key={c}>{c}</span>)}{dataset.classes.length>20&&<span className="class-tags-more" aria-label={`${dataset.classes.length-20} more classes`}>...</span>}</div></div>}</div></aside>
         </div>
       )}
     </div>
@@ -1412,6 +1702,7 @@ function Inference({ task, dataset, run, runName, onInfer }: {
   const { t } = useTranslation(["app", "common", "catalog"]);
   const taskName = t(`catalog:tasks.${task}.name`);
   const isImageTask = task.startsWith("image") || task.includes("segmentation");
+  const isImageClassification = task === "image.classification";
   const isSegmentation = task.includes("segmentation");
   const isTabularTask = task.startsWith("tabular");
   const isTextTask = task.startsWith("text.");
@@ -1460,6 +1751,15 @@ function Inference({ task, dataset, run, runName, onInfer }: {
 
   if (!run) return <Blocked message={t("app:inference.blockedMessage")} />;
   const prediction=result?.prediction;
+  const classificationTrueLabel = isImageClassification && result?.trueLabel !== undefined && result.trueLabel !== null
+    ? String(result.trueLabel)
+    : null;
+  const predictionClassIndex = isImageClassification && prediction !== undefined
+    ? (dataset.classes ?? []).findIndex((className) => String(className).trim().toLocaleLowerCase() === String(prediction).trim().toLocaleLowerCase())
+    : -1;
+  const predictedProbability = predictionClassIndex >= 0 && Array.isArray(result?.probabilities)
+    ? Number(result.probabilities[predictionClassIndex])
+    : null;
   const comparisonAvailable=trueLabel!==null&&prediction!==undefined;
   const predictionCorrect=comparisonAvailable&&String(prediction).trim().toLowerCase()===String(trueLabel).trim().toLowerCase();
   const manualType=isImageTask ? "image" : isTextTask ? "text" : isTabularTask ? "tabular" : "sequence";
@@ -1478,12 +1778,7 @@ function Inference({ task, dataset, run, runName, onInfer }: {
         </div>
       </div>
 
-      <article className={`panel inference-card ${isSegmentation?"segmentation-inference":""} ${comparisonAvailable?(predictionCorrect?"correct":"incorrect"):""}`}>
-        <div className="inference-workbench-header">
-          <div><span className="eyebrow">{t("common:inference")}</span><h3>{t("app:inference.chooseInput")}</h3></div>
-          <span className="input-shape">{t("app:inference.inputShape", { shape: dataset.inputShape.join(" × ") })}</span>
-        </div>
-
+      <article className={`panel inference-card ${isSegmentation?"segmentation-inference":""} ${!isImageClassification&&comparisonAvailable?(predictionCorrect?"correct":"incorrect"):""}`}>
         <div className="inference-mode-selector" role="tablist" aria-label={t("app:inference.dataSourceAria")}>
           <button type="button" role="tab" aria-selected={mode === "test"} className={mode === "test" ? "active" : ""} onClick={() => changeMode("test")}>
             <Database size={15}/><span>{t("app:inference.mode.test")}</span><small>{t("app:inference.mode.testSmall")}</small>
@@ -1495,7 +1790,21 @@ function Inference({ task, dataset, run, runName, onInfer }: {
 
         <div className={`inference-work-area ${isImageTask && inputPreview ? "has-image-preview" : ""}`}>
           <div className="inference-middle">
-          {result ? <div className="inference-results-inline">
+          {result ? <div className={`inference-results-inline ${isImageClassification ? "image-classification-result" : ""}`}>
+          {isImageClassification ? result.error ? <div className="inference-error-state"><AlertCircle/><span><strong>{t("app:inference.cannotCalculate")}</strong><small>{String(result.error)}</small></span></div> : <div className="classification-result-content">
+            {inputPreview && <figure className="classification-result-image"><figcaption>{t("app:inference.inputImageCaption")}</figcaption><img src={inputPreview} alt={t("app:inference.inputImageCaption")}/></figure>}
+            <div className="classification-result-details">
+              <div className="classification-result-field">
+                <span>{t("app:inference.predictedClassLabel")}</span>
+                <strong>{String(result.prediction ?? t("app:inference.noResult"))}</strong>
+                {predictedProbability !== null && Number.isFinite(predictedProbability) && <small>{t("app:inference.predictionProbability", { probability: `${(predictedProbability * 100).toFixed(1)}%` })}</small>}
+              </div>
+              {classificationTrueLabel !== null && <div className="classification-result-field">
+                <span>{t("app:inference.trueClassLabel")}</span>
+                <strong>{classificationTrueLabel}</strong>
+              </div>}
+            </div>
+          </div> : <>
           <div className="inference-section-heading result-heading"><div><span className="eyebrow">{t("app:inference.resultEyebrow")}</span><h3>{result?.source ? String(result.source) : t("app:inference.predictionHeading")}</h3></div>{result&&<span className={`result-status ${comparisonAvailable?(predictionCorrect?"correct":"incorrect"):""}`}>{comparisonAvailable?(predictionCorrect?t("app:inference.status.correct"):t("app:inference.status.check")):t("app:inference.status.calculated")}</span>}</div>
           {result.error ? <div className="inference-error-state"><AlertCircle/><span><strong>{t("app:inference.cannotCalculate")}</strong><small>{String(result.error)}</small></span></div> : <>
               {comparisonAvailable&&<div className={`prediction-feedback ${predictionCorrect?"correct":"incorrect"}`}>{predictionCorrect?<CheckCircle2/>:<AlertCircle/>}<span><strong>{predictionCorrect?t("app:inference.predictionCorrect"):t("app:inference.predictionIncorrect")}</strong><small>{predictionCorrect?t("app:inference.matchesExpected"):t("app:inference.expectedLabel", { label: trueLabel })}</small></span></div>}
@@ -1533,6 +1842,7 @@ function Inference({ task, dataset, run, runName, onInfer }: {
                 </div>
               )}
             </>}
+          </>}
         </div> : mode === "test" ? <div className="inference-preparation"><div className="source-copy"><Database/><span><strong>{t("app:inference.testSourceTitle")}</strong><small>{t("app:inference.testSourceHint")}</small></span></div><div className="awaiting-result"><BarChart3/><span>{t("app:inference.awaitingTitle")}</span></div></div> : <div className="inference-preparation"><div className="source-copy"><Activity/><span><strong>{manualModeLabel}</strong><small>{manualModeHelp}</small></span></div>{isImageTask?<div className="image-upload-box"><label className="input-dropzone"><Upload size={24}/><span>{t("app:inference.uploadHint")}</span><small>{t("app:inference.uploadFormats")}</small><input type="file" accept="image/*" onChange={handleFileUpload}/></label>{inputPreview&&<div className="image-preview-container"><img src={inputPreview} alt={manualModeLabel}/></div>}</div>:<><label className="manual-values-field"><span>{manualModeHelp}</span><textarea value={manualValues} onChange={e=>setManualValues(e.target.value)} placeholder={isTextTask?t("app:inference.textPlaceholder"):t("app:inference.tabularPlaceholder")}/></label>{isCausalText&&<label className="app-field"><span>{t("app:inference.maxNewTokens")}</span><input type="number" min="1" max="128" value={maxNewTokens} onChange={event=>setMaxNewTokens(Math.max(1,Math.min(128,Number(event.target.value)||1)))}/></label>}</>}</div>}
           </div>
           <button className="primary inference-run-button" onClick={execute} disabled={busy || (mode === "manual" && isImageTask && !manualImageB64)}><Play size={16}/> {busy ? t("app:inference.runButton.calculating") : mode === "test" ? t("app:inference.runButton.test") : t("app:inference.runButton.manual")}</button>

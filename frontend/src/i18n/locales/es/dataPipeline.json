@@ -27,6 +27,7 @@
   "lockedNodeNote": "Este nodo permanece fijo en el {{position}}.",
   "position_start": "inicio",
   "position_end": "final",
+  "resizeContract": "Al aplicar este paso, el ancho y alto pasan a ser el tamaño de entrada del modelo. Las máscaras usan vecino más cercano; las cajas normalizadas conservan su alineación.",
   "categories": {
     "source": "FUENTE",
     "inspect": "INSPECCIÓN",
@@ -75,7 +76,7 @@
     },
     "resize": {
       "label": "Redimensionar",
-      "description": "Cambia la resolución de todas las imágenes. En segmentación aplica el mismo cambio a la máscara usando vecino más cercano.",
+      "description": "Cambia la resolución de imágenes y objetivos emparejados. Las máscaras usan vecino más cercano para conservar los IDs de clase.",
       "scope": "Se aplica de forma determinista"
     },
     "center_crop": {

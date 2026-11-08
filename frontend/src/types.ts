@@ -102,6 +102,8 @@ export interface DatasetOptions {
   window?: number;
   horizon?: number;
   stride?: number;
+  subdirectory?: string;
+  label_file?: string;
   inputTransform?: { mode: "standard"; center: number[]; scale: number[] } | { mode: "minmax" | "minmax_sym"; low: number[]; high: number[] };
   targetTransform?: { center: number[]; scale: number[] };
 }
@@ -152,7 +154,7 @@ export interface DataPipeline {
 export interface DatasetSummary {
   id: string;
   revision?: number;
-  source: "synthetic" | "imported" | "huggingface";
+  source: "synthetic" | "imported" | "huggingface" | "kaggle";
   samples: number;
   inputShape: number[];
   outputShape: number[];
@@ -161,9 +163,20 @@ export interface DatasetSummary {
   splits: { train: number; validation: number; test: number };
   splitCounts?: { train: number; validation: number; test: number };
   splitSource?: "generated" | "official" | "temporal";
+  splitPending?: boolean;
   preview?: DatasetPreview;
+  imageResolution?: {
+    count: number;
+    unavailable: number;
+    nonSquareCount: number;
+    min: { width: number; height: number } | null;
+    mean: { width: number; height: number } | null;
+    max: { width: number; height: number } | null;
+  };
   options?: DatasetOptions;
   sourcePath?: string;
+  kaggleHandle?: string;
+  importReport?: KaggleImportReport;
   catalogId?: string;
   repoId?: string;
   repoRevision?: string;
@@ -173,6 +186,16 @@ export interface DatasetSummary {
   pipeline?: DataPipeline;
   validation?: { errors: number; warnings: number; checks: number };
   analytics?: DatasetAnalytics;
+}
+
+export interface KaggleImportReport {
+  layout: "csv-labels" | "class-folders" | "split-folders";
+  samples: number;
+  classes: Record<string, number>;
+  originalSplits: string[];
+  labelFiles: string[];
+  splitPolicy: "merge-and-resplit";
+  handle?: string;
 }
 
 export interface NamedSeries { name: string; values: number[]; }
@@ -192,7 +215,7 @@ export interface DatasetAnalytics {
   pixelDistribution?: { labels: string[]; values: number[] };
 }
 
-export interface MetricPoint { epoch: number; trainLoss: number; valLoss: number; metric: number; learningRate?:number; secondaryMetrics?:Record<string,number>; }
+export interface MetricPoint { epoch: number; trainLoss: number; valLoss: number; metric: number; trainMetric?:number; valMetric?:number; learningRate?:number; secondaryMetrics?:Record<string,number>; }
 export interface RunResult { runId: string; status: string; metricName: string; comparisonContract?:string; history: MetricPoint[]; checkpoint?: string; lastCheckpoint?:string; bundle?:string; stoppedEarly?:boolean; test?: { loss: number; metric: number; secondaryMetrics?:Record<string,number>; diagnostics?:Record<string,unknown> }; }
 export interface TrainingRun {
   id: string;

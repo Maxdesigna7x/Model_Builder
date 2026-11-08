@@ -7,9 +7,12 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "test:cnn-reuse": "node scripts/test-cnn-reuse.cjs",
+    "test:builder-graph": "node scripts/test-builder-graph.mjs",
+    "test:editor-ui": "node scripts/test-editor-training.mjs",
     "preview": "vite preview",
     "tauri": "tauri",
-    "capturas": "node scripts/capture-views.mjs"
+    "capturas": "node scripts/capture-views.mjs",
+    "test:kaggle-ui": "node scripts/test-kaggle-ui.mjs"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.8.0",

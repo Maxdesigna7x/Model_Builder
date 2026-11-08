@@ -17,7 +17,7 @@ from PIL import Image, ImageDraw
 
 if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-    from modelbuilder.data import apply_pipeline, build_analytics, generate, import_dataset, inspect_csv, split_indices
+    from modelbuilder.data import apply_pipeline, build_analytics, generate, import_dataset, inspect_csv, split_indices, _build_preview, _build_detection_preview
     from modelbuilder.catalog import catalog as authoritative_catalog, task_spec
     from modelbuilder.errors import BackendError
     from modelbuilder.huggingface_datasets import catalog as huggingface_catalog, download as download_huggingface_dataset
@@ -30,7 +30,7 @@ if __package__ in (None, ""):
     from modelbuilder.training import _loss, decode_detections, decode_localization, train
 else:
     from .catalog import catalog as authoritative_catalog, task_spec
-    from .data import apply_pipeline, build_analytics, generate, import_dataset, inspect_csv, split_indices
+    from .data import apply_pipeline, build_analytics, generate, import_dataset, inspect_csv, split_indices, _build_preview, _build_detection_preview
     from .errors import BackendError
     from .huggingface_datasets import catalog as huggingface_catalog, download as download_huggingface_dataset
     from .models import build_model
@@ -79,6 +79,11 @@ def handle(request: dict):
         return generate(request["project"], request["task_id"], int(request.get("seed", 42)), request.get("options"))
     if action == "data.catalog":
         return huggingface_catalog(request.get("project"), request["task_id"])
+    if action in {"data.kaggle.inspect", "data.kaggle.import"}:
+        from modelbuilder.kaggle_datasets import inspect as inspect_kaggle, download as import_kaggle
+        if action == "data.kaggle.inspect":
+            return inspect_kaggle(request["handle"], request.get("options"))
+        return import_kaggle(request["project"], request["task_id"], request["handle"], request.get("options"))
     if action == "model.catalog":
         return pretrained_catalog(request.get("task_id"),request.get("architecture"))
     if action == "model.catalog.guidance":
@@ -130,6 +135,20 @@ def handle(request: dict):
     if action == "data.analytics":
         dataset=request["dataset"];payload=torch.load(dataset["path"],weights_only=True)
         return build_analytics(request["task_id"],payload["inputs"],payload["targets"],payload.get("classes"),dataset.get("options"))
+    if action == "data.preview":
+        dataset=request["dataset"];payload=torch.load(dataset["path"],weights_only=True)
+        x=payload["inputs"].detach().cpu();n=len(x)
+        if n == 0: raise BackendError("DATA_PREVIEW_EMPTY")
+        indices=random.sample(range(n),min(8,n))
+        y=payload.get("targets");y=y.detach().cpu() if isinstance(y,torch.Tensor) else y
+        selected_y=y[indices] if isinstance(y,torch.Tensor) else None
+        task_id=request["task_id"];classes=payload.get("classes") or dataset.get("classes") or [];options=payload.get("options",dataset.get("options",{}))
+        if payload.get("boxes") is not None:
+            preview=_build_detection_preview(x, payload["boxes"], classes, indices)
+        else:
+            preview=_build_preview(task_id,x[indices],selected_y,classes,options)
+            preview["sampleIndices"]=indices
+        return preview
     if action == "data.exists":
         path = Path(str(request.get("dataset", {}).get("path", ""))).expanduser()
         return {"exists": path.is_file()}
@@ -337,8 +356,7 @@ def infer(request: dict):
                 original_size=pil_img.size;original_image=pil_img.convert("RGB").copy()
                 target_c=input_shape[0]
                 img_mode = "L" if target_c == 1 else "RGB"
-                base_resolution=int(dataset.get("options",{}).get("resolution",input_shape[-1]))
-                pil_img = pil_img.convert(img_mode).resize((base_resolution, base_resolution), Image.Resampling.BILINEAR)
+                pil_img = pil_img.convert(img_mode)
 
                 if target_c == 1:
                     arr = np.array(pil_img)[:, :, None]
@@ -405,6 +423,10 @@ def infer(request: dict):
                 x = x.float() / 255.0
 
     if mode == "manual":
+        if is_image:
+            pipeline=dataset.get("pipeline") or dataset.get("options",{}).get("pipeline") or {}
+            if not any(node.get("enabled",True) and node.get("type")=="resize" for node in pipeline.get("nodes",[])) and tuple(x.shape[-2:])!=tuple(input_shape[-2:]):
+                x=F.interpolate(x.float(),size=tuple(input_shape[-2:]),mode="bilinear",align_corners=False)
         x=apply_inference_pipeline(x,dataset,task_id)
     processed_preview=tensor_to_b64_png(x[0]) if is_image else ""
 

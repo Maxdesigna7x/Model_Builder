@@ -216,6 +216,7 @@
   "blocks": {
     "multi_scale_cnn": {
       "label": "Multi scale CNN",
+      "shortLabel": "Multi-scale CNN",
       "description": "Runs one compact convolutional pyramid and exposes its real p2, p3 and p4 feature maps as separate ports.",
       "usage": "Connect a named output to a decoder or detection head. Feature maps share the same forward pass."
     },

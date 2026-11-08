@@ -308,16 +308,17 @@ def _load_mnist(spec: dict, task_id: str, opts: dict, offline: bool):
     rows=[row for part in parts for row in part]
     x = torch.stack([_pil_tensor(row["image"], resolution, channels) for row in rows])
     splits=_train_validation_test_splits(train_size,test_size)
+    image_sizes=[row["image"].size for row in rows]
     if task_id == "image.reconstruction":
         x = x.float() / 255.0
-        return x, x.clone(), None, splits
-    return x, torch.tensor([int(row["label"]) for row in rows], dtype=torch.long), [str(index) for index in range(10)], splits
+        return x, x.clone(), None, splits, "official", None, image_sizes
+    return x, torch.tensor([int(row["label"]) for row in rows], dtype=torch.long), [str(index) for index in range(10)], splits, "official", None, image_sizes
 
 
 def _load_utkface(spec: dict, task_id: str, opts: dict, offline: bool):
     archive = _hf_file(spec, "UTKFace.tar.gz", offline)
     resolution = int(opts["resolution"]); channels = int(opts["channels"]); limit = int(opts.get("max_samples", 5000))
-    images: list[torch.Tensor] = []; ages: list[float] = []
+    images: list[torch.Tensor] = []; ages: list[float] = [];image_sizes=[]
     with tarfile.open(archive, "r:gz") as source:
         for member in source:
             if len(images) >= limit or not member.isfile() or not member.name.lower().endswith((".jpg", ".jpeg", ".png")):
@@ -327,14 +328,14 @@ def _load_utkface(spec: dict, task_id: str, opts: dict, offline: bool):
                 age = int(filename.split("_", 1)[0]); extracted = source.extractfile(member)
                 if extracted is None: continue
                 with Image.open(io.BytesIO(extracted.read())) as image:
-                    images.append(_pil_tensor(image, resolution, channels))
+                    tensor=_pil_tensor(image, resolution, channels);image_sizes.append(image.size);images.append(tensor)
                 ages.append(float(age))
             except (ValueError, OSError):
                 continue
     if len(images) < 10:
         raise BackendError("HF_DATASET_INVALID", "UTKFace no contiene suficientes imágenes válidas")
     x=torch.stack(images);y=torch.tensor(ages,dtype=torch.float32).unsqueeze(1);splits=_random_splits(len(x),42);y=_standardize_targets(y,splits,opts)
-    return x,y,None,splits,"generated"
+    return x,y,None,splits,"generated",None,image_sizes
 
 
 def _tokenize_texts(texts: list[str], opts: dict, labels: torch.Tensor | None = None, vocab: list[str] | None = None):
@@ -424,13 +425,13 @@ def _load_segmentation(spec: dict, task_id: str, opts: dict, offline: bool):
     rows = [row for part in parts for row in part]
     splits=_train_validation_test_splits(len(parts[0]),len(parts[1]))
     resolution = int(opts["resolution"]); channels = int(opts["channels"]); mask_key = "mask" if task_id.endswith("binary") else "type_map"
-    x = torch.stack([_pil_tensor(row["image"], resolution, channels) for row in rows])
+    x = torch.stack([_pil_tensor(row["image"], resolution, channels) for row in rows]);image_sizes=[row["image"].size for row in rows]
     masks = torch.stack([_mask_tensor(row[mask_key], resolution) for row in rows])
     if task_id.endswith("binary"):
-        return x, (masks > 0).long(), ["Objeto"], splits
+        return x, (masks > 0).long(), ["Objeto"], splits, "official", None, image_sizes
     # Ambiguous class 5 is not a scored MoNuSAC class; fold it into background.
     masks[masks == 5] = 0
-    return x, masks, ["Fondo", "Epitelial", "Linfocito", "Macrófago", "Neutrófilo"], splits
+    return x, masks, ["Fondo", "Epitelial", "Linfocito", "Macrófago", "Neutrófilo"], splits, "official", None, image_sizes
 
 
 LOADERS: dict[str, Callable] = {
@@ -482,5 +483,6 @@ def download(project: dict, task_id: str, dataset_id: str, options: dict | None 
         split_indices_override=official_splits,
         split_source=(loaded[4] if len(loaded)>4 else "official" if official_splits else "generated"),
         raw_inputs=(loaded[5] if len(loaded)>5 else None),
+        original_sizes=(loaded[6] if len(loaded)>6 else None),
     )
     return summary

@@ -1,0 +1,94 @@
+/* UI typography contract: auxiliary labels >=12px, reading/control text >=14px. */
+:root{font-size:14px;--font-min:12px;--font-body:14px}
+.app-shell p,.hub p{font-size:14px;line-height:1.55}
+.app-shell input,.app-shell select,.app-shell textarea{font-size:14px;min-height:36px}
+.model-catalog-page{font-size:14px}
+.catalog-architecture-list>button{min-height:78px}
+.catalog-architecture-list strong,.available-tasks strong{font-size:14px}
+.catalog-architecture-list small,.available-tasks small{font-size:12px;line-height:1.5}
+.architecture-detail-panel .detail-scroll{overflow:auto}
+.architecture-detail-panel p{font-size:14px}
+.detail-contract{flex-wrap:wrap}.detail-contract strong{white-space:normal;line-height:1.5}
+/* Data uses natural document height; never index panels by sibling position. */
+.content:has(>.data-page){overflow-y:auto}
+.content>.data-page{height:auto;min-height:100%;overflow:visible;padding-bottom:24px}
+.data-page .page-intro{height:auto;min-height:54px}
+.data-page .data-step-layout{height:auto;min-height:0;align-items:start;grid-template-columns:minmax(0,1fr) 300px}
+.data-page .data-main{display:flex;height:auto;min-height:0;overflow:visible;flex-direction:column;gap:16px;padding:0}
+.data-page .data-main>.panel{display:block!important;flex:none!important;height:auto!important;min-height:0!important;max-height:none;overflow:visible;margin:0;padding:16px}
+.data-page .data-main>.pipeline-panel{padding:0;overflow:hidden;display:grid!important;grid-template-rows:auto minmax(160px,auto) auto}
+.data-page .data-main>.data-explorer-panel{min-height:300px!important}
+.data-page .data-main>.data-split-panel{min-height:190px!important}
+.data-page .data-sidebar{height:auto;min-height:0;max-height:none;align-self:start;position:sticky;top:12px;overflow:visible;width:auto}
+.data-page .data-config-panel{height:auto;max-height:none;overflow:visible}
+.data-page .preview-image-grid{height:auto;min-height:170px;grid-template-rows:auto}
+.data-page .preview-image-card{height:auto;min-height:0}
+.data-page .preview-image-card .dataset-image-pair img{height:160px;max-height:160px;object-fit:contain}
+.data-page .source-resolution-summary{display:block!important;padding:12px 0!important;background:transparent;border:0;box-shadow:none}
+.data-page .source-resolution-values{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
+.data-page .source-resolution-values>span{padding:8px;white-space:normal}
+.data-page .source-resolution-values strong{font-size:14px;white-space:normal}
+.data-page .source-resolution-values small{font-size:12px;letter-spacing:0}
+.data-page .source-resolution-model{grid-column:1/-1}
+/* Consistent segmented controls, including the previously unstyled library tabs. */
+.library-tabs{display:flex;gap:4px;padding:4px;margin:12px 0;background:var(--bg);border:1px solid var(--border);border-radius:9px}
+.library-tabs button{appearance:none;flex:1;min-height:38px;height:auto;border:1px solid transparent;border-radius:6px;background:transparent;color:var(--muted);font-family:inherit;font-size:12px!important;padding:7px!important;line-height:1.35}
+.library-tabs button:hover{background:var(--surface2);color:var(--text)}
+.library-tabs button.active{background:var(--accent-soft)!important;color:var(--accent)!important;border-color:var(--accent)!important}
+.block-library{width:240px;min-width:240px}
+.library-item>button{min-height:34px;line-height:1.4}
+/* Close is a sibling button inside one tab outline, avoiding nested buttons. */
+.model-tabs .closable-tab,.run-tabs .closable-tab{position:relative;display:flex;align-items:center;flex:none;border:1px solid var(--border);border-radius:9px 9px 0 0;background:var(--surface);overflow:hidden}
+.model-tabs .closable-tab:has([aria-selected=true]),.run-tabs .closable-tab:has([aria-selected=true]){border-color:var(--accent);background:var(--accent-soft)}
+.model-tabs .closable-tab>button,.run-tabs .closable-tab>button{border:0!important;border-radius:0!important;background:transparent!important;box-shadow:none!important;margin:0;min-height:42px}
+.model-tabs .closable-tab>button:first-child,.run-tabs .closable-tab>button:first-child{padding:9px 8px 9px 12px;min-width:0}
+.model-tabs .closable-tab .tab-close,.run-tabs .closable-tab .tab-close{width:30px;min-width:30px;min-height:30px;height:30px;padding:5px;margin-right:4px;border-radius:5px!important}
+.closable-tab .tab-close:hover:not(:disabled){background:var(--surface2)!important;color:var(--text)}
+.builder-toolbar{flex-wrap:wrap;height:auto;min-height:48px;gap:4px;padding:6px}
+.builder-toolbar>button,.builder-layout-toggle button{font-size:12px;min-height:32px}
+.builder-workspace{min-height:0;flex:1}
+.run-config-scroll{padding:16px}.run-config label{font-size:14px}
+.run-config-footer{display:flex;flex-wrap:wrap;gap:8px}
+.run-config-footer>button{flex:1;min-height:42px;font-size:14px}
+.run-config-footer>small{flex-basis:100%}
+.early-stopping-toggle-row{font-size:14px;min-height:32px}
+.presets-modal{max-height:90vh;overflow:auto}
+.presets-modal .preset-list{max-height:none;overflow:visible}
+.presets-modal .preset-list article{grid-template-columns:minmax(0,1fr) auto}
+.presets-modal .preset-list p{font-size:14px}
+@media(max-width:1280px){.data-page .data-step-layout{grid-template-columns:minmax(0,1fr) 270px}.block-library{width:224px;min-width:224px}.data-page .source-resolution-values{grid-template-columns:repeat(2,minmax(0,1fr))}}
+.source-resolution-inline{padding:12px 0;margin-top:14px;border-top:1px solid var(--border);display:block}
+.source-resolution-inline>div:first-child p{margin:4px 0 10px;font-size:12px;line-height:1.5;color:var(--muted)}
+.source-resolution-inline .eyebrow{font-size:12px;letter-spacing:.04em}
+.source-resolution-inline .source-resolution-values{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
+.source-resolution-inline .source-resolution-values>span{padding:8px 10px;border:1px solid var(--border);border-radius:6px;background:var(--bg)}
+.source-resolution-inline .source-resolution-values small{display:block;font-size:12px;line-height:1.4;letter-spacing:0;color:var(--muted)}
+.source-resolution-inline .source-resolution-values strong{display:block;font-size:14px;margin-top:3px;white-space:normal}
+.training-control-actions{display:grid;grid-template-columns:1fr 1fr;gap:8px;width:100%}
+.training-control-actions button{justify-content:center;min-height:42px;font-size:14px;padding:8px}
+@media(max-width:1280px){.source-resolution-inline .source-resolution-values{grid-template-columns:repeat(2,minmax(0,1fr))}}
+.preset-tabs{display:flex;gap:4px;padding:4px;background:var(--bg);border:1px solid var(--border);border-radius:9px;margin:0 0 20px}
+.preset-tabs button{appearance:none;display:flex;justify-content:center;align-items:center;gap:8px;flex:1;padding:10px 12px;background:transparent;border:1px solid transparent;border-radius:6px;color:var(--muted);font:inherit;min-height:42px}
+.preset-tabs svg{width:16px;height:16px}.preset-tabs button.active{background:var(--accent-soft);border-color:var(--accent);color:var(--accent)}
+.preset-view>h3{font-size:16px;margin:0 0 14px}
+.react-flow__attribution{font-size:12px!important}
+.pipeline-node .node-type,.pipeline-node small{white-space:normal;overflow-wrap:anywhere;letter-spacing:0}
+.data-page .preview-image-card{padding:8px;overflow:visible;display:flex;flex-direction:column;gap:6px}
+.data-page .dataset-image-pair{flex:1;height:auto}.data-page .dataset-image-pair figure{height:auto}
+.data-page .preview-image-label{position:static;display:block;height:auto;color:var(--muted);font-size:12px}
+.gpu-label,.memory-estimate{overflow-wrap:anywhere}
+.data-page .preview-image-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));height:auto;min-height:0;overflow:visible}
+.data-page .preview-image-card{flex:none;min-width:0;width:auto;min-height:0;height:auto}
+.data-page .preview-image-card .dataset-image-pair{flex:0 0 auto!important;height:auto!important}
+.data-page .dataset-image-pair figure{display:block!important}
+.data-page .dataset-image-pair figcaption{height:auto;min-height:20px;line-height:20px;white-space:normal;overflow:visible}
+.data-page .pipeline-node{width:170px!important;flex-basis:170px!important;height:auto;min-height:136px;grid-template-rows:auto auto 1fr}
+.data-page .pipeline-node small{grid-column:1/-1;grid-row:2;white-space:normal;overflow-wrap:anywhere;line-height:1.4;letter-spacing:0;font-size:12px}
+.data-page .pipeline-node em{padding-top:12px;line-height:1.4}
+.source-resolution-inline>div:first-child p{display:none}
+.source-resolution-inline .source-resolution-values{grid-template-columns:repeat(4,minmax(0,1fr))}
+.data-page .pipeline-node>span{grid-row:1}
+.model-node{width:250px;min-width:250px}
+.node-image-shape{grid-template-columns:minmax(0,1fr) minmax(0,1.3fr);gap:6px}
+.node-image-shape small{line-height:1.35;overflow-wrap:normal}
+.node-image-shape strong{font-size:14px}

@@ -576,6 +576,8 @@ def train(request: dict) -> dict:
     best_criterion = str(config.get("best_model_criterion", "val_loss")).lower()
     is_higher_better = task_spec(task_id)["metric"].lower() in {"accuracy", "dice", "miou", "iou", "map50"}
     best_score = -math.inf if (best_criterion == "metric" and is_higher_better) else math.inf
+    patience=max(0,int(config.get("early_stopping_patience",0)))
+    min_delta=float(config.get("early_stopping_min_delta",0.0))
 
     start_epoch=1;history=[];resume_path=str(config.get("resume_checkpoint","")).strip();resume_state={}
     if resume_path:
@@ -590,13 +592,44 @@ def train(request: dict) -> dict:
     provenance={"schema_version":2,"run_id":run_id,"created_at":iso_now(),"task_id":task_id,"architecture":architecture,"model_spec":redact_secrets(request.get("model_spec")),"initialized_from":initialization,"config":redact_secrets(config),"dataset":{"id":dataset["id"],"revision":dataset.get("revision",1),"source":dataset.get("source"),"repo":dataset.get("repoId"),"repo_revision":dataset.get("repoRevision"),"license":dataset.get("license"),"splits":dataset.get("splits"),"split_counts":dataset.get("splitCounts"),"split_source":dataset.get("splitSource"),"options":redact_secrets(dataset.get("options")),"pipeline":redact_secrets(dataset.get("pipeline"))},"semantic_hash":semantic_hash(graph),"code":code_manifest(),"runtime":runtime_manifest(device)}
     atomic_json(run_root/"run.json",{**provenance,"status":"running"});atomic_json(run_root/"control.json",{"state":"running"})
     emit({"type":"started","run_id":run_id,"device":str(device),"epochs":epochs,"parameters":sum(parameter.numel() for parameter in model.parameters()),"trainable_parameters":sum(parameter.numel() for parameter in model.parameters() if parameter.requires_grad),"initialization":initialization,"parameter_groups":{"backbone":sum(parameter.numel() for parameter in backbone),"head":sum(parameter.numel() for parameter in head)}})
-    patience=max(0,int(config.get("early_stopping_patience",0)));min_delta=float(config.get("early_stopping_min_delta",0.0));stale_epochs=int(resume_state.get("stale_epochs",0));stopped_early=False
+    stale_epochs=int(resume_state.get("stale_epochs",0));stopped_early=False
     if resume_state.get("best_score") is not None:best_score=float(resume_state["best_score"])
+    early_stopping_best_score=math.inf
+    early_stopping_stale_epochs=0
+    if patience:
+        saved_early_best=resume_state.get("early_stopping_best_score")
+        saved_early_stale=resume_state.get("early_stopping_stale_epochs")
+        saved_min_delta=resume_state.get("early_stopping_min_delta")
+        if saved_early_best is not None and saved_early_stale is not None and saved_min_delta is not None and float(saved_min_delta)==min_delta:
+            early_stopping_best_score=float(saved_early_best)
+            early_stopping_stale_epochs=max(0,int(saved_early_stale))
+        else:
+            # Older checkpoints only tracked staleness against the best-model
+            # criterion. Rebuild the independent val-loss monitor from history.
+            for point in history:
+                try:
+                    validation_loss=float(point["valLoss"])
+                except (KeyError,TypeError,ValueError):
+                    continue
+                if not math.isfinite(validation_loss):
+                    continue
+                if validation_loss < early_stopping_best_score-min_delta:
+                    early_stopping_best_score=validation_loss
+                    early_stopping_stale_epochs=0
+                else:
+                    early_stopping_stale_epochs+=1
+
+    def checkpoint_training_state():
+        state={"best_score":best_score,"stale_epochs":stale_epochs}
+        if patience:
+            state.update({"early_stopping_best_score":early_stopping_best_score,"early_stopping_stale_epochs":early_stopping_stale_epochs,"early_stopping_min_delta":min_delta})
+        return state
+
     cancelled=False
     for epoch in range(start_epoch,epochs+1):
         if gradual_parameters and epoch>=max(1,int(config.get("unfreeze_epoch",2))):
             for parameter in gradual_parameters: parameter.requires_grad=True
-        model.train();train_sum=0.;seen=0;train_head_sums={"boxes":0.,"classes":0.}
+        model.train();train_sum=0.;seen=0;train_head_sums={"boxes":0.,"classes":0.};train_metric_sum=0.;train_metric_count=0;train_predictions=[];train_targets=[];seg_inter=None;seg_union=None
         for node_id,module in model.operations.items():
             properties=model.nodes[node_id].get("data",{}).get("properties",{})
             frozen=bool(properties.get("frozen",False));freeze_stats=bool(properties.get("freeze_batchnorm_stats",False)) or (frozen and all(not parameter.requires_grad for parameter in module.parameters()))
@@ -618,6 +651,22 @@ def train(request: dict) -> dict:
                     for key,value in components.items():train_head_sums[key]+=value.detach().item()*xb.shape[0]
                 else: raw_loss=_loss(task_id,pred,yb,loss_weights,loss_name,label_smoothing)
                 loss=raw_loss/accumulation
+            with torch.no_grad():
+                if task_id=="image.detection":
+                    train_predictions.append({key:value.detach().cpu() for key,value in pred.items()});train_targets.append([value.detach().cpu() for value in yb])
+                elif task_spec(task_id)["objective"] in {"segmentation_binary","segmentation_multiclass"}:
+                    primary=next(iter(pred.values())) if isinstance(pred,dict) else pred
+                    if task_spec(task_id)["objective"]=="segmentation_binary":
+                        predicted=primary[:,0].sigmoid()>=.5;truth=yb.bool()
+                        intersection=(predicted&truth).sum().item();union=predicted.sum().item()+truth.sum().item()
+                        seg_inter=(seg_inter or 0)+intersection;seg_union=(seg_union or 0)+union
+                    else:
+                        predicted=primary.argmax(1);classes=primary.shape[1]
+                        if seg_inter is None: seg_inter=[0]*classes;seg_union=[0]*classes
+                        for cls in range(1,classes):
+                            pc=predicted==cls;tc=yb==cls;seg_inter[cls]+=(pc&tc).sum().item();seg_union[cls]+=(pc|tc).sum().item()
+                else:
+                    value,count=_metric(task_id,pred,yb,target_transform);train_metric_sum+=value;train_metric_count+=count
             if not torch.isfinite(loss): raise BackendError("TRAINING_LOSS_NON_FINITE")
             scaler.scale(loss).backward()
             if batch_index%accumulation==0 or batch_index==len(train_loader):
@@ -627,9 +676,15 @@ def train(request: dict) -> dict:
             train_sum+=raw_loss.item()*xb.shape[0];seen+=xb.shape[0]
             if smoke and batch_index>=2: break
         if cancelled: break
+        if task_id=="image.detection": train_metric=detection_map50(train_predictions,train_targets,int(dataset_class_count(model)))["map50"]
+        elif task_spec(task_id)["objective"]=="segmentation_binary": train_metric=(2*(seg_inter or 0)+1)/((seg_union or 0)+1)
+        elif task_spec(task_id)["objective"]=="segmentation_multiclass":
+            scores=[seg_inter[cls]/seg_union[cls] for cls in range(1,len(seg_inter or [])) if seg_union[cls]]
+            train_metric=sum(scores)/max(1,len(scores))
+        else: train_metric=train_metric_sum/max(1,train_metric_count)
         train_loss=train_sum/max(1,seen);val_loss,metric,secondary=_evaluate(model,val_loader,task_id,device,loss_weights,target_transform,loss_name,label_smoothing)
         if task_id=="image.detection":secondary={**secondary,"train_loss_boxes":train_head_sums["boxes"]/max(1,seen),"train_loss_classes":train_head_sums["classes"]/max(1,seen)}
-        point={"epoch":epoch,"trainLoss":train_loss,"valLoss":val_loss,"metric":metric,"secondaryMetrics":secondary,"learningRate":optimizer.param_groups[0]["lr"]};history.append(point)
+        point={"epoch":epoch,"trainLoss":train_loss,"valLoss":val_loss,"metric":metric,"trainMetric":train_metric,"valMetric":metric,"secondaryMetrics":secondary,"learningRate":optimizer.param_groups[0]["lr"]};history.append(point)
 
         # Check best model criterion
         is_best = False
@@ -646,16 +701,25 @@ def train(request: dict) -> dict:
             is_best = True
 
         if scheduler: scheduler.step(val_loss) if scheduler_name=="plateau" else scheduler.step()
-        training_state={"best_score":best_score,"stale_epochs":stale_epochs}
         if is_best:
-            stale_epochs=0;training_state={"best_score":best_score,"stale_epochs":stale_epochs};save_checkpoint(run_root/"best.pt",model,optimizer,epoch,request,history,scheduler,scaler,training_state,run_id,train_loader.generator)
-        else: stale_epochs+=1
-        training_state={"best_score":best_score,"stale_epochs":stale_epochs};save_checkpoint(run_root/"last.pt",model,optimizer,epoch,request,history,scheduler,scaler,training_state,run_id,train_loader.generator)
+            stale_epochs=0
+        else:
+            stale_epochs+=1
+        if patience:
+            if val_loss < early_stopping_best_score-min_delta:
+                early_stopping_best_score=val_loss
+                early_stopping_stale_epochs=0
+            else:
+                early_stopping_stale_epochs+=1
+        training_state=checkpoint_training_state()
+        if is_best:
+            save_checkpoint(run_root/"best.pt",model,optimizer,epoch,request,history,scheduler,scaler,training_state,run_id,train_loader.generator)
+        save_checkpoint(run_root/"last.pt",model,optimizer,epoch,request,history,scheduler,scaler,training_state,run_id,train_loader.generator)
         with (run_root/"events.jsonl").open("a",encoding="utf-8") as handle: handle.write(json.dumps(point,allow_nan=False)+"\n")
-        emit({"type":"metric","run_id":run_id,"epoch":epoch,"train_loss":train_loss,"val_loss":val_loss,"metric":metric,"secondary_metrics":secondary,"metric_name":task_spec(task_id)["metric"],"learning_rate":optimizer.param_groups[0]["lr"]})
-        if patience and stale_epochs>=patience: stopped_early=True;break
+        emit({"type":"metric","run_id":run_id,"epoch":epoch,"train_loss":train_loss,"val_loss":val_loss,"metric":metric,"train_metric":train_metric,"val_metric":metric,"secondary_metrics":secondary,"metric_name":task_spec(task_id)["metric"],"learning_rate":optimizer.param_groups[0]["lr"]})
+        if patience and early_stopping_stale_epochs>=patience: stopped_early=True;break
     if cancelled:
-        last_path=run_root/"last.pt";save_checkpoint(last_path,model,optimizer,max(0,epoch-1),request,history,scheduler,scaler,{"best_score":best_score,"stale_epochs":stale_epochs},run_id,train_loader.generator)
+        last_path=run_root/"last.pt";save_checkpoint(last_path,model,optimizer,max(0,epoch-1),request,history,scheduler,scaler,checkpoint_training_state(),run_id,train_loader.generator)
         result={"runId":run_id,"status":"cancelled","metricName":task_spec(task_id)["metric"],"history":history,"lastCheckpoint":str(last_path)}
         atomic_json(run_root/"result.json",result);atomic_json(run_root/"run.json",{**provenance,"status":"cancelled","completed_at":iso_now(),"result":"result.json"});emit({"type":"complete","run_id":run_id,"result":result});return result
     best_path=run_root/"best.pt"

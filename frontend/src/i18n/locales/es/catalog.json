@@ -216,6 +216,7 @@
   "blocks": {
     "multi_scale_cnn": {
       "label": "CNN multiescala",
+      "shortLabel": "Multiescala",
       "description": "Ejecuta una pirámide convolucional compacta y expone los mapas reales p2, p3 y p4 como puertos separados.",
       "usage": "Conecta una salida nombrada a un decoder o cabeza de detección. Los mapas comparten el mismo forward."
     },

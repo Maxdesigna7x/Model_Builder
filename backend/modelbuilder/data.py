@@ -58,18 +58,19 @@ def _display_targets(y: torch.Tensor | None,options: dict) -> torch.Tensor | Non
     return y*scale+center
 
 
-def _build_preview(task_id: str, x: torch.Tensor, y: torch.Tensor | None, classes: list[str] | None = None, options: dict | None = None) -> dict:
+def _build_preview(task_id: str, x: torch.Tensor, y: torch.Tensor | None, classes: list[str] | None = None, options: dict | None = None, sample_indices: list[int] | None = None) -> dict:
     items = []
-    num_samples = min(8, len(x))
+    sample_indices = sample_indices if sample_indices is not None else list(range(min(8, len(x))))
+    num_samples = len(sample_indices)
     if task_id.startswith("text."):
         vocab = (options or {}).get("vocab", [])
-        for i in range(num_samples):
+        for i in sample_indices:
             token_ids = x[i].flatten().tolist()
             words = [str(vocab[token]) if 0 <= int(token) < len(vocab) else "<unk>" for token in token_ids if int(token) != 0]
             items.append({"text": " ".join(words)})
-        return {"type": "text", "items": items}
+        return {"type": "text", "items": items, "sampleIndices": sample_indices}
     if task_id.startswith("image") or "segmentation" in task_id:
-        for i in range(num_samples):
+        for i in sample_indices:
             img_tensor = x[i]
             if img_tensor.dtype == torch.uint8:
                 if img_tensor.shape[0] == 1:
@@ -118,9 +119,9 @@ def _build_preview(task_id: str, x: torch.Tensor, y: torch.Tensor | None, classe
                 else: target_image=Image.fromarray((target[:3].permute(1,2,0).numpy()*255).astype(np.uint8),mode="RGB")
                 target_buf=io.BytesIO();target_image.save(target_buf,format="PNG");item.update({"targetUrl":"data:image/png;base64,"+base64.b64encode(target_buf.getvalue()).decode("utf-8"),"targetLabel":"Objetivo"})
             items.append(item)
-        return {"type": "image", "items": items}
+        return {"type": "image", "items": items, "sampleIndices": sample_indices}
     else:
-        for i in range(num_samples):
+        for i in sample_indices:
             feat = x[i].flatten()[:8].tolist()
             target_str = ""
             if classes and y is not None and i < len(y):
@@ -134,7 +135,7 @@ def _build_preview(task_id: str, x: torch.Tensor, y: torch.Tensor | None, classe
             items.append({"features": [round(f, 4) for f in feat], "target": target_str})
         configured_cols = options.get("feature_columns") if options else None
         cols = list(configured_cols[:8]) if configured_cols else [f"x{k+1}" for k in range(min(8, x.shape[-1]))]
-        return {"type": "tabular", "items": items, "columns": cols}
+        return {"type": "tabular", "items": items, "columns": cols, "sampleIndices": sample_indices}
 
 
 def _apply_normalization(x: torch.Tensor, mode: str) -> torch.Tensor:
@@ -247,7 +248,12 @@ def _save(
     percentages = split_percentages(splits)
     counts = {name: len(splits.get(name, [])) for name in ("train", "validation", "test")}
     opts = options or {}
+    image_task=task_id.startswith("image") or "segmentation" in task_id
+    if image_task:
+        original_sizes=original_sizes or ([(int(x.shape[-1]),int(x.shape[-2])) for _ in range(len(x))] if x.ndim>=4 else [])
     payload={"inputs": x.cpu(), "targets": y.cpu(), "task_id": task_id, "classes": classes, "splits": splits, "split_percentages": percentages, "split_source": split_source, "options": opts}
+    if image_task and original_sizes:
+        payload["original_sizes"]=torch.tensor(original_sizes,dtype=torch.int64)
     if boxes is not None: payload["boxes"]=[value.detach().cpu().float() for value in boxes]
     if task_id in {"image.localization","image.detection"}:
         original_sizes=original_sizes or [(int(x.shape[-1]),int(x.shape[-2])) for _ in range(len(x))]
@@ -279,6 +285,8 @@ def _save(
         "preview": preview, "analytics": build_analytics(task_id,x,display_y,classes,opts),
         "options": opts
     }
+    if image_task:
+        summary["imageResolution"]=_image_resolution_stats(original_sizes or [],len(x))
     if boxes is not None:
         distribution=[0 for _ in (classes or [])]
         for sample_boxes in boxes:
@@ -294,9 +302,29 @@ def _save(
     return summary
 
 
-def _build_detection_preview(x: torch.Tensor, boxes: list[torch.Tensor], classes: list[str]) -> dict:
+def _image_resolution_stats(sizes, sample_count: int) -> dict:
+    if isinstance(sizes,torch.Tensor): sizes=sizes.tolist()
+    dimensions=[]
+    for size in sizes or []:
+        try: width,height=int(size[0]),int(size[1])
+        except (TypeError,ValueError,IndexError): continue
+        if width>0 and height>0: dimensions.append((width,height))
+    if not dimensions:
+        return {"count":0,"unavailable":sample_count,"nonSquareCount":0,"min":None,"mean":None,"max":None}
+    widths=[value[0] for value in dimensions];heights=[value[1] for value in dimensions]
+    return {
+        "count":len(dimensions),"unavailable":max(0,sample_count-len(dimensions)),
+        "nonSquareCount":sum(width!=height for width,height in dimensions),
+        "min":{"width":min(widths),"height":min(heights)},
+        "mean":{"width":round(math.fsum(widths)/len(widths),2),"height":round(math.fsum(heights)/len(heights),2)},
+        "max":{"width":max(widths),"height":max(heights)},
+    }
+
+
+def _build_detection_preview(x: torch.Tensor, boxes: list[torch.Tensor], classes: list[str], sample_indices: list[int] | None = None) -> dict:
     items=[]
-    for index in range(min(8,len(x))):
+    sample_indices = sample_indices if sample_indices is not None else list(range(min(8,len(x))))
+    for index in sample_indices:
         image=x[index].float()/255 if x.dtype==torch.uint8 else x[index].float().clamp(0,1)
         if image.shape[0]==1: arr=(image[0].numpy()*255).astype(np.uint8); pil=Image.fromarray(arr,mode="L").convert("RGB")
         else: pil=Image.fromarray((image[:3].permute(1,2,0).numpy()*255).astype(np.uint8),mode="RGB")
@@ -306,7 +334,7 @@ def _build_detection_preview(x: torch.Tensor, boxes: list[torch.Tensor], classes
             xy=(int((cx-bw/2)*width),int((cy-bh/2)*height),int((cx+bw/2)*width),int((cy+bh/2)*height))
             draw.rectangle(xy,outline=(40,220,130),width=max(1,width//128));draw.text((xy[0],max(0,xy[1]-12)),classes[int(cls)] if 0<=int(cls)<len(classes) else str(int(cls)),fill=(40,220,130))
         buffer=io.BytesIO();pil.save(buffer,format="PNG");items.append({"url":"data:image/png;base64,"+base64.b64encode(buffer.getvalue()).decode(),"label":f"{len(boxes[index])} objetos"})
-    return {"type":"image","items":items}
+    return {"type":"image","items":items,"sampleIndices":sample_indices}
 
 
 def _pipeline_splits(n: int, seed: int, percentages: dict, strategy: str, y: torch.Tensor, task_id: str) -> dict[str, list[int]]:
@@ -438,9 +466,14 @@ def apply_pipeline(project: dict, dataset: dict, task_id: str, pipeline: dict) -
             height=max(8,int(props.get("height",128)));width=max(8,int(props.get("width",128)));method=str(props.get("method","bilinear"));original_dtype=x.dtype
             kwargs={} if method=="nearest" else {"align_corners":False};x=F.interpolate(x.float(),size=(height,width),mode=method,**kwargs)
             if original_dtype==torch.uint8: x=x.round().clamp(0,255).to(torch.uint8)
+            # Segmentation masks use nearest-neighbor to keep class IDs intact.
             if "segmentation" in task_id: y=F.interpolate(y.unsqueeze(1).float(),size=(height,width),mode="nearest")[:,0].to(y.dtype)
             elif task_id=="image.reconstruction":
                 target_dtype=y.dtype;y=F.interpolate(y.float(),size=(height,width),mode=method,**kwargs);y=y.round().clamp(0,255).to(torch.uint8) if target_dtype==torch.uint8 else y
+            elif task_id=="image.translation": y=F.interpolate(y.float(),size=(height,width),mode=method,**kwargs)
+            # Localization targets and detection boxes are normalized to [0,1], so a
+            # pure resize leaves their geometry unchanged. The source-to-model affine
+            # also stays the same because it maps normalized coordinates.
         elif kind=="center_crop":
             if not task_id.startswith("image"): raise BackendError("PIPELINE_CROP_IMAGES_ONLY")
             height=max(8,int(props.get("height",96)));width=max(8,int(props.get("width",96)));source_h,source_w=x.shape[-2:]
@@ -495,6 +528,10 @@ def apply_pipeline(project: dict, dataset: dict, task_id: str, pipeline: dict) -
     display_y=_display_targets(y,options)
     preview=_build_detection_preview(x,boxes,classes or []) if boxes is not None else _build_preview(task_id,x,display_y,classes,options)
     summary={**dataset,"revision":revision,"samples":len(x),"inputShape":list(x.shape[1:]),"outputShape":output_shape,"splits":percentages,"splitCounts":{name:len(splits.get(name,[])) for name in ("train","validation","test")},"splitSource":split_source,"path":str(root/"dataset.pt"),"seed":seed,"preview":preview,"analytics":build_analytics(task_id,x,display_y,classes,options),"pipeline":compiled,"options":options,"validation":{"errors":0,"warnings":sum(d["level"]=="warning" for d in diagnostics),"checks":len(diagnostics)}}
+    if task_id.startswith("image") or "segmentation" in task_id:
+        if original_sizes is not None: summary["imageResolution"]=_image_resolution_stats(original_sizes,len(x))
+        elif dataset.get("imageResolution") is not None: summary["imageResolution"]=dataset["imageResolution"]
+        else: summary["imageResolution"]=_image_resolution_stats([],len(x))
     atomic_json(root/"pipeline.json",compiled);atomic_json(root/"manifest.json",{**summary,"preview":summary["preview"],"split_indices":splits,"task_id":task_id,"schema_version":2})
     return summary
 
@@ -746,7 +783,7 @@ def import_dataset(project: dict, task_id: str, path: str, options: dict | None 
             target_channels=int(opts.get("target_channels",channels))
             x=_load_images_parallel([input_by_id[key] for key in ids],resolution,channels)
             y=_load_images_parallel([target_by_id[key] for key in ids],resolution,target_channels)
-            result=_save(project,task_id,x.float()/255,y.float()/255,f"Pares imagen→imagen importados: {root.name}",42,options={"channels":channels,"targetChannels":target_channels,"resolution":resolution,"normalization":"none"})
+            result=_save(project,task_id,x.float()/255,y.float()/255,f"Pares imagen→imagen importados: {root.name}",42,options={"channels":channels,"targetChannels":target_channels,"resolution":resolution,"normalization":"none"},original_sizes=_image_sizes([input_by_id[key] for key in ids]))
             return _mark_imported(result,source)
         if task_id == "image.localization":
             labels_path=root/"labels.csv"
@@ -833,7 +870,7 @@ def import_dataset(project: dict, task_id: str, path: str, options: dict | None 
             for label, directory in enumerate(class_dirs):
                 for file in sorted(directory.iterdir()):
                     if _is_image(file): image_paths.append(file); labels.append(label)
-            x=_load_images_parallel(image_paths, resolution, channels);y=torch.tensor(labels);result=_save(project,task_id,x,y,f"Imágenes importadas: {root.name}",42,[item.name for item in class_dirs],{"channels": channels, "resolution": resolution})
+            x=_load_images_parallel(image_paths, resolution, channels);y=torch.tensor(labels);result=_save(project,task_id,x,y,f"Imágenes importadas: {root.name}",42,[item.name for item in class_dirs],{"channels": channels, "resolution": resolution},original_sizes=_image_sizes(image_paths))
         elif task_id.endswith("regression"):
             labels_path=root/"labels.csv"
             if not labels_path.is_file(): raise BackendError("IMPORT_IMAGE_REGRESSION_LABELS_MISSING")
@@ -841,11 +878,11 @@ def import_dataset(project: dict, task_id: str, path: str, options: dict | None 
             if not rows or not {"filename","target"}.issubset(rows[0]): raise BackendError("IMPORT_IMAGE_REGRESSION_LABELS_INVALID")
             paths=[(root/row["filename"]).resolve() for row in rows]
             if not all(path.is_file() and _is_image(path) for path in paths): raise BackendError("IMPORT_IMAGE_REGRESSION_IMAGE_INVALID")
-            x=_load_images_parallel(paths, resolution, channels);y=torch.tensor([[float(row["target"])] for row in rows]);result=_save(project,task_id,x,y,f"Regresión visual importada: {root.name}",42,options={"channels": channels, "resolution": resolution})
+            x=_load_images_parallel(paths, resolution, channels);y=torch.tensor([[float(row["target"])] for row in rows]);result=_save(project,task_id,x,y,f"Regresión visual importada: {root.name}",42,options={"channels": channels, "resolution": resolution},original_sizes=_image_sizes(paths))
         else:
             image_paths=sorted(file for file in root.iterdir() if _is_image(file))
             if len(image_paths)<10: raise BackendError("IMPORT_IMAGE_RECONSTRUCTION_MIN_IMAGES")
-            x=_load_images_parallel(image_paths,resolution,channels).float()/255.0;y=x.clone();result=_save(project,task_id,x,y,f"Imágenes para reconstrucción: {root.name}",42,options={"channels":channels,"resolution":resolution})
+            x=_load_images_parallel(image_paths,resolution,channels).float()/255.0;y=x.clone();result=_save(project,task_id,x,y,f"Imágenes para reconstrucción: {root.name}",42,options={"channels":channels,"resolution":resolution},original_sizes=_image_sizes(image_paths))
         return _mark_imported(result, source)
     if "segmentation" in task_id:
         root=source if source.is_dir() else source.parent;images_dir=root/"images";masks_dir=root/"masks"
@@ -858,14 +895,14 @@ def import_dataset(project: dict, task_id: str, path: str, options: dict | None 
             if len(candidates)!=1: raise BackendError("IMPORT_SEGMENTATION_MASK_MISSING", image_path.name)
             pairs.append((image_path,candidates[0]))
         if len(pairs)<10: raise BackendError("IMPORT_SEGMENTATION_MIN_PAIRS")
-        x=torch.stack([_load_image(image, resolution, channels) for image,_ in pairs]);raw_masks=[torch.from_numpy(np.array(Image.open(mask).convert("L").resize((resolution,resolution),Image.Resampling.NEAREST))).long() for _,mask in pairs]
+        x=torch.stack([_load_image(image, resolution, channels) for image,_ in pairs]);raw_masks=[torch.from_numpy(np.array(Image.open(mask).convert("L").resize((resolution,resolution),Image.Resampling.NEAREST))).long() for _,mask in pairs];original_sizes=_image_sizes([image for image,_ in pairs])
         if task_id.endswith("binary"):
             y=torch.stack([(mask>0).long() for mask in raw_masks]);classes=["Objeto"]
         else:
             values=sorted({int(value) for mask in raw_masks for value in torch.unique(mask)})
             if len(values)<2: raise BackendError("IMPORT_SEGMENTATION_MULTICLASS_MIN_CLASSES")
             mapping={value:index for index,value in enumerate(values)};y=torch.stack([torch.tensor(np.vectorize(mapping.get)(mask.numpy()),dtype=torch.long) for mask in raw_masks]);classes=["Fondo" if index==0 else f"Clase {value}" for index,value in enumerate(values)]
-        result=_save(project,task_id,x,y,f"Segmentación importada: {root.name}",42,classes,options={"channels": channels, "resolution": resolution});return _mark_imported(result,source)
+        result=_save(project,task_id,x,y,f"Segmentación importada: {root.name}",42,classes,options={"channels": channels, "resolution": resolution},original_sizes=original_sizes);return _mark_imported(result,source)
     raise BackendError("IMPORT_TASK_UNSUPPORTED")
 
 
@@ -894,7 +931,14 @@ def _csv_dialect(sample: str, source: Path):
 
 
 def _is_image(path: Path) -> bool:
-    return path.is_file() and path.suffix.lower() in {".png", ".jpg", ".jpeg", ".webp", ".bmp"}
+    return path.is_file() and path.suffix.lower() in {".png", ".jpg", ".jpeg", ".webp", ".bmp", ".tif", ".tiff"}
+
+
+def _image_sizes(paths: list[Path]) -> list[tuple[int,int]]:
+    sizes=[]
+    for path in paths:
+        with Image.open(path) as image: sizes.append(image.size)
+    return sizes
 
 
 def _load_image(path: Path, resolution: int = 256, channels: int = 3) -> torch.Tensor:

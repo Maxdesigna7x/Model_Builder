@@ -53,6 +53,39 @@ def test_named_cnn_heads_share_trunk_and_backpropagate_both_losses():
     assert model.operations["aux_head"].weight.grad is not None
 
 
+def test_two_convolution_residual_block_has_compatible_add_inputs():
+    graph = {
+        "nodes": [
+            _node("input", "input"),
+            _node("conv1", "conv2d", {"out_channels": 32, "kernel_size": 3, "stride": 1, "padding": 1, "bias": False}),
+            _node("relu1", "relu"),
+            _node("conv2", "conv2d", {"out_channels": 32, "kernel_size": 3, "stride": 1, "padding": 1, "bias": False}),
+            _node("add", "add", {"axis": 1}),
+            _node("relu2", "relu"),
+            _node("pool", "adaptiveavgpool2d", {"output_size": 1}),
+            _node("flat", "flatten"),
+            _node("head", "linear", {"out_features": 2}),
+            _node("output", "output", {"output_name": "classes"}),
+        ],
+        "edges": [
+            {"source": "input", "target": "conv1"},
+            {"source": "conv1", "target": "relu1"},
+            {"source": "relu1", "target": "conv2"},
+            {"source": "conv1", "target": "add", "targetHandle": "input_0"},
+            {"source": "conv2", "target": "add", "targetHandle": "input_1"},
+            {"source": "add", "target": "relu2"},
+            {"source": "relu2", "target": "pool"},
+            {"source": "pool", "target": "flat"},
+            {"source": "flat", "target": "head"},
+            {"source": "head", "target": "output"},
+        ],
+    }
+    model = build_model("cnn", [3, 16, 16], [2], graph, "image.classification")
+    result = model(torch.randn(2, 3, 16, 16))
+    assert result.shape == (2, 2)
+    assert torch.isfinite(result).all()
+
+
 def test_multi_output_graph_rejects_unnamed_or_duplicate_outputs():
     graph = _two_head_graph(second_name="main")
     model = build_model("unet", [3, 8, 8], [3, 8, 8], graph, "image.segmentation.multiclass")

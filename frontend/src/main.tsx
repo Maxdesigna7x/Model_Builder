@@ -8,6 +8,9 @@ import "./ui-polish.css?layout-v4";
 // Vite emits this as an independent stylesheet so the desktop WebView receives it intact.
 // @ts-expect-error CSS modules are handled by Vite at runtime.
 void import("./inference-layout.css?layout-v2");
+import "./revision14.css";
+import "./revision15.css";
+import "./revision16.css";
 import "./i18n";
 import App from "./App";
 

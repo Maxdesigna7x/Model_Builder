@@ -145,5 +145,16 @@
   "TRAINING_RESUME_TASK_MISMATCH": "La tarea del checkpoint a reanudar cambió: {{detail}}.",
   "MODEL_BUNDLE_INVALID": "El bundle de modelo seleccionado está incompleto o no es válido: {{detail}}.",
   "TRAINING_CONTROL_INVALID": "El estado de control de entrenamiento solicitado no es válido: {{detail}}.",
-  "INFERENCE_DATASET_ARTIFACT_MISSING": "La inferencia del split de prueba necesita el artefacto original del dataset: {{detail}}."
+  "INFERENCE_DATASET_ARTIFACT_MISSING": "La inferencia del split de prueba necesita el artefacto original del dataset: {{detail}}.",
+  "KAGGLE_HANDLE_INVALID": "Introduce owner/dataset o una URL https de Kaggle válida.",
+  "KAGGLE_LIBRARY_MISSING": "Instala kagglehub en el entorno Python que utiliza la app.",
+  "KAGGLE_DOWNLOAD_FAILED": "No se pudo descargar el dataset. Comprueba la conexión, el identificador, las credenciales de Kaggle y la aceptación de sus condiciones.",
+  "KAGGLE_SUBDIRECTORY_INVALID": "La subcarpeta o ruta seleccionada no existe o sale del dataset.",
+  "KAGGLE_NO_IMAGES": "No se encontraron imágenes compatibles en la carpeta seleccionada.",
+  "KAGGLE_IMAGE_TASK_MISMATCH": "Esta importación requiere clasificación de imágenes con etiquetas de clase. Las máscaras, pares y cajas necesitan su importador específico.",
+  "KAGGLE_LABEL_FILE_INVALID": "El CSV debe tener una columna de imagen (filename, image, image_id o path) y otra de clase (label, class, category o target), sin valores vacíos.",
+  "KAGGLE_LABEL_IMAGE_AMBIGUOUS": "La imagen {{detail}} no existe o coincide con varios archivos. Usa rutas relativas completas en el CSV.",
+  "KAGGLE_LABEL_CONFLICT": "La imagen {{detail}} tiene etiquetas de clase contradictorias.",
+  "KAGGLE_UNLABELED_IMAGES": "Hay {{detail}} imágenes sin clase. Selecciona una subcarpeta etiquetada o un CSV que incluya todas las imágenes. No se omitirán ni se asignarán etiquetas inventadas.",
+  "KAGGLE_IMAGE_OPTIONS_INVALID": "Usa un tamaño entero entre 8 y 2048 píxeles y 1 o 3 canales."
 }
