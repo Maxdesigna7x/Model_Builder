@@ -1,15 +1,21 @@
+import "./project-hub.css";
+import DatasetWorkspace from "./DatasetWorkspace";
 import { KaggleImport, KaggleReport } from "./KaggleImport";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
-  ReactFlow, Background, Controls, MiniMap, ViewportPortal, addEdge, useEdgesState, useNodesState,
-  type Connection, type NodeMouseHandler, type ReactFlowInstance
+  ReactFlow, Controls, ViewportPortal, addEdge, useEdgesState, useNodesState,
+  type NodeMouseHandler, type ReactFlowInstance
 } from "@xyflow/react";
-import { Copy, Group, Ungroup, Activity, AlertCircle, ArrowDown, ArrowLeft, ArrowRight, ArrowUpDown, BarChart3, Binary, Box, BrainCircuit, Check, CheckCircle2, ChevronRight, Clock3, Cloud, Cpu, Database, Dice5, Download, FileText, FolderOpen, GitBranch, GitFork, Grid2X2, Image, LayoutGrid, Layers3, List, Network, Info, Moon, Palette, Pause, Play, Plus, RefreshCw, Repeat2, ScanLine, Search, Shield, Shrink, Square, SlidersHorizontal, Save, Sparkles, Split, Sun, Table2, Upload, WandSparkles, Waves, Waypoints, X, Zap } from "lucide-react";
+import { Wrench, Undo2, Copy, Group, Ungroup, Activity, AlertCircle, ArrowDown, ArrowLeft, ArrowRight, BarChart3, Binary, Box, BrainCircuit, Check, CheckCircle2, ChevronRight, Clock3, Cloud, Cpu, Database, Dice5, Download, FileText, FolderOpen, GitBranch, GitFork, Grid2X2, Image, LayoutGrid, Layers3, List, Network, Info, Moon, Palette, Pause, Play, Plus, RefreshCw, Repeat2, ScanLine, Search, Shield, Shrink, Square, SlidersHorizontal, Save, Sparkles, Split, Sun, Table2, Upload, WandSparkles, Waves, Waypoints, X, Zap } from "lucide-react";
 import { ARCHITECTURES, BLOCK_INFO, BLOCKS, TASKS, pretrainedTemplate, presetsFor, syncOutputContract, templateFor } from "./catalog";
 import { getPresetBenefit, getPresetDescription, getPresetName, getPresetTradeoff } from "./catalog-i18n";
-import { backend, isTauri, onTrainingEvent, pickDatasetDirectory, pickDatasetFile, startTraining } from "./bridge";
+import { BackendRequestError, backend, isTauri, onTrainingEvent, pickDatasetDirectory, pickDatasetFile, startTraining } from "./bridge";
 import ModelNode from "./ModelNode";
+import ModelMiniMap from "./ModelMiniMap";
+import {groupPath,withGroups,modelGroups,canGroup,createModelGroup,groupRectangles} from "./model-groups";
+import ArchitectureOverview from "./ArchitectureOverview";
+import GraphRepairPanel, {repairGraphKey, type RepairGraph} from "./GraphRepairPanel";
 import { operationIcon } from "./operation-icons";
 import { TensorShapeSummary } from "./tensor-shape";
 import { previewOperationOutput } from "./operation-preview";
@@ -17,8 +23,10 @@ import { TrainingChart } from "./Chart";
 import DataPipelineEditor, { defaultDataPipeline } from "./DataPipelineEditor";
 import DataCharts from "./DataCharts";
 import { extractCnnBackbone, featurePorts } from "./cnn-reuse";
-import { candidateEdgesForConnection, createCnnRecipe, duplicateGraphSelection, isValidGraphConnection, layoutConnectedGraph, type GraphLayoutDirection } from "./builder-graph";
+import { createCnnRecipe } from "./builder-graph";
 import "./canvas-actions.css";
+import { arrangeModel, insertConnected, removeConnected, branchConnected, removeMerge, reorderAtPosition } from "./structured-graph";
+import "./structured-builder.css";
 import { translateBackendError } from "./i18n/errors";
 import type { Architecture, DataPipeline, DatasetAnalytics, DatasetOptions, DatasetPreview, DatasetSummary, GpuInfo, GraphValidation, HuggingFaceDataset, MetricPoint, ModelEdge, ModelNode as ModelNodeT, PretrainedModelSpec, Project, ProjectModel, RunResult, RuntimeCatalog, Step, TaskId, TrainingRun } from "./types";
 
@@ -37,48 +45,18 @@ const ARCHITECTURE_ICONS: Record<Architecture, typeof BrainCircuit> = {
 const nodeTypes = { modelNode: ModelNode };
 const initialGraphNodes = (nodes: ModelNodeT[]) => [...nodes].sort((a,b)=>a.position.x-b.position.x).slice(0,3).map(({id})=>({id}));
 const initialGraphFit = (nodes: ModelNodeT[]) => ({nodes:initialGraphNodes(nodes),...(window.innerWidth<=1280?{padding:0,maxZoom:1}:{padding:.3,maxZoom:.85})});
-const inferLayoutDirection = (nodes:ModelNodeT[],edges:ModelEdge[]):GraphLayoutDirection => {
-  const byId=new Map(nodes.map(node=>[node.id,node]));let horizontal=0,vertical=0;
-  for(const edge of edges){const source=byId.get(edge.source),target=byId.get(edge.target);if(!source||!target)continue;const dx=Math.abs(target.position.x-source.position.x),dy=Math.abs(target.position.y-source.position.y);if(dx+dy<1)continue;if(dx>=dy)horizontal++;else vertical++;}
-  return vertical>horizontal?"vertical":"horizontal";
-};
 
 import { BaseEdge, EdgeLabelRenderer, getSmoothStepPath, type EdgeProps } from "@xyflow/react";
 import { Trash2 } from "lucide-react";
 
-function CustomEdge({ id, sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition, selected, style, markerEnd, data }: EdgeProps) {
-  const { t } = useTranslation(["app", "common"]);
-  const [edgePath, labelX, labelY] = getSmoothStepPath({ sourceX, sourceY, sourcePosition, targetX, targetY, targetPosition });
-  return (
-    <>
-      <BaseEdge path={edgePath} markerEnd={markerEnd} style={style} className={selected ? "selected" : ""} />
-      {selected && (
-        <EdgeLabelRenderer>
-          <div
-            style={{
-              position: "absolute",
-              transform: `translate(-50%, -50%) translate(${labelX}px,${labelY}px)`,
-              pointerEvents: "all",
-            }}
-            className="nodrag nopan"
-          >
-            <button
-              className="edge-delete-btn"
-              onClick={(e) => {
-                e.stopPropagation();
-                if (data && typeof data.onDelete === "function") {
-                  (data.onDelete as (edgeId: string) => void)(id);
-                }
-              }}
-              title={t("app:edge.deleteConnectionTitle")}
-            >
-              <Trash2 size={11} />
-            </button>
-          </div>
-        </EdgeLabelRenderer>
-      )}
-    </>
-  );
+function CustomEdge({ id, sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition, style, markerEnd, data }: EdgeProps) {
+  const { t } = useTranslation("app");
+  const [path, x, y] = getSmoothStepPath({ sourceX, sourceY, sourcePosition, targetX, targetY, targetPosition, borderRadius: 18 });
+  return <><BaseEdge path={path} markerEnd={markerEnd} style={style}/><EdgeLabelRenderer>
+    <button data-edge-id={id} className={`edge-insert nodrag nopan ${data?.pending ? "awaiting" : ""}`} style={{transform:`translate(-50%, -50%) translate(${x}px,${y}px)`}}
+      onClick={event=>{event.stopPropagation();(data?.onInsert as ((id:string)=>void)|undefined)?.(id)}}
+      title={t("structured.insertHere")} aria-label={t("structured.insertHere")}><ArrowDown size={14}/></button>
+  </EdgeLabelRenderer></>;
 }
 
 const edgeTypes = { customEdge: CustomEdge, smoothstep: CustomEdge };
@@ -235,16 +213,16 @@ export default function App() {
   useEffect(()=>{if(!notice)return;const timer=window.setTimeout(()=>setNotice(""),5000);return()=>window.clearTimeout(timer)},[notice]);
   useEffect(() => { localStorage.setItem("mb-projects", JSON.stringify(projects)); }, [projects]);
   useEffect(() => {
-    if (!project) return;
+    if (!project || project.projectType === "dataset") return;
     const state={ step, task, architecture, dataset, nodes, edges, models, activeModelId, trainingRuns, activeRunId, graphValid };
     localStorage.setItem(`mb-state-${project.id}`, JSON.stringify(state));
     const timer=window.setTimeout(()=>backend("project.state.save",{project,state}).catch(()=>{}),600);
     return ()=>window.clearTimeout(timer);
   }, [project, step, task, architecture, dataset, nodes, edges, models, activeModelId, trainingRuns, activeRunId, graphValid]);
   useEffect(() => {
-    if (!activeModelId || !architecture) return;
+    if (project?.projectType === "dataset" || !activeModelId || !architecture) return;
     setModels(items => items.map(model => model.id === activeModelId ? { ...model, architecture, nodes, edges, graphValid, semanticHash: graphValid ? validationStats?.semantic_hash : undefined } : model));
-  }, [activeModelId, architecture, nodes, edges, graphValid, validationStats]);
+  }, [project?.projectType, activeModelId, architecture, nodes, edges, graphValid, validationStats]);
   useEffect(() => { if (!graphValid) setValidationStats(null); }, [graphValid]);
   useEffect(() => { let off = () => {}; onTrainingEvent(event => {
     const targetId = runningRunId.current;
@@ -270,13 +248,14 @@ export default function App() {
   const validationRequest = useRef(0);
   const autoValidationTimer = useRef<number | null>(null);
 
-  const createProject = async (name: string, description: string) => {
-    const p: Project = { id: uid(), name, description, path: `projects/${name.toLowerCase().replace(/[^a-z0-9áéíóúñ]+/gi, "-")}`, createdAt: now(), updatedAt: now() };
+  const createProject = async (name: string, description: string, projectType: "training" | "dataset") => {
+    const p: Project = { id: uid(), name, description, projectType, path: `projects/${name.toLowerCase().replace(/[^a-z0-9áéíóúñ]+/gi, "-")}`, createdAt: now(), updatedAt: now() };
     try { await backend("project.create", { project: p }); } catch (e) { setNotice(translateBackendError(String(e))); return; }
     const freshRun=newTrainingRun(1, t("app:trainingRun.defaultName", { index: 1 })); setProjects(v => [p, ...v]); setProject(p); setStep("model"); setTask(null); setArchitecture(null); setDataset(null); setNodes([]); setEdges([]); setModels([]); setActiveModelId(null); setTrainingRuns([freshRun]); setActiveRunId(freshRun.id); setGraphValid(false);
   };
 
   const openProject = (p: Project) => {
+    if (p.projectType === "dataset") { setProject(p); return; }
     const stored = localStorage.getItem(`mb-state-${p.id}`);
     setProject(p);
     if (stored || p.savedState) {
@@ -295,12 +274,11 @@ export default function App() {
   };
 
   const deleteProject = async (p: Project) => {
-    if (isTauri()) {
-      try {
-        await backend("project.delete", { project: p });
-      } catch (e) {
-        console.warn("Error borrando proyecto:", e);
-      }
+    try {
+      await backend("project.delete", { project: p });
+    } catch (e) {
+      setNotice(translateBackendError(String(e)));
+      return;
     }
     localStorage.removeItem(`mb-state-${p.id}`);
     setProjects(v => v.filter(item => item.id !== p.id));
@@ -322,14 +300,14 @@ export default function App() {
     if (project) { const updated = { ...project, architecture: a, taskId, updatedAt: now() }; setProject(updated); setProjects(v => v.map(p => p.id === updated.id ? updated : p)); }
   };
 
-  const choose = (a: Architecture, taskId: TaskId) => {
-    if (architecture === a && task === taskId) return;
+  const choose = (a: Architecture, taskId: TaskId, onConfirmed?:()=>void) => {
+    if (architecture === a && task === taskId) {onConfirmed?.();return;}
     const taskChanged = Boolean(task && task !== taskId);
     if (taskChanged && (dataset || nodes.length > 0 || trainingRuns.some(item => item.result))) {
-      setDialog({kind:"confirm",title:t("app:notice.changeTaskTitle"),message:t("app:notice.changeTaskWarning"),onConfirm:()=>applyTaskChoice(a,taskId)});
+      setDialog({kind:"confirm",title:t("app:notice.changeTaskTitle"),message:t("app:notice.changeTaskWarning"),onConfirm:()=>{applyTaskChoice(a,taskId);onConfirmed?.();}});
       return;
     }
-    applyTaskChoice(a,taskId);
+    applyTaskChoice(a,taskId);onConfirmed?.();
   };
 
   const downloadData = async (datasetId: string, options?: DatasetOptions) => {
@@ -412,7 +390,7 @@ export default function App() {
         setValidationStats(r.valid ? r : null); setGraphValid(r.valid);setValidationMessage(r.valid?"":r.message); if(source==="manual")setNotice(r.message); return r.valid;
       } catch (e) {
         if(!isCurrent())return false;
-        const message=translateBackendError(String(e));setValidationMessage(message);const failed=nodes.find(node=>message.includes(node.data.label)||message.includes(node.id));if(failed){setNodes(items=>items.map(node=>node.id===failed.id?{...node,data:{...node.data,error:message}}:node));if(source==="manual")setSelectedId(failed.id)}setValidationStats(null);setGraphValid(false);if(source==="manual")setNotice(message);return false;
+        const message=translateBackendError(String(e));setValidationMessage(message);const failed=nodes.find(node=>node.id===(e instanceof BackendRequestError?e.context?.node_id:undefined))||nodes.find(node=>message.includes(node.data.label)||message.includes(node.id));if(failed){setNodes(items=>items.map(node=>node.id===failed.id?{...node,data:{...node.data,error:message}}:node));if(source==="manual")setSelectedId(failed.id)}setValidationStats(null);setGraphValid(false);if(source==="manual")setNotice(message);return false;
       }
     }
     setGraphValid(false); return false;
@@ -421,7 +399,7 @@ export default function App() {
   const validateGraphRef=useRef(validateGraph);
   validateGraphRef.current=validateGraph;
   useEffect(()=>{
-    if(previousValidationKey.current===validationKey)return;
+    if(project?.projectType === "dataset" || previousValidationKey.current===validationKey)return;
     previousValidationKey.current=validationKey;
     validationRequest.current++;
     setGraphValid(false);setValidationStats(null);setValidationMessage("");
@@ -429,7 +407,7 @@ export default function App() {
   },[validationKey,setNodes]);
   useEffect(()=>{
     if(autoValidationTimer.current!==null){window.clearTimeout(autoValidationTimer.current);autoValidationTimer.current=null}
-    if(step!=="builder"||!project||!dataset||!task||!architecture)return;
+    if(step!=="builder"||!project||project.projectType==="dataset"||!dataset||!task||!architecture)return;
     const scheduledKey=validationKey;
     autoValidationTimer.current=window.setTimeout(()=>{
       autoValidationTimer.current=null;
@@ -514,13 +492,15 @@ export default function App() {
 
   if (!project) return <ProjectHub projects={projects} onCreate={createProject} onOpen={openProject} onDelete={deleteProject} theme={theme} setTheme={setTheme} accent={accent} setAccent={setAccent} />;
 
+  if (project.projectType === "dataset") return <DatasetWorkspace project={project} onHome={()=>setProject(null)}/>;
+
   return <div className="app-shell">
     <Sidebar step={step} setStep={setStep} completed={completed} onHome={() => setProject(null)} gpuInfo={gpuInfo} nodes={nodes} dataset={dataset} theme={theme} setTheme={setTheme} accent={accent} setAccent={setAccent} />
     <main className="main-area">
       {notice && <div className="notice"><span>{notice}</span><button onClick={() => setNotice("")}><X size={14}/></button></div>}
       <section className={`content ${step === "training" ? "no-scroll" : ""}`}>
 
-        {step === "model" && <ModelTask architecture={architecture} task={task} runtimeCatalog={runtimeCatalog} onChoose={choose} onContinue={goNext} />}
+        {step === "model" && <ModelTask architecture={architecture} task={task} runtimeCatalog={runtimeCatalog} onChoose={choose} onContinue={()=>setStep("data")} />}
         {step === "data" && <DataStep project={project} task={task} dataset={dataset} dataContinue={dataContinue} setNotice={setNotice} onDownload={downloadData} onKaggle={importKaggleData} onImport={importData} onImportFiles={importDataFiles} onChooseAnother={()=>setDataset(null)} onApplyPipeline={applyDataPipeline} onSplitsChange={splits => setDataset(current => current ? { ...current, splits, splitCounts:undefined, splitPending:true } : current)} />}
         {step === "builder" && architecture && task && <Builder architecture={architecture} task={task} dataset={dataset} validationStats={validationStats} validationMessage={validationMessage} models={models} trainingRuns={trainingRuns} activeModelId={activeModelId} onSelectModel={switchModel} onCloseModel={closeModel} onAddModel={addModel} onReuseCheckpoint={createCheckpointBackbone} onApplyPretrained={spec=>setModels(items=>items.map(model=>model.id===activeModelId?{...model,source:"huggingface",pretrained:spec,schemaVersion:2,graphValid:false}:model))} theme={theme} nodes={nodes} edges={edges} setNodes={setNodes} setEdges={setEdges} onNodesChange={(changes: Parameters<typeof onNodesChange>[0]) => { if(changes.some(change=>["remove","add","replace"].includes(change.type))){setGraphValid(false);setNodes(items=>items.map(node=>({...node,data:{...node.data,shape:undefined,error:undefined}})))} onNodesChange(changes); }} onEdgesChange={(changes: Parameters<typeof onEdgesChange>[0]) => { if(changes.some(change=>["remove","add","replace"].includes(change.type))){setGraphValid(false);setNodes(items=>items.map(node=>({...node,data:{...node.data,shape:undefined,error:undefined}})))} onEdgesChange(changes); }} onDirty={()=>{setGraphValid(false);setValidationStats(null);setNodes(items=>items.map(node=>({...node,data:{...node.data,shape:undefined,error:undefined}})))}} selected={selected} selectedId={selectedId} setSelectedId={setSelectedId} onValidate={validateGraph} onSaveRevision={saveModelRevision} />}
         {step === "training" && task && <Training task={task} dataset={dataset} models={models} activeModelId={activeModelId} onSelectModel={switchModel} runs={trainingRuns} activeRunId={activeRunId} training={training} stopping={stopping} accent={accent} onSelectRun={setActiveRunId} onCloseRun={closeRun} onAddRun={addTrainingRun} onTrain={train} onControl={controlTraining} />}
@@ -554,10 +534,20 @@ function Builder({ architecture, task, dataset, validationStats, validationMessa
   const [inspectorOpen, setInspectorOpen] = useState(true);
   const [libraryTab,setLibraryTab]=useState<"layers"|"blocks">("layers");
   const canvasRef=useRef<HTMLDivElement>(null);
-  const insertionCount=useRef(0);
+  const [insertionEdge, setInsertionEdge] = useState<string|null>(null);
+  const [pendingBlock, setPendingBlock] = useState<(typeof BLOCKS)[Architecture][number]|null>(null);
+  const [insertQuery, setInsertQuery] = useState("");
+  const [editMessage, setEditMessage] = useState("");
+  const [dragPreview,setDragPreview]=useState<{nodes:ModelNodeT[];edges:ModelEdge[]}|null>(null);
+  const dragSession=useRef<{nodes:ModelNodeT[];edges:ModelEdge[];preview:{nodes:ModelNodeT[];edges:ModelEdge[]}|null}|null>(null);
+  const [removingMerge,setRemovingMerge]=useState<string|null>(null);
+  const [repairOpen,setRepairOpen]=useState(false);
+  const [repairUndo,setRepairUndo]=useState<{before:RepairGraph;afterKey:string}|null>(null);
+  const currentRepairKey=repairGraphKey({nodes,edges});
+  useEffect(()=>{setRepairOpen(false);setRepairUndo(null);},[activeModelId]);
   const [flow, setFlow] = useState<ReactFlowInstance<ModelNodeT, ModelEdge> | null>(null);
   const [selectedGroupId, setSelectedGroupId] = useState<string | null>(null);
-  const [layoutDirection, setLayoutDirection] = useState<GraphLayoutDirection>("horizontal");
+  const layoutDirection = "vertical";
   const [hoveredBlock,setHoveredBlock]=useState<(typeof BLOCKS)[Architecture][number]|null>(null);
   const [pinnedBlock,setPinnedBlock]=useState<(typeof BLOCKS)[Architecture][number]|null>(null);
   const [hoveredPreset,setHoveredPreset]=useState<{name:string;description:string;nodes:ModelNodeT[];edges:ModelEdge[];benefit?:string;tradeoff?:string}|null>(null);
@@ -581,7 +571,14 @@ function Builder({ architecture, task, dataset, validationStats, validationMessa
   useEffect(()=>{if(reuseBackboneOpen){setReuseRunId(reusableRuns.at(-1)?.id||"");setReuseFeatureKey("");setReuseBackboneError("")}},[reuseBackboneOpen]);
   useEffect(()=>{if(!reuseFeatures.some(feature=>`${feature.nodeId}::${feature.handle||""}`===reuseFeatureKey))setReuseFeatureKey(reuseFeatures[0]?`${reuseFeatures[0].nodeId}::${reuseFeatures[0].handle||""}`:"")},[reuseFeatures,reuseFeatureKey]);
   useEffect(()=>localStorage.setItem(`mb-presets-${architecture}`,JSON.stringify(customPresets)),[architecture,customPresets]);
-  useEffect(()=>setLayoutDirection(inferLayoutDirection(nodes,edges)),[activeModelId]);
+  useEffect(()=>{setInsertionEdge(null);setPendingBlock(null);setRemovingMerge(null);setDragPreview(null);dragSession.current=null;setEditMessage("");},[activeModelId]);
+  const arranged = useMemo(()=>arrangeModel(dragPreview?.nodes||nodes,dragPreview?.edges||edges),[nodes,edges,dragPreview]);
+  const topologyKey = JSON.stringify([activeModelId,nodes.map(n=>[n.id,groupPath(n).map(g=>g.id)]),edges.map(e=>[e.id,e.source,e.target])]);
+  useEffect(()=>{setNodes(items=>arrangeModel(items,edges));},[topologyKey]);
+  useEffect(()=>{
+    const timer=window.setTimeout(()=>{const first=arrangeModel(nodes,edges).filter(n=>n.position.y<=90+7*86);void flow?.fitView({nodes:first.map(({id})=>({id})),padding:.15,maxZoom:1,duration:220});},100);
+    return()=>window.clearTimeout(timer);
+  },[activeModelId,flow]);
   useEffect(()=>{if(!presetsOpen)return;setPretrainedLoading(true);Promise.all([backend<PretrainedModelSpec[]>("model.catalog",{task_id:task,architecture}),backend<{reason?:string}>("model.catalog.guidance",{architecture})]).then(([items,guidance])=>{setPretrainedModels(items);setScratchGuidance(guidance.reason||"")}).catch(()=>{setPretrainedModels([]);setScratchGuidance("")}).finally(()=>setPretrainedLoading(false))},[presetsOpen,architecture,task]);
   useEffect(()=>{
     if(!pinnedBlock)return;
@@ -590,10 +587,6 @@ function Builder({ architecture, task, dataset, validationStats, validationMessa
     return()=>document.removeEventListener("pointerdown",close);
   },[pinnedBlock]);
 
-  const removeEdge = useCallback((edgeId: string) => {
-    onDirty();
-    setEdges(es => es.filter(e => e.id !== edgeId));
-  }, [setEdges, onDirty]);
   const toggleExpanded=useCallback((id:string)=>setNodes(items=>items.map(item=>item.id===id?{...item,data:{...item.data,expanded:!item.data.expanded}}:item)),[setNodes]);
 
   const liveErrors=useMemo(()=>graphErrorMap(nodes,edges,t),[nodes,edges,t]);
@@ -622,8 +615,11 @@ function Builder({ architecture, task, dataset, validationStats, validationMessa
   useEffect(()=>{updateSelectionToolbarPosition()},[updateSelectionToolbarPosition,libraryOpen,inspectorOpen]);
   const selectedError=selected?(liveErrors.get(selected.id)||selected.data.error):undefined;
   const nodesWithHandler = useMemo(() => {
-    return nodes.map(n => ({
+    return arranged.map(n => ({
       ...n,
+      position: nodes.find(raw=>raw.id===n.id)?.dragging ? nodes.find(raw=>raw.id===n.id)!.position : n.position,
+      draggable: !["input","output","add","concat"].includes(n.data.blockType),
+
       data: {
         ...n.data,
         layoutDirection,
@@ -631,170 +627,142 @@ function Builder({ architecture, task, dataset, validationStats, validationMessa
         tensorArchitecture:architecture,
         error: liveErrors.get(n.id)||n.data.error,
         inputHandles:["concat","add"].includes(n.data.blockType)?Array.from({length:Math.max(2,edges.filter(edge=>edge.target===n.id).length+1,...edges.filter(edge=>edge.target===n.id).map(edge=>Number(edge.targetHandle?.match(/^input_(\d+)$/)?.[1]??-1)+2))},(_,index)=>`input_${index}`):undefined,
+        onShowSolutions:()=>{setSelectedId(n.id);setRepairOpen(true);},
         onToggleExpanded: toggleExpanded
       }
     }));
-  }, [nodes,edges,task,architecture,layoutDirection,toggleExpanded,liveErrors]);
+  }, [arranged,nodes,edges,task,architecture,layoutDirection,toggleExpanded,liveErrors]);
 
-  const edgesWithHandler = useMemo(() => {
-    return edges.map(e => ({
-      ...e,
-      type: "smoothstep",
-      data: {
-        ...e.data,
-        onDelete: removeEdge
-      }
-    }));
-  }, [edges, removeEdge]);
-
-  const candidateEdges = useCallback((connection: Connection | ModelEdge, removedId?: string) => candidateEdgesForConnection(connection,nodes,edges,removedId),[edges,nodes]);
-  const validCandidate = useCallback((connection: Connection | ModelEdge, removedId?: string) => isValidGraphConnection(connection,nodes,edges,removedId),[nodes,edges]);
-  const isValidConnection = useCallback((connection: Connection | ModelEdge) => validCandidate(connection,(connection as ModelEdge).id),[validCandidate]);
-  const connect = useCallback((connection: Connection) => {
-    if(!validCandidate(connection))return;
-    onDirty();setEdges(addEdge({...connection,type:"smoothstep"},candidateEdges(connection)));
-  },[validCandidate,candidateEdges,onDirty,setEdges]);
-  const reconnect = useCallback((old:ModelEdge, connection:Connection)=>{
-    if(!validCandidate(connection,old.id))return;
-    onDirty();setEdges(addEdge({...connection,id:old.id,type:"smoothstep"},candidateEdges(connection,old.id)));
-  },[validCandidate,candidateEdges,onDirty,setEdges]);
+  const commitGraph = (graph:{nodes:ModelNodeT[];edges:ModelEdge[]}|null) => {
+    if(!graph){setEditMessage(t("app:structured.restricted"));return;}
+    onDirty();setNodes(graph.nodes.map(n=>({...n,dragging:false})));setEdges(graph.edges);setEditMessage("");
+  };
+  const applyRepair=(graph:RepairGraph)=>{
+    const before={nodes:structuredClone(nodes.map(({data,...node})=>({...node,data:Object.fromEntries(Object.entries(data).filter(([,v])=>typeof v!=="function"))}))) as ModelNodeT[],edges:structuredClone(edges)};
+    commitGraph(graph);setRepairUndo({before,afterKey:repairGraphKey(graph)});setRepairOpen(false);
+  };
+  const chooseEdge = (id:string) => {
+    if(pendingBlock){insertBlock(pendingBlock,id);return;}
+    setInsertionEdge(id);setInsertQuery("");setEditMessage("");
+  };
+  const edgesWithHandler = (dragPreview?.edges||edges).map(e=>({...e,type:"smoothstep",reconnectable:false,selectable:false,markerEnd:undefined,
+    data:{onInsert:chooseEdge,pending:Boolean(pendingBlock)||insertionEdge===e.id}}));
 
   const insertMergeBranch = (kind:"add"|"concat") => {
-    const source=nodes.find(node=>node.id===selectedId);
-    const outgoing=edges.filter(edge=>edge.source===selectedId);
-    if(!source||source.data.blockType==="output"||outgoing.length!==1)return;
-    const match=source.data.shape?.match(/^\[B,\s*(\d+),\s*\d+,\s*\d+\]$/);
-    if(!match)return;
-    const channels=Number(match[1]);
-    const downstream=outgoing[0];
-    const sourceIndex=nodes.findIndex(node=>node.id===source.id);
-    const branchX=source.position.x+230;
-    const mergeX=source.position.x+(kind==="add"?920:460);
-    const mergeId=`${kind}-${uid().slice(0,8)}`;
-    const branchId=`${kind}-branch-${uid().slice(0,8)}`;
-    const nextId=downstream.target;
-    const merge:ModelNodeT={id:mergeId,type:"modelNode",position:{x:mergeX,y:source.position.y},deletable:true,data:{blockType:kind,label:kind==="add"?t("app:builder.residualAddLabel"):t("app:builder.concatLabel"),category:"Merge",inputHandles:["input_0","input_1"],properties:{axis:1}}};
-    const branchNodes:ModelNodeT[]=kind==="add"?[
-      {id:branchId,type:"modelNode",position:{x:branchX,y:source.position.y-220},deletable:true,data:{blockType:"conv2d",label:t("app:builder.residualConvLabel"),category:"Convolution",properties:{out_channels:channels,kernel_size:3,stride:1,padding:1,bias:false}}},
-      {id:`${branchId}-relu`,type:"modelNode",position:{x:branchX+230,y:source.position.y-220},deletable:true,data:{blockType:"relu",label:"ReLU",category:"Activation",properties:{}}},
-      {id:`${branchId}-conv2`,type:"modelNode",position:{x:branchX+460,y:source.position.y-220},deletable:true,data:{blockType:"conv2d",label:t("app:builder.residualConvLabel"),category:"Convolution",properties:{out_channels:channels,kernel_size:3,stride:1,padding:1,bias:false}}}
-    ]:[{id:branchId,type:"modelNode",position:{x:branchX,y:source.position.y-220},deletable:true,data:{blockType:"identity",label:t("app:builder.concatBranchLabel"),category:"Shape",properties:{}}}];
-    const branchEnd=kind==="add"?`${branchId}-conv2`:branchId;
-    const branchEdges:ModelEdge[]=kind==="add"?[
-      {id:`${source.id}-${branchId}`,source:source.id,target:branchId,type:"smoothstep"},
-      {id:`${branchId}-${branchId}-relu`,source:branchId,target:`${branchId}-relu`,type:"smoothstep"},
-      {id:`${branchId}-relu-${branchId}-conv2`,source:`${branchId}-relu`,target:`${branchId}-conv2`,type:"smoothstep"},
-      {id:`${branchId}-conv2-${mergeId}`,source:branchEnd,target:mergeId,targetHandle:"input_1",type:"smoothstep"}
-    ]:[
-      {id:`${source.id}-${branchId}`,source:source.id,target:branchId,type:"smoothstep"},
-      {id:`${branchId}-${mergeId}`,source:branchId,target:mergeId,targetHandle:"input_1",type:"smoothstep"}
-    ];
-    onDirty();
-    const descendants=new Set<string>();
-    const pending=[nextId];
-    while(pending.length){const id=pending.pop()!;if(descendants.has(id))continue;descendants.add(id);pending.push(...edges.filter(edge=>edge.source===id).map(edge=>edge.target));}
-    const next=nodes.find(node=>node.id===nextId);
-    const shift=Math.max(0,mergeX+230-(next?.position.x??mergeX+230));
-    setNodes(items=>{const moved=items.map(item=>descendants.has(item.id)?{...item,position:{...item.position,x:item.position.x+shift}}:item);return [...moved.slice(0,sourceIndex+1),...branchNodes,merge,...moved.slice(sourceIndex+1)]});
-    setEdges(items=>[...items.filter(edge=>edge.id!==downstream.id),{id:`${source.id}-${mergeId}`,source:source.id,target:mergeId,targetHandle:"input_0",type:"smoothstep"},...branchEdges,{id:`${mergeId}-${nextId}`,source:mergeId,target:nextId,type:"smoothstep"}]);
-    setSelectedId(mergeId);
-    window.setTimeout(()=>flow?.fitView({nodes:[{id:source.id},{id:mergeId},{id:nextId}],duration:250,padding:.5}),20);
+    const graph=branchConnected(nodes,edges,selectedId||"",kind,type=>`${type}-${uid().slice(0,8)}`,type=>t(`catalog:blocks.${type}.label`,{defaultValue:type}));
+    if(!graph){setEditMessage(t("app:structured.branchHint"));return;}
+    commitGraph(graph);setSelectedId(graph.selectedId);setPendingBlock(null);setInsertionEdge(null);
   };
 
   const select: NodeMouseHandler<ModelNodeT> = (_, n) => { setSelectedId(n.id); setSelectedGroupId(null); };
-  const centerFlowPoint=()=>{const rect=canvasRef.current?.getBoundingClientRect();return rect&&flow?flow.screenToFlowPosition({x:rect.left+rect.width/2,y:rect.top+rect.height/2}):{x:400,y:250}};
-  const nextInsertionCenter=()=>{const point=centerFlowPoint();const index=insertionCount.current++;const radius=index?10+Math.sqrt(index)*5:0;const angle=index*2.399963229728653;return {x:point.x+Math.cos(angle)*radius,y:point.y+Math.sin(angle)*radius}};
-  const centerPosition=()=>{const point=nextInsertionCenter();return {x:point.x-95,y:point.y-55}};
-  const addBlock = (b: typeof BLOCKS[Architecture][number], position = centerPosition()) => {
-    onDirty();
-    const id = `${b.type}-${uid().slice(0, 6)}`;
-    setNodes(ns => [...ns.map(node=>({...node,selected:false})), { id, type: "modelNode", position, selected:true, deletable: true, data: { blockType: b.type, label: b.label, category: b.category, properties: { ...b.defaults } } }]);
-    setSelectedId(id);
+  const insertBlock = (block:typeof BLOCKS[Architecture][number], edgeId:string) => {
+    if(["add","concat"].includes(block.type)){
+      const edge=edges.find(e=>e.id===edgeId); if(edge){setSelectedId(edge.source);setEditMessage(t("app:structured.branchHint"));}
+      setInsertionEdge(null);return;
+    }
+    const id=`${block.type}-${uid().slice(0,8)}`;
+    const node:ModelNodeT={id,type:"modelNode",position:{x:0,y:0},selected:true,data:{blockType:block.type,label:t(`catalog:blocks.${block.type}.label`,{defaultValue:block.label}),category:block.category,properties:{...block.defaults}}};
+    commitGraph(insertConnected(nodes,edges,edgeId,[node]));setSelectedId(id);setInsertionEdge(null);setPendingBlock(null);
   };
-
+  const addBlock = (block:typeof BLOCKS[Architecture][number]) => {
+    if(["add","concat"].includes(block.type)){insertMergeBranch(block.type as "add"|"concat");return;}
+    if(insertionEdge){insertBlock(block,insertionEdge);return;}
+    setPendingBlock(block);setEditMessage("");
+  };
   const duplicateSelection=useCallback(()=>{
-    const duplicate=duplicateGraphSelection(nodes,edges,type=>`${type}-${uid()}`);
-    if(!duplicate.selectedId)return;
-    onDirty();setNodes(duplicate.nodes);setEdges(duplicate.edges);setSelectedId(duplicate.selectedId);const groupId=duplicate.nodes.find(node=>node.id===duplicate.selectedId)?.data.groupId;setSelectedGroupId(typeof groupId==="string"?groupId:null);
-  },[nodes,edges,onDirty,setNodes,setEdges,setSelectedId]);
-
-  const deleteNodeIds=useCallback((requested:Set<string>)=>{
-    if(!requested.size)return;
-    const groupedIds=new Set(nodes.filter(node=>requested.has(node.id)&&typeof node.data.groupId==="string").map(node=>node.data.groupId as string));
-    const outputs=nodes.filter(node=>node.data.blockType==="output");
-    const keepOutputId=outputs.find(node=>!requested.has(node.id))?.id||outputs[0]?.id;
-    const deleting=new Set([...requested].filter(id=>{
-      const node=nodes.find(item=>item.id===id);
-      return node&&node.data.blockType!=="input"&&!(node.data.blockType==="output"&&id===keepOutputId);
-    }));
-    const remaining=nodes.filter(node=>!deleting.has(node.id));
-    const protectedGroupMembers=remaining.filter(node=>groupedIds.has(String(node.data.groupId)));
-    if(!deleting.size&&protectedGroupMembers.length===0)return;
-    onDirty();
-    setNodes(items=>items.filter(node=>!deleting.has(node.id)).map(node=>({
-      ...node,
-      selected:false,
-      ...(groupedIds.has(String(node.data.groupId))?{data:{...node.data,groupId:undefined,groupName:undefined}}:{}),
-    })));
-    setEdges(items=>items.filter(edge=>!deleting.has(edge.source)&&!deleting.has(edge.target)));
-    setSelectedId(selectedId&&deleting.has(selectedId)?null:selectedId);
-    setSelectedGroupId(null);
-  },[nodes,selectedId,onDirty,setNodes,setEdges,setSelectedId]);
-  const deleteSelection=useCallback(()=>{
-    const selectedGroups=new Set(nodes.filter(node=>node.selected&&typeof node.data.groupId==="string").map(node=>node.data.groupId as string));
-    const requested=new Set(nodes.filter(node=>node.selected||selectedGroups.has(String(node.data.groupId))).map(node=>node.id));
-    if(requested.size){deleteNodeIds(requested);return;}
-    const selectedEdges=edges.filter(edge=>edge.selected);
-    if(selectedEdges.length){onDirty();const ids=new Set(selectedEdges.map(edge=>edge.id));setEdges(items=>items.filter(edge=>!ids.has(edge.id)));}
-  },[nodes,edges,deleteNodeIds,onDirty,setEdges]);
+    const members=nodes.filter(n=>n.selected);
+    const ids=new Set(members.map(n=>n.id));
+    const removed=removeConnected(nodes,edges,ids);
+    if(!removed){setEditMessage(t("app:structured.restricted"));return;}
+    const outgoing=edges.filter(e=>ids.has(e.source)&&!ids.has(e.target))[0];
+    const mapping=new Map(members.map(n=>[n.id,`${n.data.blockType}-${uid().slice(0,8)}`]));
+    const copiedGroups=new Map<string,string>();for(const node of members)for(const group of groupPath(node))if(!copiedGroups.has(group.id))copiedGroups.set(group.id,`group-${uid()}`);
+    const copies=members.map(n=>withGroups({...n,id:mapping.get(n.id)!,selected:true,data:{...n.data,properties:{...n.data.properties},shape:undefined,error:undefined}},groupPath(n).map(g=>({...g,id:copiedGroups.get(g.id)!}))));
+    const internal=edges.filter(e=>ids.has(e.source)&&ids.has(e.target)).map(e=>({...e,id:uid(),source:mapping.get(e.source)!,target:mapping.get(e.target)!}));
+    const graph=insertConnected(nodes,edges,outgoing.id,copies,internal);
+    if(graph){onDirty();setNodes(graph.nodes);setEdges(graph.edges);setSelectedId(copies[0].id);setEditMessage("");}
+  },[nodes,edges,t,onDirty,setNodes,setEdges,setSelectedId]);
+  const deleteNodeIds=useCallback((ids:Set<string>)=>{
+    if(ids.size===1){const node=nodes.find(n=>ids.has(n.id));if(node&&["add","concat"].includes(node.data.blockType)){
+      const inputs=edges.filter(e=>e.target===node.id);
+      const unique=inputs.filter((e,i)=>inputs.findIndex(other=>other.source===e.source&&(other.sourceHandle||"source")===(e.sourceHandle||"source"))===i);
+      if(unique.length===1){const graph=removeMerge(nodes,edges,node.id,unique[0].id);if(graph){onDirty();setNodes(graph.nodes);setEdges(graph.edges);setSelectedId(null);setEditMessage("");}return;}
+      setRemovingMerge(node.id);return;
+    }}
+    const graph=removeConnected(nodes,edges,ids);
+    if(!graph){setEditMessage(t("app:structured.restricted"));return;}
+    onDirty();setNodes(graph.nodes);setEdges(graph.edges);setSelectedId(null);setSelectedGroupId(null);setEditMessage("");
+  },[nodes,edges,t,onDirty,setNodes,setEdges,setSelectedId]);
+  const deleteSelection=useCallback(()=>deleteNodeIds(new Set(nodes.filter(n=>n.selected).map(n=>n.id))),[nodes,deleteNodeIds]);
   useEffect(()=>{
     const key=(event:KeyboardEvent)=>{
-      const target=event.target as HTMLElement|null;
-      if(target?.closest("input,textarea,select,[contenteditable]:not([contenteditable='false'])"))return;
-      if((event.ctrlKey||event.metaKey)&&event.key.toLowerCase()==="d"){event.preventDefault();duplicateSelection();return;}
-      if(event.key==="Delete"||event.key==="Backspace"){
-        if(!nodes.some(node=>node.selected)&&!edges.some(edge=>edge.selected))return;
-        event.preventDefault();deleteSelection();
-      }
-    };
-    window.addEventListener("keydown",key);
-    return()=>window.removeEventListener("keydown",key);
-  },[duplicateSelection,deleteSelection,nodes,edges]);
-
-  const visualGroups=useMemo(()=>{
-    const grouped=new Map<string,ModelNodeT[]>();for(const node of nodes){const id=node.data.groupId;if(typeof id==="string"){const members=grouped.get(id)||[];members.push(node);grouped.set(id,members)}}
-    return [...grouped].map(([id,members])=>({id,members,name:String(members[0].data.groupName||"Group"),selected:selectedGroupId===id,x:Math.min(...members.map(n=>n.position.x))-24,y:Math.min(...members.map(n=>n.position.y))-48,right:Math.max(...members.map(n=>n.position.x+(n.measured?.width||190)))+24,bottom:Math.max(...members.map(n=>n.position.y+(n.measured?.height||110)))+24}));
-  },[nodes,selectedGroupId]);
-  const groupSelection=()=>{const members=nodes.filter(n=>n.selected);if(members.length<2)return;const memberIds=new Set(members.map(node=>node.id));setBuilderDialog({kind:"prompt",title:t("app:builder.groupCreateTitle"),inputLabel:t("app:builder.groupName"),initialValue:t("app:builder.groupDefault"),onConfirm:name=>{if(!name?.trim())return;const id=uid();onDirty();setNodes(items=>items.map(n=>memberIds.has(n.id)?{...n,data:{...n.data,groupId:id,groupName:name.trim()}}:n));setSelectedGroupId(id);setSelectedId(members[0]?.id||null)}})};
-  const ungroupSelection=()=>{const ids=new Set(nodes.filter(n=>n.selected&&n.data.groupId).map(n=>n.data.groupId));if(!ids.size)return;onDirty();setNodes(items=>items.map(n=>ids.has(n.data.groupId)?{...n,data:{...n.data,groupId:undefined,groupName:undefined}}:n));setSelectedGroupId(null)};
-  const selectGroup=(id:string)=>{const first=nodes.find(node=>node.data.groupId===id);setNodes(items=>items.map(n=>({...n,selected:n.data.groupId===id})));setSelectedId(first?.id||null);setSelectedGroupId(id)};
-  const renameGroup=(id:string,name:string)=>setBuilderDialog({kind:"prompt",title:t("app:builder.groupRenameTitle"),inputLabel:t("app:builder.groupName"),initialValue:name,onConfirm:value=>{const next=value?.trim();if(next)setNodes(items=>items.map(n=>n.data.groupId===id?{...n,data:{...n.data,groupName:next}}:n))}});
-  const dragGroup=(event:React.PointerEvent,id:string)=>{if(event.button!==0||!flow)return;event.preventDefault();event.stopPropagation();selectGroup(id);let previous=flow.screenToFlowPosition({x:event.clientX,y:event.clientY});const move=(e:PointerEvent)=>{const current=flow.screenToFlowPosition({x:e.clientX,y:e.clientY});const dx=current.x-previous.x,dy=current.y-previous.y;previous=current;setNodes(items=>items.map(n=>n.data.groupId===id?{...n,position:{x:n.position.x+dx,y:n.position.y+dy}}:n))};const up=()=>{window.removeEventListener("pointermove",move);window.removeEventListener("pointerup",up);window.removeEventListener("pointercancel",up)};window.addEventListener("pointermove",move);window.addEventListener("pointerup",up);window.addEventListener("pointercancel",up)};
-  const applyLayout=(direction:GraphLayoutDirection)=>{
-    setLayoutDirection(direction);
-    const laidOut=layoutConnectedGraph(nodes,edges,direction);
-    setNodes(laidOut);
-    const ordered=[...laidOut].sort((a,b)=>direction==="vertical"?a.position.y-b.position.y:a.position.x-b.position.x);
-    const focus=ordered.slice(0,2).map(({id})=>({id}));
-    window.requestAnimationFrame(()=>{if(focus.length)void flow?.fitView({nodes:focus,duration:250,padding:.15,minZoom:1,maxZoom:1})});
+      if((event.target as HTMLElement)?.closest("input,textarea,select,[contenteditable]"))return;
+      if(event.key==="Escape"){setInsertionEdge(null);setPendingBlock(null);setEditMessage("");}
+      if((event.ctrlKey||event.metaKey)&&event.key.toLowerCase()==="d"){event.preventDefault();duplicateSelection();}
+      if(event.key==="Delete"||event.key==="Backspace"){event.preventDefault();deleteSelection();}
+    };window.addEventListener("keydown",key);return()=>window.removeEventListener("keydown",key);
+  },[duplicateSelection,deleteSelection]);
+  const nearestEdge=(point:{x:number;y:number},candidateEdges=edges)=>{
+    const byId=new Map(arranged.map(n=>[n.id,n]));
+    return candidateEdges.map(edge=>{const a=byId.get(edge.source),b=byId.get(edge.target);return {edge,distance:a&&b?Math.hypot(point.x-((a.position.x+b.position.x)/2+180),point.y-((a.position.y+56+b.position.y)/2)):Infinity}}).sort((a,b)=>a.distance-b.distance)[0];
+  };
+  const previewReorder=(event:MouseEvent|TouchEvent,node:ModelNodeT)=>{
+    const session=dragSession.current;if(!session||!flow)return;
+    const pointer="changedTouches" in event?event.changedTouches[0]:event;
+    const point=flow.screenToFlowPosition({x:pointer.clientX,y:pointer.clientY});
+    const preview=reorderAtPosition(session.nodes,session.edges,node.id,point.y);
+    session.preview=preview;setDragPreview(preview);
+  };
+  const reorderNode=()=>{
+    const preview=dragSession.current?.preview;
+    dragSession.current=null;setDragPreview(null);
+    if(preview)commitGraph(preview);
+    else setNodes(items=>arrangeModel(items,edges).map(n=>({...n,dragging:false})));
   };
 
+  const visualGroups=useMemo(()=>groupRectangles(arranged).map(g=>({...g,selected:selectedGroupId===g.id})),[arranged,selectedGroupId]);
+  const selectedIds=new Set(selectedNodes.map(n=>n.id));
+  const canGroupSelected=canGroup(nodes,edges,selectedIds);
+  const completeSelectedGroups=modelGroups(nodes).filter(g=>g.members.every(n=>selectedIds.has(n.id)));
+  const groupSelection=()=>{
+    if(!canGroupSelected)return;
+    const ids=new Set(selectedIds);
+    setBuilderDialog({kind:"prompt",title:t("app:builder.groupCreateTitle"),inputLabel:t("app:builder.groupName"),initialValue:t("app:builder.groupDefault"),onConfirm:name=>{
+      if(!name?.trim())return;const id=uid();const grouped=createModelGroup(nodes,edges,ids,{id,name:name.trim()});
+      if(!grouped)return;setNodes(grouped);setSelectedGroupId(id);setSelectedId(grouped.find(n=>ids.has(n.id))?.id||null);
+    }});
+  };
+  const ungroupSelection=()=>{
+    const ids=new Set(selectedGroupId?[selectedGroupId]:completeSelectedGroups.filter(g=>!completeSelectedGroups.some(parent=>parent.id===g.parent)).map(g=>g.id));
+    if(!ids.size)return;setNodes(items=>items.map(n=>withGroups(n,groupPath(n).filter(g=>!ids.has(g.id)))));setSelectedGroupId(null);
+  };
+  const selectGroup=(id:string,additive=false)=>{
+    const members=new Set(nodes.filter(n=>groupPath(n).some(g=>g.id===id)).map(n=>n.id));
+    setNodes(items=>items.map(n=>({...n,selected:members.has(n.id)||(additive&&n.selected)})));setSelectedId([...members][0]||null);setSelectedGroupId(id);
+  };
+  const renameGroup=(id:string,name:string)=>setBuilderDialog({kind:"prompt",title:t("app:builder.groupRenameTitle"),inputLabel:t("app:builder.groupName"),initialValue:name,onConfirm:value=>{
+    const next=value?.trim();if(next)setNodes(items=>items.map(n=>withGroups(n,groupPath(n).map(g=>g.id===id?{...g,name:next}:g))));
+  }});
   const addCnnRecipe=(kind:0|1|2|3)=>{
+    const outgoing=edges.filter(e=>e.source===selectedId);
+    const edge=insertionEdge?edges.find(e=>e.id===insertionEdge):outgoing.length===1?outgoing[0]:undefined;
+    if(!edge){setEditMessage(t("app:structured.selectPoint"));return;}
     const name=kind===0?t("app:builder.recipeResidual"):t("app:builder.recipeConv",{count:kind});
-    const recipe=createCnnRecipe(kind,nextInsertionCenter(),name,type=>`${type}-${uid().slice(0,8)}`,type=>t(`catalog:blocks.${type}.label`,{defaultValue:type}));
-    onDirty();setNodes(items=>[...items.map(node=>({...node,selected:false})),...recipe.nodes]);setEdges(items=>[...items,...recipe.edges]);setSelectedId(recipe.nodes[0]?.id||null);
+    const recipe=createCnnRecipe(kind,{x:0,y:0},name,type=>`${type}-${uid().slice(0,8)}`,type=>t(`catalog:blocks.${type}.label`,{defaultValue:type}));
+    commitGraph(insertConnected(nodes,edges,edge.id,recipe.nodes,recipe.edges));setInsertionEdge(null);
   };
 
   const addOutput=()=>{
-    onDirty();
     const outputs=nodes.filter(node=>node.data.blockType==="output");
     const name=`Output ${outputs.length+1}`;
     const source=nodes.find(node=>node.id===selectedId&&node.data.blockType!=="output");
+    if(!source){setEditMessage(t("app:structured.selectSource"));return;}
+    onDirty();
     const id=`output-${uid().slice(0,8)}`;
     const position={x:Math.max(0,...nodes.map(node=>node.position.x))+190,y:(source?.position.y??180)+outputs.length*125};
     const output:ModelNodeT={id,type:"modelNode",position,deletable:true,data:{blockType:"output",label:name,category:"Output",properties:{output_name:name}}};
     setNodes(items=>[...items,output]);
-    if(source)setEdges(items=>addEdge({id:`${source.id}-${id}`,source:source.id,target:id,type:"smoothstep"},items));
+    setEdges(items=>addEdge({id:`${source.id}-${id}`,source:source.id,sourceHandle:source.data.blockType==="multi_scale_cnn"?"p2":source.data.blockType==="hf_vision_backbone"&&source.data.properties.expose_feature_maps?"map_0":undefined,target:id,type:"smoothstep"},items));
     setSelectedId(id);
   };
 
@@ -818,9 +786,11 @@ function Builder({ architecture, task, dataset, validationStats, validationMessa
   const groups = BLOCKS[architecture].reduce<Record<string, typeof BLOCKS[Architecture]>>((all, b) => { (all[b.category] ??= []).push(b); return all; }, {});
   const onDrop = (event: React.DragEvent) => {
     event.preventDefault();
-    const type = event.dataTransfer.getData("application/modelbuilder");
-    const block = BLOCKS[architecture].find(b => b.type === type);
-    if (block && flow) addBlock(block, flow.screenToFlowPosition({ x: event.clientX, y: event.clientY }));
+    const block=BLOCKS[architecture].find(b=>b.type===event.dataTransfer.getData("application/modelbuilder"));
+    const point=flow?.screenToFlowPosition({x:event.clientX,y:event.clientY});
+    const target=point?nearestEdge(point):null;
+    if(block&&target&&target.distance<100)insertBlock(block,target.edge.id);
+    else if(block){setPendingBlock(block);setEditMessage(t("app:structured.selectPoint"));}
   };
 
   const paramEstimate = useMemo(() => {
@@ -828,7 +798,7 @@ function Builder({ architecture, task, dataset, validationStats, validationMessa
   }, [nodes]);
   const builtinPresets = useMemo(() => presetsFor(architecture, task), [architecture, task]);
 
-  const applyPreset=(preset:{nodes:ModelNodeT[];edges:ModelEdge[]})=>{onDirty();setNodes(syncOutputContract(preset.nodes,preset.edges,dataset).map(node=>({...node,data:{...node.data,error:undefined}})));setEdges(preset.edges);setSelectedId(null);setSelectedGroupId(null);setLayoutDirection(inferLayoutDirection(preset.nodes,preset.edges));setPresetsOpen(false);window.setTimeout(()=>flow?.fitView(initialGraphFit(preset.nodes)),20)};
+  const applyPreset=(preset:{nodes:ModelNodeT[];edges:ModelEdge[]})=>{onDirty();setNodes(syncOutputContract(preset.nodes,preset.edges,dataset).map(node=>({...node,data:{...node.data,error:undefined}})));setEdges(preset.edges);setSelectedId(null);setSelectedGroupId(null);setPresetsOpen(false);window.setTimeout(()=>flow?.fitView(initialGraphFit(preset.nodes)),20)};
   const applyPretrained=async(spec:PretrainedModelSpec)=>{await backend("model.license.accept",{model_id:spec.id});onApplyPretrained(spec);applyPreset(pretrainedTemplate(spec,task))};
   const savePreset=(requestedName=presetName)=>{const name=requestedName.trim();if(!name)return;const preset={id:uid(),name,description:t("app:customPreset.description"),nodes:nodes.map(node=>({...node,selected:false})),edges:edges.map(edge=>({...edge,selected:false}))};setCustomPresets(items=>[...items,preset]);setPresetName("")};
   const requestSaveRevision=()=>setBuilderDialog({kind:"prompt",title:t("app:savePreset.label"),inputLabel:t("common:name"),initialValue:presetName,onConfirm:name=>{if(!name?.trim())return;savePreset(name);void onSaveRevision()}});
@@ -842,18 +812,20 @@ function Builder({ architecture, task, dataset, validationStats, validationMessa
   };
 
   return (
-    <div className="builder-page">
+    <div className="builder-page structured-builder">
       <div className="model-tabs" role="tablist" aria-label={t("app:model.modelsAria")}>{models.map(model=>{const modelRunning=trainingRuns.some(run=>run.modelId===model.id&&(run.status==="running"||run.status==="paused"));const closeTitle=modelRunning?t("app:builder.closeModelTraining"):models.length<=1?t("app:builder.closeModelLast"):t("app:builder.closeModel");return <div className="closable-tab model-tab" role="presentation" key={model.id}><button role="tab" aria-selected={model.id===activeModelId} className={model.id===activeModelId?"active":""} onClick={()=>onSelectModel(model.id)}><BrainCircuit size={13}/>{model.name}<small>{t(`catalog:architectures.${model.architecture}.name`)}</small></button><button className="tab-close" disabled={models.length<=1||modelRunning} onClick={event=>{event.stopPropagation();onCloseModel(model.id)}} title={closeTitle} aria-label={closeTitle}><X size={12}/></button></div>})}<button className="add-model" onClick={onAddModel} title={t("app:model.createTitle")} aria-label={t("app:model.createTitle")}><Plus size={15}/></button></div>
       <div className="builder-toolbar">
         <button className={presetsOpen ? "active" : ""} onClick={()=>{setPresetTab("scratch");setPresetsOpen(true)}}><Layers3/> {t("common:presets")}</button>
         {reusableRuns.length>0&&<button onClick={()=>setReuseBackboneOpen(true)}><Network/> {t("app:builder.reuseBackbone")}</button>}
         <button onClick={addOutput} title={t("app:builder.addOutputHelp")}><Plus/> {t("app:builder.addOutput")}</button>
-        <button disabled={!selected?.data.shape?.match(/^\[B,\s*\d+,\s*\d+,\s*\d+\]$/)||edges.filter(edge=>edge.source===selectedId).length!==1} onClick={()=>insertMergeBranch("add")} title={t("app:builder.residualHelp")}><GitFork/> {t("app:builder.addResidual")}</button>
-        <button disabled={!selected?.data.shape?.match(/^\[B,\s*\d+,\s*\d+,\s*\d+\]$/)||edges.filter(edge=>edge.source===selectedId).length!==1} onClick={()=>insertMergeBranch("concat")} title={t("app:builder.concatHelp")}><Split/> {t("app:builder.addConcat")}</button>
+        <button disabled={!selected||selected.data.blockType==="output"||edges.filter(edge=>edge.source===selectedId).length!==1} onClick={()=>insertMergeBranch("add")} title={t("app:builder.residualHelp")}><GitFork/> {t("app:builder.addResidual")}</button>
+        <button disabled={!selected||selected.data.blockType==="output"||edges.filter(edge=>edge.source===selectedId).length!==1} onClick={()=>insertMergeBranch("concat")} title={t("app:builder.concatHelp")}><Split/> {t("app:builder.addConcat")}</button>
         <span className="toolbar-separator" />
-        <div className="builder-layout-toggle" role="group" aria-label={t("app:builder.layout") }><span>{t("app:builder.layout")}</span><button type="button" className={layoutDirection==="horizontal"?"active":""} aria-pressed={layoutDirection==="horizontal"} title={t("app:builder.layoutHorizontalHelp")} onClick={()=>applyLayout("horizontal")}><ArrowRight/>{t("app:builder.layoutHorizontal")}</button><button type="button" className={layoutDirection==="vertical"?"active":""} aria-pressed={layoutDirection==="vertical"} title={t("app:builder.layoutVerticalHelp")} onClick={()=>applyLayout("vertical")}><ArrowDown/>{t("app:builder.layoutVertical")}</button></div>
+        <span className="structured-view-label"><Layers3 size={14}/>{t("app:structured.cardView")}</span>
         <span className="toolbar-separator" />
         <button onClick={requestSaveRevision}><Save /> {t("app:builder.saveRevision")}</button>
+        <button className={repairOpen?"active":""} onClick={()=>setRepairOpen(value=>!value)}><Wrench/>{t("app:repair.inspect")}</button>
+        {repairUndo&&repairUndo.afterKey===currentRepairKey&&<button onClick={()=>{commitGraph(repairUndo.before);setRepairUndo(null);}}><Undo2/>{t("app:repair.undo")}</button>}
         <div className="toolbar-spacer" />
         <span>{t("app:builder.graphSummary", { blocks: nodes.length, connections: edges.length })}</span>
       </div>
@@ -886,7 +858,19 @@ function Builder({ architecture, task, dataset, validationStats, validationMessa
         <div className="flow-wrap" ref={canvasRef}>
           <button type="button" className={`builder-panel-toggle builder-panel-toggle-library ${libraryOpen?"panel-open":"panel-closed"}`} onClick={()=>setLibraryOpen(value=>!value)} title={`${libraryOpen?t("common:close"):t("common:open")} ${t("common:blocks")}`} aria-label={`${libraryOpen?t("common:close"):t("common:open")} ${t("common:blocks")}`}><ChevronRight size={15}/></button>
           <button type="button" className={`builder-panel-toggle builder-panel-toggle-inspector ${inspectorOpen?"panel-open":"panel-closed"}`} onClick={()=>setInspectorOpen(value=>!value)} title={`${inspectorOpen?t("common:close"):t("common:open")} ${t("app:inspector.properties")}`} aria-label={`${inspectorOpen?t("common:close"):t("common:open")} ${t("app:inspector.properties")}`}><ChevronRight size={15}/></button>
-          <div className="canvas-navigation-hint">{t("app:builder.canvasNavigation")}</div>
+          <div className="canvas-navigation-hint">{t("app:structured.canvasTitle")}</div>
+          {(pendingBlock||editMessage)&&<div className="insertion-notice" role="status"><span>{editMessage||t("app:structured.choosePosition",{block:t(`catalog:blocks.${pendingBlock?.type}.label`)})}</span><button onClick={()=>{setPendingBlock(null);setEditMessage("")}} aria-label={t("common:close")}><X size={14}/></button></div>}
+          {repairOpen&&<GraphRepairPanel key={activeModelId} graph={{nodes,edges}} dataset={dataset} architecture={architecture} task={task} onApply={applyRepair} onClose={()=>setRepairOpen(false)}/>}
+          {removingMerge&&<div className="modal-backdrop" onMouseDown={event=>{if(event.target===event.currentTarget)setRemovingMerge(null)}}><section className="modal merge-removal-dialog" role="dialog" aria-modal="true" aria-labelledby="remove-merge-title" onKeyDown={event=>{if(event.key==="Escape")setRemovingMerge(null)}}>
+            <h2 id="remove-merge-title">{t("app:structured.removeMerge")}</h2><p>{t("app:structured.removeMergeHelp")}</p>
+            <div className="merge-removal-options">{edges.filter(e=>e.target===removingMerge).map((edge,index)=><button key={edge.id} autoFocus={index===0} onClick={()=>{const graph=removeMerge(nodes,edges,removingMerge,edge.id);commitGraph(graph);setRemovingMerge(null);setSelectedId(null);setSelectedGroupId(null);}}><GitBranch size={20}/><span><strong>{t("app:structured.keepBranch",{index:index+1})}: {nodes.find(n=>n.id===edge.source)?.data.label}</strong><small>{t("app:structured.keepBranchHelp")}</small></span></button>)}</div>
+            <button className="secondary" onClick={()=>setRemovingMerge(null)}>{t("common:cancel")}</button>
+          </section></div>}
+          {insertionEdge&&<div className="insertion-picker nodrag nopan" role="dialog" aria-label={t("app:structured.insertLayer")}>
+            <header><div><strong>{t("app:structured.insertLayer")}</strong><small>{nodes.find(n=>n.id===edges.find(e=>e.id===insertionEdge)?.source)?.data.label} → {nodes.find(n=>n.id===edges.find(e=>e.id===insertionEdge)?.target)?.data.label}</small></div><button onClick={()=>setInsertionEdge(null)} aria-label={t("common:close")}><X size={16}/></button></header>
+            <label><Search size={15}/><input autoFocus value={insertQuery} onChange={e=>setInsertQuery(e.target.value)} placeholder={t("app:structured.searchLayers")}/></label>
+            <div className="insertion-options">{Object.entries(groups).map(([category,blocks])=>{const visible=blocks.filter(b=>!["add","concat","multi_scale_cnn"].includes(b.type)&&t(`catalog:blocks.${b.type}.label`).toLowerCase().includes(insertQuery.toLowerCase()));return visible.length?<section key={category}><small>{t(`catalog:blockCategories.${category}`)}</small>{visible.map(b=>{const Icon=operationIcon(b.type);return <button key={b.type} onClick={()=>insertBlock(b,insertionEdge)}><Icon size={16}/>{t(`catalog:blocks.${b.type}.label`)}<Plus size={13}/></button>})}</section>:null})}</div>
+          </div>}
           <div className="canvas-param-badge">
             <Cpu size={13} />
             <span>{validationStats ? `${validationStats.parameters.toLocaleString()} total · ${validationStats.trainable_parameters.toLocaleString()} entrenables · ~${Math.ceil(validationStats.parameters*4/1048576)} MB` : t("app:builder.paramEstimate", { count: paramEstimate > 0 ? paramEstimate.toLocaleString() : "---" })}</span>
@@ -897,8 +881,8 @@ function Builder({ architecture, task, dataset, validationStats, validationMessa
           </div>
           {selectedNodes.length>0||selectedEdges.length>0?<div className="canvas-selection-toolbar nodrag nopan" ref={selectionToolbarRef} role="toolbar" aria-label={t("app:builder.deleteSelection")}>
             {selectedNodes.length>0&&<button type="button" onClick={duplicateSelection} title={t("app:builder.duplicateShortcut")}><Copy size={14}/><span>{t("app:builder.duplicateSelection")}</span></button>}
-            {selectedNodes.length>=2&&<button type="button" onClick={groupSelection} title={t("app:builder.groupSelection")}><Group size={14}/><span>{t("app:builder.groupSelection")}</span></button>}
-            {selectedNodes.length>=2&&selectedNodes.some(node=>typeof node.data.groupId==="string")&&<button type="button" onClick={ungroupSelection} title={t("app:builder.ungroup")}><Ungroup size={14}/><span>{t("app:builder.ungroup")}</span></button>}
+            {canGroupSelected&&<button data-action="group" type="button" onClick={groupSelection} title={t("app:builder.groupSelection")}><Group size={14}/><span>{t("app:builder.groupSelection")}</span></button>}
+            {completeSelectedGroups.length>0&&<button data-action="ungroup" type="button" onClick={ungroupSelection} title={t("app:builder.ungroup")}><Ungroup size={14}/><span>{t("app:builder.ungroup")}</span></button>}
             <button type="button" className="danger" onClick={deleteSelection} title={t("app:builder.deleteSelection")}><Trash2 size={14}/><span>{t("app:builder.deleteSelection")}</span></button>
           </div>:null}
 
@@ -909,9 +893,15 @@ function Builder({ architecture, task, dataset, validationStats, validationMessa
             onMove={updateSelectionToolbarPosition}
             onNodesChange={onNodesChange}
             onEdgesChange={onEdgesChange}
-            onConnect={connect}
-            onReconnect={reconnect}
-            isValidConnection={isValidConnection}
+            nodesConnectable={false}
+            edgesReconnectable={false}
+            onNodeDragStop={reorderNode}
+            onNodeDragStart={(_,node)=>{dragSession.current={nodes:arrangeModel(nodes,edges),edges:[...edges],preview:null};}}
+            onNodeDrag={previewReorder}
+            onEdgeClick={(_,edge)=>chooseEdge(edge.id)}
+            disableKeyboardA11y
+            panOnScroll
+            zoomOnScroll={false}
             multiSelectionKeyCode="Shift"
             onNodeClick={select}
             onPaneClick={() => { setSelectedId(null); setSelectedGroupId(null); }}
@@ -920,22 +910,16 @@ function Builder({ architecture, task, dataset, validationStats, validationMessa
             nodeTypes={nodeTypes}
             edgeTypes={edgeTypes}
             fitView
-            fitViewOptions={initialGraphFit(nodes)}
+            fitViewOptions={{padding:.15,maxZoom:1}}
             colorMode={theme === "dark" ? "dark" : "light"}
             deleteKeyCode={null}
           >
-            <ViewportPortal>{visualGroups.map(group=><div className={`visual-group${group.selected?" selected":""}`} role="group" aria-label={group.name} key={group.id} style={{left:group.x,top:group.y,width:group.right-group.x,height:group.bottom-group.y}}>
-              <div className="visual-group-hit visual-group-hit-top" onPointerDown={event=>dragGroup(event,group.id)} />
-              <div className="visual-group-hit visual-group-hit-left" onPointerDown={event=>dragGroup(event,group.id)} />
-              <div className="visual-group-hit visual-group-hit-right" onPointerDown={event=>dragGroup(event,group.id)} />
-              <div className="visual-group-hit visual-group-hit-bottom" onPointerDown={event=>dragGroup(event,group.id)} />
-              <div className="visual-group-header" onPointerDown={event=>{if(!(event.target as HTMLElement).closest("button"))dragGroup(event,group.id)}}>
-                <button type="button" className="visual-group-title" aria-pressed={group.selected} title={t("app:builder.groupDragHint")} onPointerDown={event=>dragGroup(event,group.id)} onClick={()=>selectGroup(group.id)} onDoubleClick={()=>renameGroup(group.id,group.name)}>{group.name}</button>
-              </div>
+            <ViewportPortal>{visualGroups.map(group=><div className={`visual-group${group.selected?" selected":""}`} role="group" data-group-id={group.id} data-depth={group.depth} aria-label={group.name} key={group.id} style={{left:group.x,top:group.y,width:group.right-group.x,height:group.bottom-group.y}}>
+              <div className="visual-group-header"><button type="button" className="visual-group-title" aria-pressed={group.selected} onClick={event=>selectGroup(group.id,event.shiftKey)} onDoubleClick={()=>renameGroup(group.id,group.name)}>{group.name}</button></div>
             </div>)}</ViewportPortal>
-            <Background color={theme === "dark" ? "#35373b" : "#d1d2d5"} gap={22} />
+
             <Controls />
-            <MiniMap nodeColor="var(--accent)" maskColor={theme === "dark" ? "rgba(16,17,18,.75)" : "rgba(240,240,242,.75)"} pannable zoomable />
+            <ModelMiniMap nodes={arranged} edges={dragPreview?.edges||edges} groups={visualGroups}/>
           </ReactFlow>
         </div>
 
@@ -957,7 +941,7 @@ function Builder({ architecture, task, dataset, validationStats, validationMessa
                 <TensorShapeSummary shape={selected.data.shape} blockType={selected.data.blockType} task={task} architecture={architecture} properties={selected.data.properties} label={selected.data.label} variant="inspector" />
               </div>
               <div className="inspector-section parameter-summary"><span className="eyebrow">{t("app:inspector.parameters")}</span><strong>{estimateNodeParameters(selected).toLocaleString()}</strong><small>{t("app:inspector.parametersPerBlock")}</small><div><span>{t("app:inspector.totalModel")}</span><b>{paramEstimate.toLocaleString()}</b></div></div>
-              {selectedError&&<div className="inspector-error"><AlertCircle/>{translateBackendError(selectedError)}</div>}
+              {selectedError&&<div className="inspector-error"><AlertCircle/>{translateBackendError(selectedError)}<button className="secondary" onClick={()=>setRepairOpen(true)}><Wrench size={14}/>{t("app:repair.inspect")}</button></div>}
             </>
           ) : (
             <div className="inspector-empty">
@@ -1197,44 +1181,29 @@ const mainLogoUrl = new URL("../../assets/Logo_Icon.png", import.meta.url).href;
 
 function AppLogo({className}:{className:string}){return <span className={`app-logo ${className}`} role="img" aria-label="ModelBuilder" style={{maskImage:`url(${mainLogoUrl})`,WebkitMaskImage:`url(${mainLogoUrl})`}}/>}
 
-function ProjectHub({ projects, onCreate, onOpen, onDelete, theme, setTheme, accent, setAccent }: { projects: Project[]; onCreate: (n:string,d:string)=>void; onOpen:(p:Project)=>void; onDelete:(p:Project)=>void; theme:Theme; setTheme:(v:Theme)=>void; accent:Accent; setAccent:(v:Accent)=>void }) {
+function ProjectHub({ projects, onCreate, onOpen, onDelete, theme, setTheme, accent, setAccent }: { projects: Project[]; onCreate: (n:string,d:string,type:"training"|"dataset")=>void; onOpen:(p:Project)=>void; onDelete:(p:Project)=>void; theme:Theme; setTheme:(v:Theme)=>void; accent:Accent; setAccent:(v:Accent)=>void }) {
   const { t } = useTranslation(["app", "common", "catalog"]);
   const [creating, setCreating] = useState(false); const [name, setName] = useState(""); const [description, setDescription] = useState("");
+  const [projectType,setProjectType]=useState<"training"|"dataset">("training");
   const [projectPendingDeletion,setProjectPendingDeletion]=useState<Project|null>(null);
-  const [query,setQuery]=useState("");
+  const [queries,setQueries]=useState({training:"",dataset:""});
   const [modelFilter,setModelFilter]=useState("all");
-  const [projectView,setProjectView]=useState<"list"|"grid">("list");
-  const filteredProjects=projects.filter(item=>(modelFilter==="all"||item.architecture===modelFilter)&&`${item.name} ${item.description}`.toLowerCase().includes(query.toLowerCase()));
-  const modelCounts=projects.reduce<Record<string,number>>((counts,item)=>{const key=item.architecture||"unconfigured";counts[key]=(counts[key]||0)+1;return counts},{});
-  const maxCount=Math.max(1,...Object.values(modelCounts));
-  const recentActivity=projects.slice().sort((a,b)=>new Date(b.updatedAt).getTime()-new Date(a.updatedAt).getTime()).slice(0,4);
-  return <div className="hub"><header className="hub-header"><div className="brand" title={t("common:appName")} aria-label={t("common:appName")}><AppLogo className="main-screen-logo"/><strong>{t("common:appName")}</strong></div><button className="primary" onClick={()=>setCreating(true)}><Plus size={17}/>{t("app:hub.newProjectButton")}</button><AppearanceMenu theme={theme} setTheme={setTheme} accent={accent} setAccent={setAccent}/></header>
-    <div className="hub-content">
-      <section className="projects-card">
-        <div className="projects-toolbar"><div><h2>{t("app:hub.recentProjects")}</h2><p>{projects.length ? t("app:hub.projectCount", { count: projects.length }) : t("app:hub.noProjects")}</p></div><div className="project-controls"><label><Search/><input value={query} onChange={event=>setQuery(event.target.value)} placeholder={t("app:hub.searchProjects")}/></label><select value={modelFilter} onChange={event=>setModelFilter(event.target.value)} aria-label={t("app:hub.filterModels")}><option value="all">{t("app:hub.allModels")}</option>{Object.keys(modelCounts).filter(id=>id!=="unconfigured").map(id=><option value={id} key={id}>{t(`catalog:architectures.${id}.name`)}</option>)}</select><div className="view-toggle"><button className={projectView==="list"?"active":""} onClick={()=>setProjectView("list")} aria-label={t("app:hub.listView")}><List/></button><button className={projectView==="grid"?"active":""} onClick={()=>setProjectView("grid")} aria-label={t("app:hub.gridView")}><Grid2X2/></button></div></div></div>
-      {filteredProjects.length ? (
-        <div className={`project-table ${projectView}`}>
-          <div className="project-table-head"><span>{t("app:hub.nameColumn")}</span><span>{t("app:hub.modelColumn")}</span><span>{t("app:hub.lastOpenedColumn")}</span><span>{t("app:hub.actionsColumn")}</span></div>
-          <div className="project-table-scroll">{filteredProjects.map(p => (
-            <div className="project-row-wrap" key={p.id}>
-              <button className="project-row" onClick={() => onOpen(p)}>
-                <span className="project-icon"><Box/></span>
-                <span><strong>{p.name}</strong><small>{p.description || t("app:hub.projectFallbackDescription")}</small></span>
-                <span className="pill">{p.architecture?.toUpperCase() || t("app:hub.unconfigured")}</span>
-                <time>{new Date(p.updatedAt).toLocaleDateString()}</time>
-              </button>
-              <button className="project-delete-btn" onClick={(e) => { e.stopPropagation(); setProjectPendingDeletion(p); }} title={t("app:hub.deleteProjectTitle")} aria-label={t("app:hub.deleteProjectTitle")}>
-                <Trash2 size={16} />
-              </button>
-            </div>
-          ))}</div>
-        </div>
-      ) : (
-        <div className="empty-state"><Sparkles/><h3>{t("app:hub.emptyTitle")}</h3><p>{query||modelFilter!=="all"?t("app:hub.noSearchResults"):t("app:hub.emptyHint")}</p></div>
-      )}
-      </section>
-    </div>
-    {creating && <div className="modal-backdrop"><form className="modal" onSubmit={e => { e.preventDefault(); if(name.trim()) { onCreate(name.trim(), description.trim()); setCreating(false); } }}><button type="button" className="modal-close" onClick={() => setCreating(false)}><X/></button><span className="eyebrow">{t("app:hub.createProjectEyebrow")}</span><h2>{t("app:hub.createProjectTitle")}</h2><label>{t("app:hub.projectNameLabel")}<input autoFocus value={name} onChange={e=>setName(e.target.value)} placeholder={t("app:hub.projectNamePlaceholder")}/></label><label>{t("app:hub.projectDescriptionLabel")}<textarea value={description} onChange={e=>setDescription(e.target.value)} placeholder={t("app:hub.projectDescriptionPlaceholder")}/></label><div className="modal-actions"><button type="button" className="secondary" onClick={()=>setCreating(false)}>{t("common:cancel")}</button><button className="primary" disabled={!name.trim()}>{t("app:hub.createProjectButton")} <ChevronRight size={16}/></button></div></form></div>}
+  const [views,setViews]=useState<{training:"list"|"grid";dataset:"list"|"grid"}>({training:"list",dataset:"list"});
+  const trainingProjects=projects.filter(p=>p.projectType!=="dataset");
+  const modelCounts=trainingProjects.reduce<Record<string,number>>((counts,item)=>{const key=item.architecture||"unconfigured";counts[key]=(counts[key]||0)+1;return counts},{});
+  const createFor=(type:"training"|"dataset")=>{setProjectType(type);setName("");setDescription("");setCreating(true)};
+  const panel=(type:"training"|"dataset")=>{
+    const items=projects.filter(p=>(type==="dataset"?p.projectType==="dataset":p.projectType!=="dataset")&&(type==="dataset"||modelFilter==="all"||p.architecture===modelFilter)&&`${p.name} ${p.description}`.toLowerCase().includes(queries[type].toLowerCase()));
+    const title=t(type==="training"?"app:dataset.modelsTitle":"app:dataset.datasetsTitle");
+    return <section className="projects-card hub-type-card" data-project-type={type} key={type}>
+      <div className="hub-type-heading"><div><h2>{title}</h2><p>{t("app:dataset.projectTotal",{count:projects.filter(p=>type==="dataset"?p.projectType==="dataset":p.projectType!=="dataset").length})}</p></div><button className="primary" data-create-type={type} onClick={()=>createFor(type)}><Plus size={16}/>{t(type==="training"?"app:dataset.newModel":"app:dataset.newDataset")}</button></div>
+      <div className="project-controls hub-type-controls"><label><Search/><input value={queries[type]} onChange={e=>setQueries(v=>({...v,[type]:e.target.value}))} aria-label={t(type==="training"?"app:dataset.searchModels":"app:dataset.searchDatasets")} placeholder={t(type==="training"?"app:dataset.searchModels":"app:dataset.searchDatasets")}/></label>{type==="training"&&<select value={modelFilter} onChange={e=>setModelFilter(e.target.value)} aria-label={t("app:hub.filterModels")}><option value="all">{t("app:hub.allModels")}</option>{Object.keys(modelCounts).filter(id=>id!=="unconfigured").map(id=><option value={id} key={id}>{t(`catalog:architectures.${id}.name`)}</option>)}</select>}<div className="view-toggle"><button className={views[type]==="list"?"active":""} onClick={()=>setViews(v=>({...v,[type]:"list"}))} aria-label={t("app:hub.listView")}><List/></button><button className={views[type]==="grid"?"active":""} onClick={()=>setViews(v=>({...v,[type]:"grid"}))} aria-label={t("app:hub.gridView")}><Grid2X2/></button></div></div>
+      {items.length?<div className={`project-table ${views[type]}`}><div className="project-table-scroll">{items.map(p=><div className="project-row-wrap" key={p.id}><button className="project-row" onClick={()=>onOpen(p)}><span className="project-icon"><Box/></span><span><strong>{p.name}</strong><small>{p.description||t("app:hub.projectFallbackDescription")}</small></span><span className="pill">{type==="dataset"?t("app:dataset.type"):(p.architecture?.toUpperCase()||t("app:hub.unconfigured"))}</span><time>{new Date(p.updatedAt).toLocaleDateString()}</time></button><button className="project-delete-btn" onClick={()=>setProjectPendingDeletion(p)} title={t("app:hub.deleteProjectTitle")} aria-label={t("app:hub.deleteProjectTitle")}><Trash2 size={16}/></button></div>)}</div></div>:<div className="empty-state"><Sparkles/><h3>{t("app:hub.emptyTitle")}</h3><p>{queries[type]||(type==="training"&&modelFilter!=="all")?t("app:hub.noSearchResults"):t(type==="training"?"app:dataset.emptyModels":"app:dataset.emptyDatasets")}</p></div>}
+    </section>;
+  };
+  return <div className="hub"><header className="hub-header"><div className="brand" title={t("common:appName")} aria-label={t("common:appName")}><AppLogo className="main-screen-logo"/><strong>{t("common:appName")}</strong></div><AppearanceMenu theme={theme} setTheme={setTheme} accent={accent} setAccent={setAccent}/></header>
+    <div className="hub-content hub-split-content">{panel("training")}{panel("dataset")}</div>
+    {creating && <div className="modal-backdrop"><form className="modal" onSubmit={e => { e.preventDefault(); if(name.trim()) { onCreate(name.trim(), description.trim(), projectType); setCreating(false); } }}><button type="button" className="modal-close" onClick={() => setCreating(false)}><X/></button><span className="eyebrow">{t("app:hub.createProjectEyebrow")}</span><h2>{t(projectType==="dataset"?"app:dataset.newDataset":"app:dataset.newModel")}</h2><label>{t("app:hub.projectNameLabel")}<input autoFocus value={name} onChange={e=>setName(e.target.value)} placeholder={t(projectType==="dataset"?"app:dataset.namePlaceholder":"app:hub.projectNamePlaceholder")}/></label><label>{t("app:hub.projectDescriptionLabel")}<textarea value={description} onChange={e=>setDescription(e.target.value)} placeholder={t("app:hub.projectDescriptionPlaceholder")}/></label><div className="modal-actions"><button type="button" className="secondary" onClick={()=>setCreating(false)}>{t("common:cancel")}</button><button className="primary" disabled={!name.trim()}>{t("app:hub.createProjectButton")} <ChevronRight size={16}/></button></div></form></div>}
     {projectPendingDeletion&&<div className="modal-backdrop" onMouseDown={()=>setProjectPendingDeletion(null)}><section className="modal delete-project-modal" role="dialog" aria-modal="true" aria-labelledby="delete-project-title" onMouseDown={event=>event.stopPropagation()}><button type="button" className="modal-close" onClick={() => setProjectPendingDeletion(null)} aria-label={t("common:close")}><X/></button><span className="eyebrow">{t("app:deleteProject.eyebrow")}</span><h2 id="delete-project-title">{t("app:deleteProject.title")}</h2><p>{t("app:deleteProject.confirm", { name: projectPendingDeletion.name })}</p><div className="modal-actions"><button type="button" className="secondary" onClick={()=>setProjectPendingDeletion(null)}>{t("common:cancel")}</button><button type="button" className="danger-button" onClick={()=>{const target=projectPendingDeletion;setProjectPendingDeletion(null);void onDelete(target);}}><Trash2 size={15}/>{t("common:delete")}</button></div></section></div>}
   </div>;
 }
@@ -1287,10 +1256,13 @@ function Sidebar({ step, setStep, completed, onHome, gpuInfo, nodes, dataset, th
   </aside>;
 }
 
-function ModelTask({ architecture, task, runtimeCatalog, onChoose, onContinue }: { architecture:Architecture|null; task:TaskId|null; runtimeCatalog:RuntimeCatalog|null; onChoose:(a:Architecture,t:TaskId)=>void; onContinue:()=>void }) {
+function ModelTask({ architecture, task, runtimeCatalog, onChoose, onContinue }: { architecture:Architecture|null; task:TaskId|null; runtimeCatalog:RuntimeCatalog|null; onChoose:(a:Architecture,t:TaskId,onConfirmed?:()=>void)=>void; onContinue:()=>void }) {
   const { t } = useTranslation(["app", "catalog"]);
   const [family,setFamily]=useState("all");
   const [query,setQuery]=useState("");
+  const [draftTask,setDraftTask]=useState<TaskId|null>(task);
+  const searchRef=useRef<HTMLInputElement>(null);
+  useEffect(()=>{const key=(event:KeyboardEvent)=>{if((event.ctrlKey||event.metaKey)&&event.key.toLowerCase()==="k"){event.preventDefault();searchRef.current?.focus();}};window.addEventListener("keydown",key);return()=>window.removeEventListener("keydown",key);},[]);
   const [preview,setPreview]=useState<Architecture>(architecture||"mlp");
   const families:Array<{id:string;label:string;hint:string;icon:typeof BrainCircuit;architectures:Architecture[]}>=useMemo(()=>[
     {id:"all",label:t("app:modelTask.familyAll"),hint:t("app:modelTask.familyAllHint"),icon:SlidersHorizontal,architectures:Object.keys(ARCHITECTURES) as Architecture[]},
@@ -1298,20 +1270,19 @@ function ModelTask({ architecture, task, runtimeCatalog, onChoose, onContinue }:
     {id:"series",label:t("app:modelTask.familySeries"),hint:t("app:modelTask.familySeriesHint"),icon:Activity,architectures:["cnn1d","lstm","transformer"]},
     {id:"vision",label:t("app:modelTask.familyVision"),hint:t("app:modelTask.familyVisionHint"),icon:Image,architectures:["cnn","vit","unet"]},
     {id:"text",label:t("app:modelTask.familyText"),hint:t("app:modelTask.familyTextHint"),icon:FileText,architectures:["transformer","transformer_causal"]},
-    {id:"generative",label:t("app:modelTask.familyGenerative"),hint:t("app:modelTask.familyGenerativeHint"),icon:Sparkles,architectures:["autoencoder"]},
-    {id:"causal",label:t("app:modelTask.familyCausal"),hint:t("app:modelTask.familyCausalHint"),icon:Network,architectures:["transformer_causal"]}
+    {id:"generative",label:t("app:modelTask.familyGenerative"),hint:t("app:modelTask.familyGenerativeHint"),icon:Sparkles,architectures:["autoencoder"]}
   ],[t]);
   const allowed=families.find(item=>item.id===family)?.architectures||families[0].architectures;
   const visibleArchitectures=(Object.entries(ARCHITECTURES) as [Architecture,typeof ARCHITECTURES[Architecture]][]).filter(([id])=>allowed.includes(id)).filter(([id])=>`${t(`catalog:architectures.${id}.name`)} ${t(`catalog:architectures.${id}.description`)}`.toLowerCase().includes(query.toLowerCase()));
   const detail={...ARCHITECTURES[preview],tasks:runtimeCatalog?.architectures[preview]?.tasks||ARCHITECTURES[preview].tasks};
   const DetailIcon=ARCHITECTURE_ICONS[preview];
-  const activeTask=architecture===preview?task:null;
+  const activeTask=detail.tasks.includes(draftTask as TaskId)?draftTask:null;
   return <div className="page model-page model-catalog-page">
-    <div className="model-catalog-header"><div><span className="eyebrow">{t("app:modelTask.stepEyebrow")}</span><h2>{t("app:modelTask.catalogTitle")}</h2><p>{t("app:modelTask.catalogSubtitle")}</p></div><div className="catalog-tools"><label><Search/><input value={query} onChange={event=>setQuery(event.target.value)} placeholder={t("app:modelTask.searchPlaceholder")}/><kbd>⌘ K</kbd></label><button><ArrowUpDown/>{t("app:modelTask.popularFirst")}<ChevronRight/></button></div></div>
+    <div className="model-catalog-header"><div><span className="eyebrow">{t("app:modelTask.stepEyebrow")}</span><h2>{t("app:modelTask.catalogTitle")}</h2><p>{t("app:modelTask.catalogSubtitle")}</p></div><div className="catalog-tools"><label><Search/><input ref={searchRef} value={query} onChange={event=>setQuery(event.target.value)} placeholder={t("app:modelTask.searchPlaceholder")}/><kbd>⌘ K</kbd></label></div></div>
     <div className="model-catalog-layout">
-      <section className="family-panel"><header><h3>{t("app:modelTask.familiesTitle")}</h3><p>{t("app:modelTask.familiesSubtitle")}</p></header><div className="family-list">{families.map(item=>{const Icon=item.icon;return <button key={item.id} className={family===item.id?"active":""} onClick={()=>{setFamily(item.id);if(!item.architectures.includes(preview))setPreview(item.architectures[0])}}><span><Icon/></span><div><strong>{item.label}</strong><small>{item.hint}</small></div><b>{item.architectures.length}</b></button>})}</div></section>
-      <section className="architecture-list-panel"><header><h3>{t("app:modelTask.architecturesTitle")}</h3><p>{t("app:modelTask.architectureCount",{count:visibleArchitectures.length})}</p></header><div className="catalog-architecture-list">{visibleArchitectures.map(([id,a],index)=>{const Icon=ARCHITECTURE_ICONS[id];return <button key={id} className={preview===id?"active":""} onClick={()=>setPreview(id)}><span><Icon/></span><div><strong>{t(`catalog:architectures.${id}.name`)}</strong><small>{t(`catalog:architectures.${id}.description`)}</small><em>{t(`catalog:tasks.${a.tasks[0]}.modality`)}</em></div><ChevronRight/></button>})}</div></section>
-      <section className="architecture-detail-panel"><div className="detail-scroll"><header><span className="detail-arch-icon"><DetailIcon/></span><div><h2>{t(`catalog:architectures.${preview}.name`)}</h2><span className="eyebrow">{t("app:modelTask.architectureEyebrow")}</span><p>{t(`catalog:architectures.${preview}.description`)}</p></div></header><div className="architecture-overview"><div><p>{t("app:modelTask.overviewText",{architecture:t(`catalog:architectures.${preview}.name`)})}</p><div className="detail-tags"><span>{t(`catalog:tasks.${detail.tasks[0]}.modality`)}</span><span>{t("app:modelTask.scalable")}</span><span>{t("app:modelTask.localReady")}</span></div></div><div className="mini-architecture-diagram"><small>{t("app:modelTask.inputSequence")}</small><i/><b>{t(`catalog:architectures.${preview}.name`)}</b><i/><small>{t("app:modelTask.representation")}</small><div>{[1,2,3,4,5,6].map(n=><span key={n}/>)}</div></div></div><div className="available-tasks"><h3>{t("app:modelTask.availableTasks")}</h3><p>{t("app:modelTask.availableTasksHint")}</p><div>{detail.tasks.map(taskId=><button key={taskId} className={activeTask===taskId?"selected":""} onClick={()=>onChoose(preview,taskId)}><span><FileText/></span><div><strong>{t(`catalog:tasks.${taskId}.name`)}</strong><small>{t(`catalog:tasks.${taskId}.input`)} → {t(`catalog:tasks.${taskId}.output`)}</small></div><ChevronRight/></button>)}</div></div>{activeTask&&<div className="detail-contract"><div><small>{t("app:contract.compatibleInput")}</small><strong>{t(`catalog:tasks.${activeTask}.format`)}</strong></div><div><small>{t("app:contract.mainMetric")}</small><strong>{t(`catalog:tasks.${activeTask}.metric`)}</strong></div><div><small>{t("app:contract.modality")}</small><strong>{t(`catalog:tasks.${activeTask}.modality`)}</strong></div></div>}</div><footer><span>{activeTask?t(`catalog:tasks.${activeTask}.name`):t("app:modelTask.chooseTaskHint")}</span><button className="primary" disabled={!activeTask} onClick={onContinue}>{t("app:modelTask.continueWith",{task:activeTask?t(`catalog:tasks.${activeTask}.name`):t("app:modelTask.taskFallback")})}<ChevronRight/></button></footer></section>
+      <section className="family-panel"><header><h3>{t("app:modelTask.familiesTitle")}</h3><p>{t("app:modelTask.familiesSubtitle")}</p></header><div className="family-list">{families.map(item=>{const Icon=item.icon;return <button key={item.id} className={family===item.id?"active":""} onClick={()=>{setFamily(item.id);if(!item.architectures.includes(preview)){setPreview(item.architectures[0]);setDraftTask(null);}}}><span><Icon/></span><div><strong>{item.label}</strong></div></button>})}</div></section>
+      <section className="architecture-list-panel"><header><h3>{t("app:modelTask.architecturesTitle")}</h3><p>{t("app:modelTask.architectureCount",{count:visibleArchitectures.length})}</p></header><div className="catalog-architecture-list">{!visibleArchitectures.length&&<p className="catalog-empty">{t("app:structured.noResults")}</p>}{visibleArchitectures.map(([id,a],index)=>{const Icon=ARCHITECTURE_ICONS[id];return <button key={id} className={preview===id?"active":""} onClick={()=>{setPreview(id);setDraftTask(architecture===id?task:null);}}><span><Icon/></span><div><strong>{t(`catalog:architectures.${id}.name`)}</strong><small>{t(`catalog:architectures.${id}.description`)}</small><em>{t(`catalog:tasks.${a.tasks[0]}.modality`)}</em></div><ChevronRight/></button>})}</div></section>
+      <section className="architecture-detail-panel"><div className="detail-scroll"><header><span className="detail-arch-icon"><DetailIcon/></span><div><h2>{t(`catalog:architectures.${preview}.name`)}</h2><span className="eyebrow">{t("app:modelTask.architectureEyebrow")}</span><p>{t(`catalog:architectures.${preview}.description`)}</p></div></header><ArchitectureOverview architecture={preview}/><div className="available-tasks"><h3>{t("app:modelTask.availableTasks")}</h3><p>{t("app:modelTask.availableTasksHint")}</p><div>{detail.tasks.map(taskId=><button key={taskId} className={activeTask===taskId?"selected":""} onClick={()=>setDraftTask(taskId)}><span>{taskId.includes("classification")?<Image/>:taskId.includes("detection")||taskId.includes("localization")?<ScanLine/>:taskId.includes("translation")?<ArrowRight/>:taskId.includes("forecast")?<Waves/>:taskId.includes("segmentation")?<Grid2X2/>:<Binary/>}</span><div><strong>{t(`catalog:tasks.${taskId}.name`)}</strong><small>{t(`app:structured.tasks.${taskId.replaceAll(".","_")}`)}</small></div><ChevronRight/></button>)}</div></div></div><footer><span>{activeTask?t(`catalog:tasks.${activeTask}.name`):t("app:modelTask.chooseTaskHint")}</span><button className="primary" disabled={!activeTask} onClick={()=>{if(activeTask){if(architecture!==preview||task!==activeTask)onChoose(preview,activeTask,onContinue);else onContinue();}}}>{t("app:modelTask.continueWith",{task:activeTask?t(`catalog:tasks.${activeTask}.name`):t("app:modelTask.taskFallback")})}<ChevronRight/></button></footer></section>
     </div>
   </div>;
 }

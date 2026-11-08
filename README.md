@@ -1,6 +1,6 @@
 # ModelBuilder
 
-Aplicación visual local para preparar datos, construir redes mediante nodos, entrenarlas con **PyTorch** y probar sus predicciones. El trabajo reciente se centra en **CNN**: formas de tensor visibles, ramas paralelas, conexiones residuales, presets y reutilización de checkpoints como backbone.
+Aplicación visual local para preparar datos, construir redes mediante capas conectadas, entrenarlas con **PyTorch** y probar sus predicciones. El trabajo reciente se centra en **CNN**: formas de tensor visibles, ramas paralelas, conexiones residuales, presets y reutilización de checkpoints como backbone.
 
 La interfaz usa React, TypeScript, React Flow y ECharts. Puede ejecutarse en navegador con Vite y backend Python local, o como aplicación de escritorio con Tauri 2.
 
@@ -16,7 +16,7 @@ Logo adaptado al color del tema, creación de proyectos, búsqueda, filtros por 
 
 ### Arquitectura y tarea
 
-El catálogo muestra las familias disponibles y las tareas compatibles con cada una.
+El catálogo separa familias, arquitecturas y tareas compatibles, con búsqueda y una vista visual de cada arquitectura que se adapta al espacio para mantener todas las tareas visibles. La selección se confirma con **Continuar**.
 
 ![Selección de arquitectura y tarea](docs/img/arquitecturas.png)
 
@@ -28,7 +28,7 @@ Pipeline de preparación, explorador con pestañas Info / Samples / Charts, mues
 
 ### Constructor
 
-Biblioteca de capas y bloques, puertos de entrada/salida, formas por eje e inspector de propiedades. Add y Concatenate están disponibles como nodos independientes en **Ramas**.
+Biblioteca de capas y bloques, puertos de entrada/salida, formas por eje e inspector de propiedades. Sumar y Concatenar crean ramas completas y conectadas desde **Ramas**.
 
 ![Constructor CNN y dimensiones de tensor](docs/img/constructor.png)
 
@@ -80,9 +80,13 @@ VAE y Transformer encoder–decoder no están disponibles en el catálogo actual
 - Ramas paralelas y operaciones `Add` y `Concatenate`. La suma requiere tensores compatibles; la concatenación requiere coincidencia fuera del eje elegido.
 - Capas de decoder como ConvTranspose2D, Resize2D y Reshape disponibles en CNN.
 - Validación automática de cambios del grafo, ciclos, conexiones, formas y ejecución de comprobación. El canvas muestra su estado.
+- **Ver soluciones** en una capa con error o en la barra del constructor: propone cambios explícitos para incompatibilidades conocidas, comprobados en una copia mediante ejecución, pérdida y gradientes. Permite aplicar y deshacer la última reparación. Requiere datos preparados; los errores sin reparación verificable se indican sin modificar el modelo. No optimiza la precisión.
 - Canales/filtros separados de la resolución H × W, con explicación sencilla de los ejes en el inspector. El batch se configura al entrenar.
-- Disposición horizontal o vertical, puertos orientados con el flujo y autoorden topológico.
-- Selección múltiple, grupos, duplicación y borrado mediante acciones flotantes de tamaño constante al cambiar el zoom.
+- Tarjetas verticales con distribución automática y ramas en paralelo. Un clic en una flecha inserta capas ya conectadas; la biblioteca permite elegir una capa y después su posición.
+- Arrastre de la tarjeta hacia arriba o abajo para previsualizar el nuevo orden y las conexiones en tiempo real; borrado y duplicación conservan las conexiones. Al quitar una unión se elige qué rama conservar y se limpian las capas que quedan sin uso. Las uniones redundantes se colapsan al borrar su última rama. La rueda desplaza el canvas y los controles ajustan el zoom.
+- Selección múltiple y grupos de elementos consecutivos, incluidos grupos anidados. Agrupar no está disponible para un único grupo completo ni para selecciones con capas intermedias sin seleccionar. Desagrupar conserva los grupos interiores.
+- Minimapa con encuadre fijo de todo el modelo, independiente del zoom y desplazamiento de la cámara; permite navegar y ajustar la vista completa.
+- Acciones flotantes para duplicar o borrar secuencias con una sola entrada y salida.
 - Paneles laterales plegables y tabs de modelos con cierre. Guardar una arquitectura solicita un nombre y la añade a los presets personalizados.
 - Reutilización de un checkpoint entrenado como backbone, con selección de la salida de características y una cabeza nueva compatible.
 
@@ -176,6 +180,11 @@ Con el entorno Python configurado:
 .venv/bin/python -m pytest -q
 npm run build
 npm run test:builder-graph
+npm run test:structured-graph
+npm run test:structured-ui
+npm run test:repair-ui
+npm run test:groups
+npm run test:groups-ui
 npm run test:cnn-reuse
 npm run test:editor-ui
 npm run test:kaggle-ui

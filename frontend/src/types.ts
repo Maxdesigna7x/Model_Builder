@@ -32,7 +32,7 @@ export type BlockDef = {
 export type RuntimeCatalog = { schema_version:number; tasks:Record<TaskId,{architectures:Architecture[];objective:string;metric:string}>; architectures:Record<Architecture,{tasks:TaskId[]}>; block_types:string[] };
 
 export type TensorPort = { name:string; dtype:"float32"|"int64"|"bool"|"structured"; shape:string; fields?:string[] };
-export type ModelNodeData = { label: string; blockType: string; category: string; shape?: string; inputs?:TensorPort[]; outputs?:TensorPort[]; properties: Record<string, string | number | boolean>; error?: string; compound?: boolean; expanded?: boolean; stages?: string[]; onDelete?: (id: string) => void; onToggleExpanded?: (id: string) => void; [key: string]: unknown };
+export type ModelNodeData = { groups?:Array<{id:string;name:string}>; label: string; blockType: string; category: string; shape?: string; inputs?:TensorPort[]; outputs?:TensorPort[]; properties: Record<string, string | number | boolean>; error?: string; compound?: boolean; expanded?: boolean; stages?: string[]; onDelete?: (id: string) => void; onToggleExpanded?: (id: string) => void; [key: string]: unknown };
 export type ModelNode = Node<ModelNodeData>;
 export type ModelEdge = Edge;
 
@@ -40,6 +40,7 @@ export interface Project {
   id: string;
   name: string;
   description: string;
+  projectType?: "training" | "dataset";
   path: string;
   createdAt: string;
   updatedAt: string;
@@ -153,6 +154,7 @@ export interface DataPipeline {
 
 export interface DatasetSummary {
   id: string;
+  path?: string;
   revision?: number;
   source: "synthetic" | "imported" | "huggingface" | "kaggle";
   samples: number;
@@ -235,7 +237,7 @@ export interface TrainingRun {
   modelGraph?: { nodes: ModelNode[]; edges: ModelEdge[] };
 }
 
-export interface BackendResponse<T = unknown> { ok: boolean; result?: T; error?: { code: string; message: string }; }
+export interface BackendResponse<T = unknown> { ok: boolean; result?: T; error?: { code: string; message: string; context?: {node_id?:string} }; }
 
 export interface GpuInfo {
   cuda: boolean;
@@ -254,3 +256,9 @@ export interface GraphValidation {
   semantic_hash: string;
   schema_version: number;
 }
+
+export type GraphRepairResult = {
+  status: "valid"|"repairable"|"unsupported";
+  problem: {code:string;message:string;node_id?:string}|null;
+  solutions: Array<{id:string;steps:Array<{key:string;[key:string]:string}>;graph:{nodes:ModelNode[];edges:ModelEdge[]};validation:GraphValidation}>;
+};

@@ -240,8 +240,8 @@ class Reshape(nn.Module):
 
 
 class Resize2D(nn.Module):
-    def __init__(self, scale): super().__init__(); self.scale = float(scale)
-    def forward(self, x): return F.interpolate(x, scale_factor=self.scale, mode="bilinear", align_corners=False)
+    def __init__(self, scale, size=None): super().__init__(); self.scale = float(scale); self.size = tuple(_shape_value(size)) if size else None
+    def forward(self, x): return F.interpolate(x, size=self.size, scale_factor=None if self.size else self.scale, mode="bilinear", align_corners=False)
 
 
 class MultiScaleCNN(nn.Module):
@@ -315,7 +315,7 @@ def create_operation(block_type: str, properties: dict, samples: list[torch.Tens
     if block_type == "concat": return Concat(int(properties.get("axis", 1)))
     if block_type == "add": return Add()
     if block_type == "reshape": return Reshape(_shape_value(properties.get("shape", [-1])))
-    if block_type == "resize2d": return Resize2D(properties.get("scale_factor", 2))
+    if block_type == "resize2d": return Resize2D(properties.get("scale_factor", 2), properties.get("size"))
     if block_type == "multi_scale_cnn": return MultiScaleCNN(x.shape[1],properties)
     raise BackendError("MODEL_BLOCK_NOT_SUPPORTED", block_type)
 
@@ -376,28 +376,36 @@ class GraphModel(nn.Module):
             if node_id == self.input_id: continue
             sources = self.incoming.get(node_id, [])
             if not sources: raise BackendError("GRAPH_BLOCK_MISSING_INPUT", node_id)
-            links=self.incoming_edges.get(node_id,[]);samples=[self._edge_value(edge,values) for edge in links];data = nodes[node_id].get("data", {}); operation = create_operation(data.get("blockType", ""), data.get("properties", {}), samples); self.operations[node_id] = operation
-            block_type=data.get("blockType","")
-            if block_type in {"add","concat"}:
-                if len(samples)<2: raise BackendError("GRAPH_MERGE_REQUIRES_TWO_INPUTS",node_id)
-                shapes=[tuple(value.shape) for value in samples]
-                if block_type=="add" and any(shape!=shapes[0] for shape in shapes[1:]):
-                    mismatch=next(index for index,shape in enumerate(shapes) if shape!=shapes[0]);port=links[mismatch].get("targetHandle") or f"input_{mismatch}"
-                    raise BackendError("GRAPH_ADD_INPUT_SHAPE_MISMATCH",f"{node_id}:{port} {shapes[mismatch]} no coincide con input_0 {shapes[0]}")
-                if block_type=="concat":
-                    axis=int(data.get("properties",{}).get("axis",1));axis=axis if axis>=0 else len(shapes[0])+axis
-                    if axis<0 or axis>=len(shapes[0]): raise BackendError("GRAPH_CONCAT_AXIS_INVALID",f"{node_id}: axis {axis} fuera de rango para {len(shapes[0])} dimensiones")
-                    if any(len(shape)!=len(shapes[0]) or any(shape[dim]!=shapes[0][dim] for dim in range(len(shape)) if dim!=axis) for shape in shapes[1:]):
-                        mismatch=next(index for index,shape in enumerate(shapes) if len(shape)!=len(shapes[0]) or any(shape[dim]!=shapes[0][dim] for dim in range(min(len(shape),len(shapes[0]))) if dim!=axis));port=links[mismatch].get("targetHandle") or f"input_{mismatch}"
-                        raise BackendError("GRAPH_CONCAT_INPUT_SHAPE_MISMATCH",f"{node_id}:{port} {shapes[mismatch]} no es compatible con input_0 {shapes[0]}")
-            properties=data.get("properties",{})
-            if bool(properties.get("frozen",False)):
-                for parameter in operation.parameters(): parameter.requires_grad=False
+            samples=[];data=nodes[node_id].get("data",{})
             try:
-                operation.eval()
-                with torch.inference_mode(): values[node_id] = operation(*samples)
-                operation.train()
-            except Exception as exc: raise BackendError("GRAPH_BLOCK_EXECUTION_FAILED", f"{data.get('label', node_id)}: {exc}") from exc
+                links=self.incoming_edges.get(node_id,[]);samples=[self._edge_value(edge,values) for edge in links];data = nodes[node_id].get("data", {}); operation = create_operation(data.get("blockType", ""), data.get("properties", {}), samples); self.operations[node_id] = operation
+                block_type=data.get("blockType","")
+                if block_type in {"add","concat"}:
+                    if len(samples)<2: raise BackendError("GRAPH_MERGE_REQUIRES_TWO_INPUTS",node_id)
+                    shapes=[tuple(value.shape) for value in samples]
+                    if block_type=="add" and any(shape!=shapes[0] for shape in shapes[1:]):
+                        mismatch=next(index for index,shape in enumerate(shapes) if shape!=shapes[0]);port=links[mismatch].get("targetHandle") or f"input_{mismatch}"
+                        raise BackendError("GRAPH_ADD_INPUT_SHAPE_MISMATCH",f"{node_id}:{port} {shapes[mismatch]} no coincide con input_0 {shapes[0]}")
+                    if block_type=="concat":
+                        axis=int(data.get("properties",{}).get("axis",1));axis=axis if axis>=0 else len(shapes[0])+axis
+                        if axis<0 or axis>=len(shapes[0]): raise BackendError("GRAPH_CONCAT_AXIS_INVALID",f"{node_id}: axis {axis} fuera de rango para {len(shapes[0])} dimensiones")
+                        if any(len(shape)!=len(shapes[0]) or any(shape[dim]!=shapes[0][dim] for dim in range(len(shape)) if dim!=axis) for shape in shapes[1:]):
+                            mismatch=next(index for index,shape in enumerate(shapes) if len(shape)!=len(shapes[0]) or any(shape[dim]!=shapes[0][dim] for dim in range(min(len(shape),len(shapes[0]))) if dim!=axis));port=links[mismatch].get("targetHandle") or f"input_{mismatch}"
+                            raise BackendError("GRAPH_CONCAT_INPUT_SHAPE_MISMATCH",f"{node_id}:{port} {shapes[mismatch]} no es compatible con input_0 {shapes[0]}")
+                properties=data.get("properties",{})
+                if bool(properties.get("frozen",False)):
+                    for parameter in operation.parameters(): parameter.requires_grad=False
+                try:
+                    operation.eval()
+                    with torch.inference_mode(): values[node_id] = operation(*samples)
+                    operation.train()
+                except BackendError: raise
+                except Exception as exc: raise BackendError("GRAPH_BLOCK_EXECUTION_FAILED", f"{data.get('label', node_id)}: {exc}") from exc
+            except Exception as exc:
+                error = exc if isinstance(exc, BackendError) else BackendError("GRAPH_BLOCK_EXECUTION_FAILED", f"{data.get('label', node_id)}: {exc}")
+                error.context = {"node_id": node_id, "input_shapes": [list((value.get("input_ids") if isinstance(value,Mapping) else value).shape[1:]) for value in samples] if 'samples' in locals() else [], "node_shapes": {key: ({name:list(item.shape[1:]) for name,item in value.items()} if key in self.multiport_nodes else list((value.get("input_ids") if isinstance(value,Mapping) else value).shape[1:])) for key,value in values.items()}}
+                if error is exc: raise
+                raise error from exc
         shape_of=lambda value:list((value.get("input_ids") if isinstance(value,Mapping) else value).shape[1:])
         self.output_shapes={str(nodes[node_id].get("data",{}).get("properties",{}).get("output_name") or nodes[node_id].get("data",{}).get("label") or node_id):shape_of(values[node_id]) for node_id in outputs}
         self.output_shape = shape_of(values[outputs[0]]) if len(outputs)==1 else None

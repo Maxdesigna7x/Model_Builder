@@ -13,7 +13,12 @@
     "tauri": "tauri",
     "capturas": "node scripts/capture-views.mjs",
     "test:kaggle-ui": "node scripts/test-kaggle-ui.mjs",
-    "capturas:readme": "node scripts/capture-readme.mjs"
+    "capturas:readme": "node scripts/capture-readme.mjs",
+    "test:structured-graph": "node scripts/test-structured-graph.mjs",
+    "test:structured-ui": "node scripts/test-structured-editor.mjs",
+    "test:repair-ui": "node scripts/test-graph-repair-ui.mjs",
+    "test:groups": "node scripts/test-model-groups.mjs",
+    "test:groups-ui": "node scripts/test-groups-minimap-ui.mjs"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.8.0",

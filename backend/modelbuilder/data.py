@@ -673,6 +673,27 @@ def generate(project: dict, task_id: str, seed: int = 42, options: dict | None =
     return _save(project, task_id, x, y, "Formas geométricas con variación espacial", seed, classes if objective == "classification" else None, opts_out)
 
 
+def _image_partition_directories(root: Path, *, classification: bool = False) -> list[tuple[Path, str]]:
+    """Recognize partitions without mistaking a flat class named train for a split."""
+    aliases = {"train": "train", "val": "validation", "validation": "validation", "test": "test"}
+    candidates = [(root / name, split) for name, split in aliases.items() if (root / name).is_dir()]
+    if classification:
+        candidates = [(folder, split) for folder, split in candidates if any(
+            child.is_dir() and any(_is_image(file) for file in child.rglob("*"))
+            for child in folder.iterdir()
+        )]
+    elif not any(any(_is_image(file) for file in folder.rglob("*")) for folder, _ in candidates):
+        return []
+    if len({split for _, split in candidates}) != len(candidates):
+        raise BackendError("IMPORT_IMAGE_DUPLICATE_PARTITION", "val / validation")
+    if candidates:
+        recognized = {folder for folder, _ in candidates}
+        for child in root.iterdir():
+            if _is_image(child) or (child.is_dir() and child not in recognized and any(_is_image(file) for file in child.rglob("*"))):
+                raise BackendError("IMPORT_IMAGE_MIXED_PARTITIONS", child.name)
+    return candidates
+
+
 def import_dataset(project: dict, task_id: str, path: str, options: dict | None = None) -> dict:
     source = Path(path).expanduser().resolve()
     if not source.exists(): raise BackendError("IMPORT_PATH_NOT_FOUND")
@@ -807,7 +828,16 @@ def import_dataset(project: dict, task_id: str, path: str, options: dict | None 
             return _mark_imported(result,source)
         if task_id == "image.detection":
             images_dir=root/"images" if (root/"images").is_dir() else root
-            image_paths=sorted(file for file in images_dir.iterdir() if _is_image(file))
+            partitions = _image_partition_directories(images_dir)
+            image_paths = []
+            imported_splits = {"train": [], "validation": [], "test": []} if partitions else None
+            if partitions:
+                for directory, split in partitions:
+                    paths = sorted(file for file in directory.rglob("*") if _is_image(file))
+                    imported_splits[split].extend(range(len(image_paths), len(image_paths) + len(paths)))
+                    image_paths.extend(paths)
+            else:
+                image_paths=sorted(file for file in images_dir.iterdir() if _is_image(file))
             if len(image_paths)<3: raise BackendError("IMPORT_DETECTION_TOO_FEW_IMAGES")
             class_file=root/"classes.txt";class_names=[line.strip() for line in class_file.read_text(encoding="utf-8").splitlines() if line.strip()] if class_file.is_file() else []
             annotations:dict[str,list[tuple[int,float,float,float,float]]]={}
@@ -835,7 +865,10 @@ def import_dataset(project: dict, task_id: str, path: str, options: dict | None 
                 labels_dir=root/"labels"
                 if not labels_dir.is_dir(): raise BackendError("IMPORT_DETECTION_LABELS_FOLDER_MISSING")
                 for image_path in image_paths:
-                    label_path=labels_dir/f"{image_path.stem}.txt";values=[]
+                    relative = image_path.relative_to(images_dir)
+                    label_path=labels_dir/relative.with_suffix(".txt");values=[]
+                    if partitions and not label_path.is_file():
+                        raise BackendError("IMPORT_DETECTION_LABEL_MISSING", relative.as_posix())
                     if label_path.is_file():
                         for line_number,line in enumerate(label_path.read_text(encoding="utf-8").splitlines(),1):
                             if not line.strip(): continue
@@ -844,15 +877,15 @@ def import_dataset(project: dict, task_id: str, path: str, options: dict | None 
                             try: cls=int(fields[0]);cx,cy,bw,bh=map(float,fields[1:])
                             except ValueError as exc: raise BackendError("IMPORT_DETECTION_YOLO_LINE_INVALID",f"{label_path.name}:{line_number}") from exc
                             values.append((cls,cx,cy,bw,bh))
-                    annotations[image_path.name]=values
+                    annotations[relative.as_posix()]=values
             max_class=max((item[0] for values in annotations.values() for item in values),default=-1)
             if not class_names: class_names=[f"Clase {index}" for index in range(max_class+1)]
             if max_class>=len(class_names): raise BackendError("IMPORT_DETECTION_CLASS_UNKNOWN",str(max_class))
             boxes=[]
             for image_path in image_paths:
                 values=[]
-                for cls,cx,cy,bw,bh in annotations.get(image_path.name,[]):
-                    if cls<0 or cls>=len(class_names) or not all(math.isfinite(value) for value in (cx,cy,bw,bh)) or bw<=0 or bh<=0 or cx<0 or cy<0 or cx>1 or cy>1 or bw>1 or bh>1 or cx-bw/2<0 or cy-bh/2<0 or cx+bw/2>1 or cy+bh/2>1:
+                for cls,cx,cy,bw,bh in annotations.get(image_path.relative_to(images_dir).as_posix(),[]):
+                    if cls<0 or cls>=len(class_names) or not all(math.isfinite(value) for value in (cx,cy,bw,bh)) or bw<=0 or bh<=0 or cx<0 or cy<0 or cx>1 or cy>1 or bw>1 or bh>1 or cx-bw/2 < -1e-7 or cy-bh/2 < -1e-7 or cx+bw/2 > 1+1e-7 or cy+bh/2 > 1+1e-7:
                         raise BackendError("IMPORT_DETECTION_BOX_OUT_OF_RANGE",image_path.name)
                     values.append([cls,cx,cy,bw,bh])
                 boxes.append(torch.tensor(values,dtype=torch.float32).reshape(-1,5))
@@ -861,16 +894,31 @@ def import_dataset(project: dict, task_id: str, path: str, options: dict | None 
             for image_path in image_paths:
                 with Image.open(image_path) as image: original_sizes.append(image.size)
             x=_load_images_parallel(image_paths,resolution,channels);y=torch.zeros((len(x),0),dtype=torch.float32)
-            result=_save(project,task_id,x,y,f"Cajas de detección importadas: {root.name}",42,class_names,{"channels":channels,"resolution":resolution,"boxFormat":"normalized_cxcywh","annotationFormat":"yolo_txt_or_xyxy_json"},boxes=boxes,original_sizes=original_sizes)
+            result=_save(project,task_id,x,y,f"Cajas de detección importadas: {root.name}",42,class_names,{"channels":channels,"resolution":resolution,"boxFormat":"normalized_cxcywh","annotationFormat":"yolo_txt_or_xyxy_json"},boxes=boxes,original_sizes=original_sizes,split_indices_override=imported_splits,split_source="official" if partitions else "generated")
             return _mark_imported(result,source)
         if task_id.endswith("classification"):
-            class_dirs = sorted(item for item in root.iterdir() if item.is_dir() and any(_is_image(file) for file in item.iterdir()))
-            if len(class_dirs) < 2: raise BackendError("IMPORT_IMAGE_CLASSIFICATION_MIN_CLASSES")
-            image_paths=[]; labels=[]
-            for label, directory in enumerate(class_dirs):
-                for file in sorted(directory.iterdir()):
-                    if _is_image(file): image_paths.append(file); labels.append(label)
-            x=_load_images_parallel(image_paths, resolution, channels);y=torch.tensor(labels);result=_save(project,task_id,x,y,f"Imágenes importadas: {root.name}",42,[item.name for item in class_dirs],{"channels": channels, "resolution": resolution},original_sizes=_image_sizes(image_paths))
+            partitions = _image_partition_directories(root, classification=True)
+            imported_splits = {"train": [], "validation": [], "test": []} if partitions else None
+            if partitions:
+                names = sorted({directory.name for folder, _ in partitions for directory in folder.iterdir()
+                                if directory.is_dir() and any(_is_image(file) for file in directory.rglob("*"))})
+                if len(names) < 2: raise BackendError("IMPORT_IMAGE_CLASSIFICATION_MIN_CLASSES")
+                image_paths=[]; labels=[]
+                for folder, split in partitions:
+                    for label, name in enumerate(names):
+                        directory = folder / name
+                        paths = sorted(file for file in directory.rglob("*") if _is_image(file)) if directory.is_dir() else []
+                        imported_splits[split].extend(range(len(image_paths), len(image_paths) + len(paths)))
+                        image_paths.extend(paths); labels.extend([label] * len(paths))
+            else:
+                class_dirs = sorted(item for item in root.iterdir() if item.is_dir() and any(_is_image(file) for file in item.iterdir()))
+                if len(class_dirs) < 2: raise BackendError("IMPORT_IMAGE_CLASSIFICATION_MIN_CLASSES")
+                names = [item.name for item in class_dirs]
+                image_paths=[]; labels=[]
+                for label, directory in enumerate(class_dirs):
+                    for file in sorted(directory.iterdir()):
+                        if _is_image(file): image_paths.append(file); labels.append(label)
+            x=_load_images_parallel(image_paths, resolution, channels);y=torch.tensor(labels);result=_save(project,task_id,x,y,f"Imágenes importadas: {root.name}",42,names,{"channels": channels, "resolution": resolution},original_sizes=_image_sizes(image_paths),split_indices_override=imported_splits,split_source="official" if partitions else "generated")
         elif task_id.endswith("regression"):
             labels_path=root/"labels.csv"
             if not labels_path.is_file(): raise BackendError("IMPORT_IMAGE_REGRESSION_LABELS_MISSING")

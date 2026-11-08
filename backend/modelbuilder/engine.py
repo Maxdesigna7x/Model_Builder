@@ -47,12 +47,41 @@ def response(result=None, error=None):
     if error is None:
         value["result"] = result
     else:
-        value["error"] = {"code": type(error).__name__, "message": str(error)}
+        value["error"] = {"code": type(error).__name__, "message": str(error), "context": getattr(error,"context",None)}
     print(json.dumps(value, ensure_ascii=False, allow_nan=False), flush=True)
 
 
 def handle(request: dict):
     action = request.get("action")
+    if str(action).startswith("dataset."):
+        if __package__ in (None, ""):
+            from modelbuilder import dataset_project as ds
+        else:
+            from . import dataset_project as ds
+        if action == "dataset.get": return ds.read(request["project"],request.get("page",0),request.get("page_size",48),request.get("filters"))
+        if action == "dataset.embedding_status":
+            from modelbuilder.dataset_models import EG2_MODEL, EG2_REVISION
+            try:
+                from transformers import CONFIG_MAPPING
+                compatible='embedding_gemma2' in CONFIG_MAPPING
+                from huggingface_hub import try_to_load_from_cache
+                weight=try_to_load_from_cache(EG2_MODEL, 'model.safetensors', revision=EG2_REVISION)
+                return {"model":EG2_MODEL,"revision":EG2_REVISION,"compatible":compatible,"cached":isinstance(weight,str),"reason":None if compatible else "Installed Transformers does not recognize embedding_gemma2"}
+            except Exception as exc:
+                return {"model":EG2_MODEL,"revision":EG2_REVISION,"compatible":False,"cached":False,"reason":str(exc)}
+        if action == "dataset.model_status":
+            import importlib.util
+            from modelbuilder.dataset_models import checkpoint
+            name=checkpoint(request.get("family","YOLO11"),request.get("size","n"))
+            cache=ds.root_of(request["project"])/"cache"/"yolo"/name
+            return {"checkpoint":name,"cached":cache.is_file(),"library":importlib.util.find_spec("ultralytics") is not None}
+        if action == "dataset.image": return ds.image(request["project"],request["sample_id"],request.get("thumbnail",True))
+        if action == "dataset.update": return ds.update(request["project"],request.get("changes",{}))
+        if action == "dataset.start": return ds.start(request["project"],request["operation"],request.get("options",{}))
+        if action == "dataset.video_estimate": return ds.estimate(request["path"],request.get("options",{}))
+        if action in ("dataset.cancel","dataset.resume"): return ds.control(request["project"],request["job_id"],action.split(".")[1])
+        if action == "dataset.export_preview": return ds.export(request["project"],request.get("options",{}),preview=True)
+        if action == "dataset.export": return ds.export(request["project"],request.get("options",{}))
     if action == "hello":
         return {"version": "0.1.0", "torch": torch.__version__, "cuda": torch.cuda.is_available(), "workspace": str(workspace_root())}
     if action == "catalog.get":
@@ -152,6 +181,9 @@ def handle(request: dict):
     if action == "data.exists":
         path = Path(str(request.get("dataset", {}).get("path", ""))).expanduser()
         return {"exists": path.is_file()}
+    if action == "graph.solutions":
+        from modelbuilder.repairs import propose_repairs
+        return propose_repairs(request, lambda graph: handle({**request,"action":"graph.validate","graph":graph}))
     if action == "graph.validate":
         graph = request.get("graph", {})
         types = [n.get("data", {}).get("blockType") for n in graph.get("nodes", [])]

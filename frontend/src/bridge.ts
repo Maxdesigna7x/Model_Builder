@@ -2,12 +2,17 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type { BackendResponse } from "./types";
 
+export class BackendRequestError extends Error {
+  context?:{node_id?:string};
+  constructor(error:NonNullable<BackendResponse["error"]>){super(error.message);this.context=error.context;}
+}
+
 const isTauri = () => "__TAURI_INTERNALS__" in window;
 
 export async function backend<T>(action: string, payload: Record<string, unknown> = {}): Promise<T> {
   if (isTauri()) {
     const response = await invoke<BackendResponse<T>>("backend_request", { request: { action, ...payload } });
-    if (!response.ok) throw new Error(response.error?.message || "Error del backend");
+    if (!response.ok) throw new BackendRequestError(response.error || {code:"UNKNOWN",message:"Error del backend"});
     return response.result as T;
   }
 
@@ -24,7 +29,7 @@ export async function backend<T>(action: string, payload: Record<string, unknown
   }
 
   const response: BackendResponse<T> = await res.json();
-  if (!response.ok) throw new Error(response.error?.message || "Error del backend");
+  if (!response.ok) throw new BackendRequestError(response.error || {code:"UNKNOWN",message:"Error del backend"});
   return response.result as T;
 }
 
@@ -47,6 +52,11 @@ export async function startTraining(payload: Record<string, unknown>): Promise<v
 export async function pickDatasetDirectory(): Promise<string | null> {
   if (!isTauri()) return null;
   return invoke<string | null>("pick_directory");
+}
+
+export async function pickVideoFile(): Promise<string | null> {
+  if (!isTauri()) return null;
+  return invoke<string | null>("pick_video_file");
 }
 
 export async function pickDatasetFile(): Promise<string | null> {

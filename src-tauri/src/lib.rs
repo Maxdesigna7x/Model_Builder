@@ -102,6 +102,16 @@ async fn pick_dataset_file() -> Result<Option<String>, String> {
 }
 
 #[tauri::command]
+async fn pick_video_file() -> Result<Option<String>, String> {
+    let file = tauri::async_runtime::spawn_blocking(|| {
+        rfd::FileDialog::new()
+            .add_filter("Video", &["mp4", "mov", "avi", "mkv", "webm", "mpeg", "mpg", "m4v"])
+            .pick_file()
+    }).await.map_err(|e| e.to_string())?;
+    Ok(file.map(|path| path.to_string_lossy().to_string()))
+}
+
+#[tauri::command]
 async fn start_training(app: AppHandle, request: Value) -> Result<Value, String> {
     std::thread::spawn(move || {
         let result = (|| -> Result<(), String> {
@@ -155,7 +165,8 @@ pub fn run() {
             backend_request,
             start_training,
             pick_directory,
-            pick_dataset_file
+            pick_dataset_file,
+            pick_video_file
         ])
         .run(tauri::generate_context!())
         .expect("error al ejecutar ModelBuilder");
