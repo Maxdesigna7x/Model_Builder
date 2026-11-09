@@ -6,13 +6,13 @@ La interfaz usa React, TypeScript, React Flow y ECharts. Puede ejecutarse en nav
 
 ## Pantallas
 
-Capturas de la interfaz actual en **tema oscuro con acento naranja**. Los proyectos, imágenes geométricas, métricas y predicciones son datos de demostración en un navegador aislado; no representan un entrenamiento real ni resultados de rendimiento.
+Capturas de la aplicación de escritorio en **tema oscuro con acento verde**.
 
 ### Proyectos
 
 Logo adaptado al color del tema, creación de proyectos, búsqueda, filtros por arquitectura y vistas de lista o mosaico.
 
-![Inicio y proyectos con el tema naranja](docs/img/inicio.png)
+![Inicio y proyectos con el tema verde](docs/img/inicio.png)
 
 ### Arquitectura y tarea
 
@@ -32,17 +32,21 @@ Biblioteca de capas y bloques, puertos de entrada/salida, formas por eje e inspe
 
 ![Constructor CNN y dimensiones de tensor](docs/img/constructor.png)
 
+El inspector permite revisar y modificar las propiedades de la capa seleccionada.
+
+![Constructor con el inspector de una capa abierto](docs/img/constructor-inspector.png)
+
 ### Entrenamiento
 
 Curvas separadas de entrenamiento y validación, mejor epoch, selección del modelo y configuración de early stopping.
 
-![Entrenamiento y métricas de demostración](docs/img/entrenamiento.png)
+![Entrenamiento y métricas](docs/img/entrenamiento.png)
 
 ### Inferencia
 
 En clasificación de imágenes, el resultado muestra la entrada, la clase predicha con su probabilidad y la clase real cuando está disponible.
 
-![Predicción de clasificación de demostración](docs/img/inferencia.png)
+![Predicción de clasificación](docs/img/inferencia.png)
 
 ## Flujo de trabajo
 
@@ -52,7 +56,7 @@ En clasificación de imágenes, el resultado muestra la entrada, la clase predic
 4. Construye el modelo desde la plantilla inicial, un preset o un backbone preentrenado. El panel lateral permite cambiar de etapa.
 5. Entrena, compara corridas y prueba el checkpoint en Inferencia.
 
-El estado del proyecto se guarda localmente en `workspace_data/`. Los datasets, cachés y checkpoints permanecen en el equipo; las descargas iniciales de servicios públicos requieren conexión y pueden requerir credenciales o aceptación de licencia.
+El estado del proyecto se guarda localmente: en `workspace_data/` al ejecutar desde el código fuente y en la carpeta de datos del usuario en la aplicación instalada. Los datasets, cachés y checkpoints permanecen en el equipo; las descargas iniciales de servicios públicos requieren conexión y pueden requerir credenciales o aceptación de licencia.
 
 ## Arquitecturas y tareas disponibles
 
@@ -128,6 +132,19 @@ Un checkpoint antiguo sin historial de validación utilizable reinicia el contad
 
 ## Instalación y ejecución
 
+### Descargar la aplicación de escritorio
+
+Descarga la versión disponible en [GitHub Releases](https://github.com/Maxdesigna7x/Model_Builder/releases/latest). No necesitas instalar Python, Node.js, Rust ni ejecutar comandos de desarrollo: la aplicación prepara automáticamente un entorno privado y descarga sus dependencias al abrirla por primera vez. Necesitarás conexión a Internet y varios GB de espacio libre durante esa preparación.
+
+- **Windows x64:** descarga el instalador `-setup.exe` o el archivo `.msi`, instálalo y abre ModelBuilder.
+- **Linux x86_64:** descarga el paquete `.deb` para distribuciones compatibles o el archivo `.AppImage`. Instala el paquete `.deb` con tu gestor de software; si usas AppImage, dale permiso de ejecución y ábrelo.
+
+Los instaladores con selección de **CPU o GPU NVIDIA** están en preparación. Consulta las notas de cada versión en Releases para conocer las opciones disponibles.
+
+### Ejecutar desde el código fuente
+
+Los siguientes requisitos y comandos son para desarrollo o ejecución desde el repositorio.
+
 | Componente | Modo web local | Escritorio Tauri |
 | --- | --- | --- |
 | Node.js y npm | Node 20.19+ (rama 20) o 22.12+ (se recomienda LTS 22+) | Igual |
@@ -167,7 +184,7 @@ Si usas otro entorno, establece `MODELBUILDER_PYTHON` con la ruta de su ejecutab
 
 ### Escritorio
 
-En la aplicación distribuida, el primer inicio permite elegir CPU o GPU NVIDIA y prepara un entorno privado. La opción NVIDIA requiere una GPU y un controlador compatibles con CUDA 13.0; la descarga puede ocupar varios GB. Estos cambios estarán disponibles al crear una nueva versión del instalador.
+La preparación inicial del entorno privado permite elegir CPU o GPU NVIDIA en las versiones que incluyen este selector. La opción NVIDIA requiere una GPU y un controlador compatibles con CUDA 13.0; la descarga puede ocupar varios GB.
 
 Para ejecutar desde el código fuente: en Ubuntu/Debian, `bash scripts/install-linux.sh` prepara el entorno y las dependencias de Tauri; después ejecuta `bash run.sh`. En Windows, ejecuta `scripts/install-windows.ps1` y luego `run-windows.ps1` desde PowerShell, con los requisitos nativos instalados.
 
@@ -196,14 +213,14 @@ En Windows usa `.\.venv\Scripts\python.exe` en lugar de `.venv/bin/python`. Las 
 
 El [informe de cierre CNN](docs/17-cierre-revision-cnn.md) recoge las comprobaciones realizadas y sus límites. Los documentos de planificación anteriores son históricos y pueden contener propuestas que todavía no están implementadas.
 
-## Regenerar estas capturas
+## Generar capturas de demostración
 
 ```bash
 npm ci
-CAPTURE_DIR=docs/img npm run capturas:readme
+CAPTURE_DIR=capturas/readme-demo npm run capturas:readme
 ```
 
-El script abre una sesión aislada de Chrome/Chromium a **1600 × 1000**, usa el acento naranja, inicia Vite en un puerto libre y genera las seis capturas del README. No modifica proyectos reales ni descarga datasets o pesos. Si es necesario, define `CHROME_PATH` con la ruta del navegador. En PowerShell establece primero `$env:CAPTURE_DIR = 'docs/img'` y luego ejecuta `node scripts/capture-readme.mjs`.
+El script abre una sesión aislada de Chrome/Chromium a **1600 × 1000**, usa el acento naranja, inicia Vite en un puerto libre y genera seis capturas de demostración. Estas capturas se generan por separado de las imágenes del README. No modifica proyectos reales ni descarga datasets o pesos. Si es necesario, define `CHROME_PATH` con la ruta del navegador. En PowerShell establece primero `$env:CAPTURE_DIR = 'capturas/readme-demo'` y luego ejecuta `node scripts/capture-readme.mjs`.
 
 Para capturas adicionales del catálogo completo puedes usar `npm run capturas`; su salida por defecto se guarda en `capturas/`, ignorada por Git.
 
