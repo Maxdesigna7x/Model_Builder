@@ -1,31 +1,42 @@
-# Instrucciones para agentes
+# Agent instructions
 
-## Aplicaciones de escritorio e instaladores
+## Preserve application behavior and user data
 
-- ModelBuilder mantiene la interfaz web local y la aplicación de escritorio Tauri. Conserva ambas al introducir cambios.
-- El código fuente de la interfaz está en `frontend/`, el motor Python en `backend/modelbuilder/` y la configuración de escritorio en `src-tauri/`. Los proyectos, datasets y checkpoints son datos locales; no los incluyas en los instaladores ni en Git.
-- Para generar instaladores de Windows y Linux desde el mismo cambio, usa el flujo `.github/workflows/desktop.yml` de GitHub Actions. Primero asegúrate de que el commit que se debe compilar esté en la rama remota solicitada; GitHub Actions no puede compilar cambios que solo existen en el equipo local. Inicia el flujo con:
+- Keep both the local-browser mode and the Tauri desktop app working. UI lives in `frontend/`, the Python engine in `backend/modelbuilder/`, and desktop integration in `src-tauri/`.
+- Never commit or bundle projects, datasets, checkpoints, credentials, caches, or developer environments. Distributed user data must stay outside the install directory.
+- Use `.venv` for development; do not modify shared Conda/system environments.
+- Desktop setup supports CPU/NVIDIA and component progress. Do not run complete runtime/CUDA downloads just to check that startup begins; use brief relevant checks unless more is explicitly needed/requested.
 
-  ```bash
-  gh workflow run desktop.yml --ref main
-  ```
+## Build and publish desktop installers
 
-  Sustituye `main` por la rama o referencia remota que corresponda. El flujo también se activa al subir etiquetas `desktop-v*`. Genera `.deb` y `.AppImage` en Linux, y `.exe` y `.msi` en Windows; sube los artefactos de la ejecución y publica automáticamente una nueva versión en GitHub Releases cuando ambas compilaciones terminan correctamente. Cada ejecución usa una etiqueta propia y actualiza la versión del instalador con el número de ejecución; no reemplaza los archivos de releases anteriores.
-- **No esperes a que termine una compilación de instaladores**, ni sigas consultando su estado, salvo que el usuario solicite explícitamente esperar o verificar el resultado. Inicia el flujo y comunica que quedó solicitado, junto con el enlace a Actions si está disponible. No afirmes que los instaladores se generaron o pasaron las pruebas hasta comprobarlo.
-- Para compilar localmente, utiliza Windows para los instaladores Windows y Linux para los instaladores Linux. Instala los requisitos de desarrollo de Tauri, Node/npm, Python y Rust; luego ejecuta desde la raíz:
+The authoritative procedure is [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md). Keep it and this file updated when commands change.
 
-  ```bash
-  npm ci
-  python -m pip install uv==0.9.30
-  python scripts/prepare-desktop-runtime.py
-  npm run tauri -- build
-  ```
+Push the intended commit to the requested remote branch before starting GitHub Actions:
 
-  En Linux, utiliza `python3` si `python` no está disponible. Los archivos se generan bajo `src-tauri/target/release/bundle/`, en `deb/`, `appimage/`, `nsis/` o `msi/` según el sistema. Si se pide iniciar una compilación local sin esperar, lánzala en segundo plano y guarda su salida en un archivo de registro.
-- Estos pasos son repetibles, pero no garantizan compilaciones idénticas byte por byte ni dependencias Python idénticas: hay versiones Python expresadas como rangos y se resuelven al preparar el entorno. No describas el proceso como reproducible de forma estricta sin fijar y verificar todas las dependencias.
-- La aplicación distribuida prepara su propio Python al primer inicio y permite elegir CPU o NVIDIA CUDA. Mantén sus comprobaciones y la información de progreso al modificar el instalador. Las descargas de CUDA pueden ser grandes; no realices una instalación completa de prueba salvo que sea necesaria para el cambio o que el usuario la solicite.
-- El flujo y los comandos de instalación se describen también en `docs/INSTALACION.md`. Si cambian, actualiza esa guía y este archivo.
+```bash
+gh workflow run desktop.yml --ref main
+```
 
-- Para problemas de ventana en blanco en Linux, probar `modelbuilder --graphics=compatible` y obtener información básica con `modelbuilder --diagnose`. Estos comandos son una mejora inicial; no declarar resuelto un caso sin verificarlo en el equipo afectado. El trabajo pendiente está en `docs/22-plan-arranque-portable-linux.md`.
-- Las actualizaciones usan `tauri-plugin-updater`, artefactos `.sig` y `latest.json`, generados por el workflow. No regenerar la clave: la pública está en `tauri.conf.json` y la privada en el secreto `TAURI_SIGNING_PRIVATE_KEY`. Nunca incluir la clave privada en Git ni en registros. Los clientes anteriores al actualizador requieren una instalación manual inicial.
-- El entorno se valida por el contrato de dependencias, no por la versión de la app. Los entornos nuevos se preparan en carpetas separadas y se activan tras verificarlos; conservar los anteriores y todos los proyectos. No añadir migraciones de datos destructivas al actualizador.
+Use the appropriate remote ref instead of `main` when needed. `.github/workflows/desktop.yml` also responds to `desktop-v*` tags. It builds Windows x64/Linux x86_64 packages, uploads artifacts and signatures, creates `latest.json`, and publishes a new release only after both jobs succeed. Each run gets its own tag and installer version; retain previous releases.
+
+**Do not wait for installer builds or poll their status unless the user explicitly asks you to wait or verify results.** Start the workflow, report the request and Actions link, and do not claim successful compilation/publication without evidence.
+
+For local builds, use Windows for Windows packages and Linux for Linux packages, with Tauri's native build requirements installed:
+
+```bash
+npm ci
+python -m pip install uv==0.9.30
+python scripts/prepare-desktop-runtime.py
+npm run tauri -- build
+```
+
+Use `python3` on Linux if needed. Output is in `src-tauri/target/release/bundle/{deb,appimage,nsis,msi}/` as applicable. If asked to launch a local build without waiting, run it in the background with a log file.
+
+These commands are repeatable, not guaranteed byte-for-byte reproducible; some Python dependencies use version ranges.
+
+## Updates and compatibility
+
+- Update signatures use the public key in `tauri.conf.json` and the private GitHub secret `TAURI_SIGNING_PRIVATE_KEY`. Never regenerate the key per build or commit/log private key material. Preserve a secure backup. Older apps without the updater need one manual install.
+- Environment compatibility is based on dependency requirements, not app metadata/version. Prepare changed environments separately, verify before activating, and retain previous environments/projects. Do not add destructive data migrations to the updater.
+- On Linux, `--graphics=compatible` adjusts interface rendering; `--diagnose` prints basic environment information. Do not claim the original blank-window problem is fixed without verifying the affected machine.
+- Remaining startup work is in [docs/LINUX_STARTUP_PLAN.md](docs/LINUX_STARTUP_PLAN.md); current limits are in [docs/LIMITATIONS.md](docs/LIMITATIONS.md).
