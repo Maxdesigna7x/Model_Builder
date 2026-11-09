@@ -139,7 +139,7 @@ Descarga la versión disponible en [GitHub Releases](https://github.com/Maxdesig
 - **Windows x64:** descarga el instalador `-setup.exe` o el archivo `.msi`, instálalo y abre ModelBuilder.
 - **Linux x86_64:** descarga el paquete `.deb` para distribuciones compatibles o el archivo `.AppImage`. Instala el paquete `.deb` con tu gestor de software; si usas AppImage, dale permiso de ejecución y ábrelo.
 
-Los instaladores con selección de **CPU o GPU NVIDIA** están en preparación. Consulta las notas de cada versión en Releases para conocer las opciones disponibles.
+Los instaladores recientes permiten elegir **CPU o GPU NVIDIA** durante la preparación inicial. Consulta las notas de cada versión en Releases para conocer las opciones disponibles.
 
 ### Ejecutar desde el código fuente
 

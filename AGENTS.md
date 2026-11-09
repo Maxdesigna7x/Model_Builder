@@ -10,7 +10,7 @@
   gh workflow run desktop.yml --ref main
   ```
 
-  Sustituye `main` por la rama o referencia remota que corresponda. El flujo también se activa al subir etiquetas `desktop-v*`. Genera `.deb` y `.AppImage` en Linux, y `.exe` y `.msi` en Windows; los sube como artefactos de la ejecución de Actions. Compilar no publica una versión en GitHub Releases: publicar o actualizar una release es una acción separada.
+  Sustituye `main` por la rama o referencia remota que corresponda. El flujo también se activa al subir etiquetas `desktop-v*`. Genera `.deb` y `.AppImage` en Linux, y `.exe` y `.msi` en Windows; sube los artefactos de la ejecución y publica automáticamente una nueva versión en GitHub Releases cuando ambas compilaciones terminan correctamente. Cada ejecución usa una etiqueta propia y actualiza la versión del instalador con el número de ejecución; no reemplaza los archivos de releases anteriores.
 - **No esperes a que termine una compilación de instaladores**, ni sigas consultando su estado, salvo que el usuario solicite explícitamente esperar o verificar el resultado. Inicia el flujo y comunica que quedó solicitado, junto con el enlace a Actions si está disponible. No afirmes que los instaladores se generaron o pasaron las pruebas hasta comprobarlo.
 - Para compilar localmente, utiliza Windows para los instaladores Windows y Linux para los instaladores Linux. Instala los requisitos de desarrollo de Tauri, Node/npm, Python y Rust; luego ejecuta desde la raíz:
 
