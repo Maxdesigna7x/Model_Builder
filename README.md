@@ -12,41 +12,41 @@ Capturas de la aplicación de escritorio en **tema oscuro con acento verde**.
 
 Logo adaptado al color del tema, creación de proyectos, búsqueda, filtros por arquitectura y vistas de lista o mosaico.
 
-![Inicio y proyectos con el tema verde](docs/img/inicio.png)
+![Inicio y proyectos con el tema verde](docs/img/inicio-verde.png)
 
 ### Arquitectura y tarea
 
 El catálogo separa familias, arquitecturas y tareas compatibles, con búsqueda y una vista visual de cada arquitectura que se adapta al espacio para mantener todas las tareas visibles. La selección se confirma con **Continuar**.
 
-![Selección de arquitectura y tarea](docs/img/arquitecturas.png)
+![Selección de arquitectura y tarea](docs/img/arquitecturas-verde.png)
 
 ### Datos
 
 Pipeline de preparación, explorador con pestañas Info / Samples / Charts, muestras aleatorias, estadísticas de dimensiones originales y reparto train / validation / test.
 
-![Preparación de datos y explorador de muestras](docs/img/datos.png)
+![Preparación de datos y explorador de muestras](docs/img/datos-verde.png)
 
 ### Constructor
 
 Biblioteca de capas y bloques, puertos de entrada/salida, formas por eje e inspector de propiedades. Sumar y Concatenar crean ramas completas y conectadas desde **Ramas**.
 
-![Constructor CNN y dimensiones de tensor](docs/img/constructor.png)
+![Constructor CNN y dimensiones de tensor](docs/img/constructor-verde.png)
 
 El inspector permite revisar y modificar las propiedades de la capa seleccionada.
 
-![Constructor con el inspector de una capa abierto](docs/img/constructor-inspector.png)
+![Constructor con el inspector de una capa abierto](docs/img/constructor-inspector-verde.png)
 
 ### Entrenamiento
 
 Curvas separadas de entrenamiento y validación, mejor epoch, selección del modelo y configuración de early stopping.
 
-![Entrenamiento y métricas](docs/img/entrenamiento.png)
+![Entrenamiento y métricas](docs/img/entrenamiento-verde.png)
 
 ### Inferencia
 
 En clasificación de imágenes, el resultado muestra la entrada, la clase predicha con su probabilidad y la clase real cuando está disponible.
 
-![Predicción de clasificación](docs/img/inferencia.png)
+![Predicción de clasificación](docs/img/inferencia-verde.png)
 
 ## Flujo de trabajo
 
