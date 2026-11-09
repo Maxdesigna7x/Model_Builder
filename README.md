@@ -141,6 +141,8 @@ Descarga la versión disponible en [GitHub Releases](https://github.com/Maxdesig
 
 Los instaladores recientes permiten elegir **CPU o GPU NVIDIA** durante la preparación inicial. Consulta las notas de cada versión en Releases para conocer las opciones disponibles.
 
+Las versiones que incluyen el actualizador avisan cuando hay una versión nueva. Windows y AppImage permiten instalarla desde la app; para DEB se ofrece la descarga del paquete. El entorno compatible y los proyectos se conservan. Las versiones anteriores al actualizador necesitan una instalación manual inicial.
+
 ### Ejecutar desde el código fuente
 
 Los siguientes requisitos y comandos son para desarrollo o ejecución desde el repositorio.

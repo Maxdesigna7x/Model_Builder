@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { ArrowRight, Check, CheckCircle2, CircleAlert, Cpu, Download, HardDrive, Layers3, LoaderCircle, LockKeyhole, RotateCcw, Sparkles, Wifi } from "lucide-react";
 import App from "./App";
+import UpdateNotice from "./UpdateNotice";
 import { isTauri } from "./bridge";
 import "./desktop-setup.css";
 const nvidiaLogo = new URL("./assets/nvidia.svg", import.meta.url).href;
@@ -20,8 +21,8 @@ export default function DesktopSetup() {
   useEffect(() => {
     if (!isTauri()) return;
     let active = true;
-    invoke<{ready: boolean}>("runtime_status").then(result => {
-      if (active) setState(result.ready ? "ready" : "select");
+    invoke<{ready: boolean; backend?: "cpu" | "nvidia"}>("runtime_status").then(result => {
+      if (active) { if (result.backend) setBackend(result.backend); setState(result.ready ? "ready" : "select"); }
     }).catch(reason => { if (active) { setError(String(reason)); setState("error"); } });
     return () => { active = false; };
   }, []);
@@ -42,7 +43,7 @@ export default function DesktopSetup() {
     } finally { stop?.(); }
   }
 
-  if (state === "ready") return <App />;
+  if (state === "ready") return <><UpdateNotice/><App /></>;
   const installing = state === "install";
   const percentage = progress.total > 0 ? Math.round(progress.completed / progress.total * 100) : null;
   const steps = ["Preparar Python", "Instalar componentes", "Comprobar motor"];

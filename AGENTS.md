@@ -27,3 +27,5 @@
 - El flujo y los comandos de instalación se describen también en `docs/INSTALACION.md`. Si cambian, actualiza esa guía y este archivo.
 
 - Para problemas de ventana en blanco en Linux, probar `modelbuilder --graphics=compatible` y obtener información básica con `modelbuilder --diagnose`. Estos comandos son una mejora inicial; no declarar resuelto un caso sin verificarlo en el equipo afectado. El trabajo pendiente está en `docs/22-plan-arranque-portable-linux.md`.
+- Las actualizaciones usan `tauri-plugin-updater`, artefactos `.sig` y `latest.json`, generados por el workflow. No regenerar la clave: la pública está en `tauri.conf.json` y la privada en el secreto `TAURI_SIGNING_PRIVATE_KEY`. Nunca incluir la clave privada en Git ni en registros. Los clientes anteriores al actualizador requieren una instalación manual inicial.
+- El entorno se valida por el contrato de dependencias, no por la versión de la app. Los entornos nuevos se preparan en carpetas separadas y se activan tras verificarlos; conservar los anteriores y todos los proyectos. No añadir migraciones de datos destructivas al actualizador.

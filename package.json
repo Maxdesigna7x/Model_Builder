@@ -23,6 +23,7 @@
   },
   "dependencies": {
     "@tauri-apps/api": "^2.8.0",
+    "@tauri-apps/plugin-opener": "^2.7.2",
     "@xyflow/react": "^12.8.4",
     "echarts": "^6.0.0",
     "i18next": "^26.4.2",

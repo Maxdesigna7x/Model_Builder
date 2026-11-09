@@ -1,3 +1,4 @@
+mod updates;
 use serde_json::{json, Value};
 use std::io::{BufRead, BufReader, Write};
 use std::path::PathBuf;
@@ -14,18 +15,41 @@ fn project_root() -> PathBuf {
         .to_path_buf()
 }
 
-fn private_python(app: &AppHandle) -> Result<PathBuf, String> {
-    let env = app
-        .path()
-        .app_data_dir()
-        .map_err(|e| e.to_string())?
-        .join("runtime")
-        .join("venv");
-    Ok(if cfg!(windows) {
+fn env_python(env: PathBuf) -> PathBuf {
+    if cfg!(windows) {
         env.join("Scripts/python.exe")
     } else {
         env.join("bin/python")
-    })
+    }
+}
+
+fn private_python(app: &AppHandle) -> Result<PathBuf, String> {
+    let runtime = runtime_dir(app)?;
+    let marker: Value = std::fs::read(runtime.join("ready-manifest"))
+        .or_else(|_| std::fs::read(runtime.join("previous-manifest")))
+        .ok()
+        .and_then(|bytes| serde_json::from_slice(&bytes).ok())
+        .unwrap_or(Value::Null);
+    let env = marker
+        .get("env_dir")
+        .and_then(Value::as_str)
+        .filter(|name| name.len() == 64 && name.bytes().all(|b| b.is_ascii_hexdigit()))
+        .map(|name| runtime.join("envs").join(name))
+        .unwrap_or_else(|| runtime.join("venv"));
+    Ok(env_python(env))
+}
+
+fn dependency_contract(manifest: &str) -> Option<String> {
+    let doc: toml::Value = toml::from_str(manifest).ok()?;
+    let project = doc.get("project")?;
+    let mut dependencies: Vec<String> = project
+        .get("dependencies")?
+        .as_array()?
+        .iter()
+        .map(|item| item.as_str().map(str::to_string))
+        .collect::<Option<_>>()?;
+    dependencies.sort();
+    serde_json::to_string(&json!({"python": "3.12", "requires_python": project.get("requires-python")?.as_str()?, "dependencies":dependencies})).ok()
 }
 
 fn python_command(app: &AppHandle) -> Result<PathBuf, String> {
@@ -87,9 +111,25 @@ fn runtime_manifest(app: &AppHandle) -> Result<String, String> {
 }
 
 fn marker_backend(data: &[u8], manifest: &str) -> Option<String> {
-    let value: Value = serde_json::from_slice(data).ok()?;
+    let value: Value = match serde_json::from_slice(data) {
+        Ok(value) => value,
+        Err(_) => {
+            // The earliest CPU-only release stored the raw pyproject rather than JSON.
+            let old = std::str::from_utf8(data).ok()?;
+            return dependency_contract(old)
+                .zip(dependency_contract(manifest))
+                .filter(|(a, b)| a == b)
+                .map(|_| "cpu".to_string());
+        }
+    };
     let backend = value.get("backend")?.as_str()?;
-    if value.get("manifest")?.as_str()? == manifest && ["cpu", "nvidia"].contains(&backend) {
+    let old = value.get("manifest")?.as_str()?;
+    let compatible = old == manifest
+        || dependency_contract(old)
+            .zip(dependency_contract(manifest))
+            .map(|(a, b)| a == b)
+            .unwrap_or(false);
+    if compatible && ["cpu", "nvidia"].contains(&backend) {
         Some(backend.to_string())
     } else {
         None
@@ -97,7 +137,10 @@ fn marker_backend(data: &[u8], manifest: &str) -> Option<String> {
 }
 
 fn ready_backend(app: &AppHandle, manifest: &str) -> Option<String> {
-    let data = std::fs::read(runtime_dir(app).ok()?.join("ready-manifest")).ok()?;
+    let runtime = runtime_dir(app).ok()?;
+    let data = std::fs::read(runtime.join("ready-manifest"))
+        .or_else(|_| std::fs::read(runtime.join("previous-manifest")))
+        .ok()?;
     if !private_python(app).ok()?.is_file() {
         return None;
     }
@@ -107,6 +150,21 @@ fn ready_backend(app: &AppHandle, manifest: &str) -> Option<String> {
 #[cfg(test)]
 mod setup_tests {
     use super::*;
+
+    #[test]
+    fn metadata_changes_do_not_reinstall_dependencies() {
+        let old = "[project]\nname='old'\nversion='0.1.0'\nrequires-python='>=3.11'\ndependencies=['torch==2.12.0', 'numpy>=1.26']\n";
+        let new = old
+            .replace("name='old'", "name='new'")
+            .replace("0.1.0", "0.1.9");
+        let marker = serde_json::to_vec(&json!({"manifest":old,"backend":"cpu"})).unwrap();
+        assert_eq!(marker_backend(&marker, &new).as_deref(), Some("cpu"));
+        assert_eq!(marker_backend(old.as_bytes(), &new).as_deref(), Some("cpu"));
+        assert_eq!(
+            marker_backend(&marker, &new.replace("2.12.0", "2.13.0")),
+            None
+        );
+    }
 
     #[test]
     fn marker_remembers_the_selected_backend_and_rejects_old_or_stale_installations() {
@@ -131,7 +189,14 @@ async fn runtime_status(app: AppHandle) -> Result<Value, String> {
     }
     let manifest = runtime_manifest(&app)?;
     let backend = ready_backend(&app, &manifest);
-    Ok(json!({"ready": backend.is_some(), "backend": backend}))
+    let saved: Option<Value> = std::fs::read(runtime_dir(&app)?.join("ready-manifest"))
+        .ok()
+        .and_then(|b| serde_json::from_slice(&b).ok());
+    let preferred = saved
+        .as_ref()
+        .and_then(|m| m.get("backend"))
+        .and_then(Value::as_str);
+    Ok(json!({"ready": backend.is_some(), "backend": backend.as_deref().or(preferred)}))
 }
 
 fn setup_event(
@@ -156,15 +221,21 @@ async fn prepare_runtime(app: AppHandle, backend: String) -> Result<(), String> 
         let resources = app.path().resource_dir().map_err(|e| e.to_string())?;
         let runtime = runtime_dir(&app)?;
         let marker = runtime.join("ready-manifest");
-        let python = private_python(&app)?;
+        use sha2::{Digest, Sha256};
+        let contract = dependency_contract(&manifest).ok_or("Configuración de dependencias inválida")?;
+        let env_id = format!("{:x}", Sha256::digest(format!("{contract}:{backend}")));
+        let env_path = runtime.join("envs").join(&env_id);
+        let python = env_python(env_path.clone());
         std::fs::create_dir_all(&runtime).map_err(|e| e.to_string())?;
-        let _ = std::fs::remove_file(&marker);
+        // Keep the previous active environment and marker until verification succeeds.
         let uv = resources.join("runtime").join(if cfg!(windows) { "uv.exe" } else { "uv" });
         setup_event(&app, "python", "Preparando Python privado", 0, 0, "Python 3.12");
+        if !python.is_file() {
         let mut venv = Command::new(&uv);
-        venv.arg("venv").arg("--clear").arg("--managed-python").arg("--python").arg("3.12").arg(runtime.join("venv"));
+        venv.arg("venv").arg("--managed-python").arg("--python").arg("3.12").arg(&env_path);
         venv.env("UV_PYTHON_INSTALL_DIR", runtime.join("python")).env("UV_NO_PROGRESS", "1").env("UV_HTTP_TIMEOUT", "300");
         run_setup_command(&app, &mut venv)?;
+        }
         let torch_backend = if backend == "nvidia" { "cu130" } else { "cpu" };
         let lockfile = runtime.join("resolved-requirements.txt");
         setup_event(&app, "resolve", "Calculando los componentes necesarios", 0, 0, "Dependencias de ModelBuilder");
@@ -196,8 +267,12 @@ async fn prepare_runtime(app: AppHandle, backend: String) -> Result<(), String> 
         };
         check.args(["-c", verify]);
         run_setup_command(&app, &mut check)?;
-        let ready = json!({"manifest":manifest, "backend":backend});
-        std::fs::write(marker, serde_json::to_vec(&ready).map_err(|e| e.to_string())?).map_err(|e| e.to_string())?;
+        let ready = json!({"manifest":manifest, "backend":backend, "env_dir":env_id});
+        let pending = runtime.join("ready-manifest.pending");
+        std::fs::write(&pending, serde_json::to_vec(&ready).map_err(|e| e.to_string())?).map_err(|e| e.to_string())?;
+        // Windows rename does not replace an existing file; keep a recovery copy.
+        if marker.exists() { std::fs::copy(&marker, runtime.join("previous-manifest")).map_err(|e| e.to_string())?; std::fs::remove_file(&marker).map_err(|e| e.to_string())?; }
+        std::fs::rename(pending, marker).map_err(|e| e.to_string())?;
         Ok(())
     }).await.map_err(|e| e.to_string())?
 }
@@ -306,6 +381,13 @@ async fn pick_video_file() -> Result<Option<String>, String> {
 
 #[tauri::command]
 async fn start_training(app: AppHandle, request: Value) -> Result<Value, String> {
+    {
+        let mut activity = updates::ACTIVITY.lock().map_err(|e| e.to_string())?;
+        if *activity == usize::MAX {
+            return Err("Actualización en curso".into());
+        }
+        *activity += 1;
+    }
     std::thread::spawn(move || {
         let result = (|| -> Result<(), String> {
             let (engine, workdir, workspace) = runtime_paths(&app)?;
@@ -345,6 +427,9 @@ async fn start_training(app: AppHandle, request: Value) -> Result<Value, String>
             }
             Ok(())
         })();
+        if let Ok(mut activity) = updates::ACTIVITY.lock() {
+            *activity = activity.saturating_sub(1);
+        }
         if let Err(message) = result {
             let _ = app.emit("training-event", json!({"type":"error","message":message}));
         }
@@ -355,7 +440,11 @@ async fn start_training(app: AppHandle, request: Value) -> Result<Value, String>
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_opener::init())
         .invoke_handler(tauri::generate_handler![
+            updates::app_update_check,
+            updates::app_update_install,
             runtime_status,
             prepare_runtime,
             backend_request,

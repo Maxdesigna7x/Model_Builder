@@ -57,3 +57,15 @@ Para AppImage, usa la ruta al archivo en lugar de `modelbuilder`. Este modo camb
     modelbuilder --diagnose
 
 El modo compatible es una primera prueba; no garantiza resolver todos los problemas gráficos o de bibliotecas.
+
+## Actualizaciones y conservación del entorno
+
+La aplicación comprueba si hay una versión nueva al entrar en la interfaz principal. También se puede usar **Actualizaciones**. Windows y AppImage permiten descargar, verificar la firma e instalar la actualización con reinicio. Para DEB se abre la página de Releases y se instala el paquete nuevo con el gestor del sistema. Se requiere una actualización manual inicial para versiones antiguas que todavía no incluyen este mecanismo.
+
+Guarda los cambios y termina tus tareas antes de actualizar. La instalación desde la app se bloquea mientras hay entrenamiento activo. Si no hay conexión, la app sigue funcionando y se puede intentar comprobar más tarde.
+
+Python, las bibliotecas y los proyectos permanecen en la carpeta de datos de usuario. Los cambios en el nombre, descripción o versión de la app no invalidan el entorno. Cuando cambian los requisitos de dependencias, se prepara otro entorno y se activa solo después de comprobarlo; el anterior se conserva. Se reutilizan Python y los paquetes disponibles en la caché, aunque un cambio real de dependencias puede necesitar descargas. No borres los datos de usuario durante una actualización.
+
+Este mecanismo conserva los archivos de proyectos; los cambios futuros de sus formatos o de checkpoints necesitarán migraciones y pruebas específicas. No garantiza compatibilidad de cualquier checkpoint con cualquier versión futura de PyTorch.
+
+El workflow genera paquetes de actualización firmados y `latest.json`. La clave privada se guarda en el secreto `TAURI_SIGNING_PRIVATE_KEY` de GitHub y la pública en `tauri.conf.json`. La firma del actualizador es independiente de la firma de editor de Windows. No subas la clave privada al repositorio ni la regeneres en cada compilación. Existe una copia privada local en `~/.codex/modelbuilder-updater.key`; debe respaldarse de forma segura para conservar la continuidad de las actualizaciones.

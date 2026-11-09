@@ -37,6 +37,15 @@
       "../backend/modelbuilder/": "backend/modelbuilder/",
       "../pyproject.toml": "pyproject.toml",
       "runtime/": "runtime/"
+    },
+    "createUpdaterArtifacts": true
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDY3RDY1M0MxMDFFMDRFMUUKUldRZVR1QUJ3VlBXWjlLRWtVbVQvbHQzSXNaakJJZ3I3aWhQaGprOW85aU84c2pvMUJpV25wWEwK",
+      "endpoints": [
+        "https://github.com/Maxdesigna7x/Model_Builder/releases/latest/download/latest.json"
+      ]
     }
   }
 }
