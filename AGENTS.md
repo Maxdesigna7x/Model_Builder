@@ -25,3 +25,5 @@
 - Estos pasos son repetibles, pero no garantizan compilaciones idénticas byte por byte ni dependencias Python idénticas: hay versiones Python expresadas como rangos y se resuelven al preparar el entorno. No describas el proceso como reproducible de forma estricta sin fijar y verificar todas las dependencias.
 - La aplicación distribuida prepara su propio Python al primer inicio y permite elegir CPU o NVIDIA CUDA. Mantén sus comprobaciones y la información de progreso al modificar el instalador. Las descargas de CUDA pueden ser grandes; no realices una instalación completa de prueba salvo que sea necesaria para el cambio o que el usuario la solicite.
 - El flujo y los comandos de instalación se describen también en `docs/INSTALACION.md`. Si cambian, actualiza esa guía y este archivo.
+
+- Para problemas de ventana en blanco en Linux, probar `modelbuilder --graphics=compatible` y obtener información básica con `modelbuilder --diagnose`. Estos comandos son una mejora inicial; no declarar resuelto un caso sin verificarlo en el equipo afectado. El trabajo pendiente está en `docs/22-plan-arranque-portable-linux.md`.

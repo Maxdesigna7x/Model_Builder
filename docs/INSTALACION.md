@@ -44,3 +44,16 @@ La versión distribuida prepara un Python privado al primer inicio y descarga la
 Al primer inicio de la aplicación distribuida se elige **CPU** o **GPU NVIDIA**. La opción NVIDIA instala la variante CUDA 13.0 de PyTorch y comprueba que una GPU y un controlador compatibles estén disponibles. Si la comprobación falla, se puede reintentar o elegir CPU. Esta descarga necesita conexión y puede ocupar varios GB. Los usuarios de la versión anterior verán la selección al actualizar; los proyectos permanecen en su carpeta de datos.
 
 Durante la instalación, el porcentaje cuenta los paquetes preparados sobre el total resuelto, incluidos los que ya estaban en caché. El indicador del paquete actual es indeterminado porque no se recibe un porcentaje fiable de su descarga. Para verificar CUDA en un equipo con NVIDIA, puede ejecutarse `python scripts/test-desktop-runtime.py --backend nvidia`; esto crea un entorno temporal y descarga las dependencias necesarias.
+
+
+## Diagnóstico de arranque en Linux
+
+Si la ventana queda en blanco, cierra la aplicación y prueba desde una terminal:
+
+    modelbuilder --graphics=compatible
+
+Para AppImage, usa la ruta al archivo en lugar de `modelbuilder`. Este modo cambia el renderizado de la interfaz; no desactiva CUDA para entrenamiento. Para ver datos básicos del entorno sin descargar dependencias:
+
+    modelbuilder --diagnose
+
+El modo compatible es una primera prueba; no garantiza resolver todos los problemas gráficos o de bibliotecas.

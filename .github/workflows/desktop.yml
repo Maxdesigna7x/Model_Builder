@@ -72,6 +72,8 @@ jobs:
 
           Durante el primer inicio, ModelBuilder permite elegir CPU o GPU NVIDIA y descarga las dependencias en un entorno privado. Se necesita conexión a Internet y varios GB de espacio libre. NVIDIA requiere una GPU y un controlador compatibles con CUDA 13.0.
 
+          En Linux se puede iniciar con `--graphics=compatible` para probar un renderizado conservador y con `--diagnose` para ver información básica. Esta mejora no confirma la solución de todos los casos de ventana en blanco; la auditoría de dependencias y la comprobación en el equipo afectado siguen pendientes.
+
           Los instaladores no están firmados. Las pruebas automáticas comprueban el entorno de CPU; la compatibilidad de NVIDIA depende del equipo y sus controladores.
           NOTES
           gh release create "$tag" --target "$SOURCE_SHA" --draft --title "ModelBuilder escritorio · compilación ${GITHUB_RUN_NUMBER}" --notes-file release-notes.md "${files[@]}"
