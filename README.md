@@ -167,7 +167,9 @@ Si usas otro entorno, establece `MODELBUILDER_PYTHON` con la ruta de su ejecutab
 
 ### Escritorio
 
-En Ubuntu/Debian, `bash scripts/install-linux.sh` prepara el entorno y las dependencias de Tauri; después ejecuta `bash run.sh`. En Windows, ejecuta `scripts/install-windows.ps1` y luego `run-windows.ps1` desde PowerShell, con los requisitos nativos instalados.
+En la aplicación distribuida, el primer inicio permite elegir CPU o GPU NVIDIA y prepara un entorno privado. La opción NVIDIA requiere una GPU y un controlador compatibles con CUDA 13.0; la descarga puede ocupar varios GB. Estos cambios estarán disponibles al crear una nueva versión del instalador.
+
+Para ejecutar desde el código fuente: en Ubuntu/Debian, `bash scripts/install-linux.sh` prepara el entorno y las dependencias de Tauri; después ejecuta `bash run.sh`. En Windows, ejecuta `scripts/install-windows.ps1` y luego `run-windows.ps1` desde PowerShell, con los requisitos nativos instalados.
 
 Consulta [la guía de instalación](docs/INSTALACION.md). `npm run build` compila el frontend; no genera por sí solo un instalador Tauri ni incluye Python.
 

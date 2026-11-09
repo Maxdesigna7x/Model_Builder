@@ -18,7 +18,8 @@
     "test:structured-ui": "node scripts/test-structured-editor.mjs",
     "test:repair-ui": "node scripts/test-graph-repair-ui.mjs",
     "test:groups": "node scripts/test-model-groups.mjs",
-    "test:groups-ui": "node scripts/test-groups-minimap-ui.mjs"
+    "test:groups-ui": "node scripts/test-groups-minimap-ui.mjs",
+    "test:desktop-setup": "node scripts/test-desktop-setup.mjs"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.8.0",

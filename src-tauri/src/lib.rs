@@ -47,7 +47,7 @@ fn hide_console(command: &mut Command) {
     let _ = command;
 }
 
-fn run_setup_command(app: &AppHandle, command: &mut Command) -> Result<(), String> {
+fn run_setup_command(_app: &AppHandle, command: &mut Command) -> Result<(), String> {
     hide_console(command);
     command.stdout(Stdio::null()).stderr(Stdio::piped());
     let mut child = command
@@ -59,7 +59,7 @@ fn run_setup_command(app: &AppHandle, command: &mut Command) -> Result<(), Strin
         let line = line.map_err(|e| e.to_string())?;
         if !line.trim().is_empty() {
             last = line.clone();
-            let _ = app.emit("setup-progress", line);
+            // Detailed tool output is kept for errors; the UI receives structured progress.
         }
     }
     if !child.wait().map_err(|e| e.to_string())?.success() {
@@ -68,74 +68,138 @@ fn run_setup_command(app: &AppHandle, command: &mut Command) -> Result<(), Strin
     Ok(())
 }
 
+fn runtime_dir(app: &AppHandle) -> Result<PathBuf, String> {
+    Ok(app
+        .path()
+        .app_data_dir()
+        .map_err(|e| e.to_string())?
+        .join("runtime"))
+}
+
+fn runtime_manifest(app: &AppHandle) -> Result<String, String> {
+    let path = app
+        .path()
+        .resource_dir()
+        .map_err(|e| e.to_string())?
+        .join("pyproject.toml");
+    std::fs::read_to_string(path)
+        .map_err(|e| format!("No se encontró la configuración del motor: {e}"))
+}
+
+fn marker_backend(data: &[u8], manifest: &str) -> Option<String> {
+    let value: Value = serde_json::from_slice(data).ok()?;
+    let backend = value.get("backend")?.as_str()?;
+    if value.get("manifest")?.as_str()? == manifest && ["cpu", "nvidia"].contains(&backend) {
+        Some(backend.to_string())
+    } else {
+        None
+    }
+}
+
+fn ready_backend(app: &AppHandle, manifest: &str) -> Option<String> {
+    let data = std::fs::read(runtime_dir(app).ok()?.join("ready-manifest")).ok()?;
+    if !private_python(app).ok()?.is_file() {
+        return None;
+    }
+    marker_backend(&data, manifest)
+}
+
+#[cfg(test)]
+mod setup_tests {
+    use super::*;
+
+    #[test]
+    fn marker_remembers_the_selected_backend_and_rejects_old_or_stale_installations() {
+        let marker =
+            serde_json::to_vec(&json!({"manifest": "dependencies", "backend": "nvidia"})).unwrap();
+        assert_eq!(
+            marker_backend(&marker, "dependencies").as_deref(),
+            Some("nvidia")
+        );
+        assert_eq!(marker_backend(&marker, "changed"), None);
+        assert_eq!(marker_backend(b"old manifest", "old manifest"), None);
+        let invalid =
+            serde_json::to_vec(&json!({"manifest": "dependencies", "backend": "other"})).unwrap();
+        assert_eq!(marker_backend(&invalid, "dependencies"), None);
+    }
+}
+
 #[tauri::command]
-async fn prepare_runtime(app: AppHandle) -> Result<(), String> {
+async fn runtime_status(app: AppHandle) -> Result<Value, String> {
+    if cfg!(debug_assertions) {
+        return Ok(json!({"ready": true}));
+    }
+    let manifest = runtime_manifest(&app)?;
+    let backend = ready_backend(&app, &manifest);
+    Ok(json!({"ready": backend.is_some(), "backend": backend}))
+}
+
+fn setup_event(
+    app: &AppHandle,
+    stage: &str,
+    message: &str,
+    completed: usize,
+    total: usize,
+    current: &str,
+) {
+    let _ = app.emit("setup-progress", json!({"stage":stage,"message":message,"completed":completed,"total":total,"current":current}));
+}
+
+#[tauri::command]
+async fn prepare_runtime(app: AppHandle, backend: String) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || {
-        if cfg!(debug_assertions) {
-            return Ok(());
-        }
+        if cfg!(debug_assertions) { return Ok(()); }
+        if backend != "cpu" && backend != "nvidia" { return Err("Opción de dispositivo no válida".into()); }
         let _guard = SETUP_LOCK.lock().map_err(|e| e.to_string())?;
+        let manifest = runtime_manifest(&app)?;
+        if ready_backend(&app, &manifest).as_deref() == Some(backend.as_str()) { return Ok(()); }
         let resources = app.path().resource_dir().map_err(|e| e.to_string())?;
-        let manifest = resources.join("pyproject.toml");
-        let requirements = std::fs::read(&manifest)
-            .map_err(|e| format!("No se encontró la configuración del motor: {e}"))?;
-        let runtime = app
-            .path()
-            .app_data_dir()
-            .map_err(|e| e.to_string())?
-            .join("runtime");
+        let runtime = runtime_dir(&app)?;
         let marker = runtime.join("ready-manifest");
         let python = private_python(&app)?;
-        if python.is_file()
-            && std::fs::read(&marker).ok().as_deref() == Some(requirements.as_slice())
-        {
-            return Ok(());
-        }
         std::fs::create_dir_all(&runtime).map_err(|e| e.to_string())?;
         let _ = std::fs::remove_file(&marker);
-        let uv = resources
-            .join("runtime")
-            .join(if cfg!(windows) { "uv.exe" } else { "uv" });
-        let _ = app.emit("setup-progress", "Preparando Python privado…");
+        let uv = resources.join("runtime").join(if cfg!(windows) { "uv.exe" } else { "uv" });
+        setup_event(&app, "python", "Preparando Python privado", 0, 0, "Python 3.12");
         let mut venv = Command::new(&uv);
-        venv.arg("venv")
-            .arg("--clear")
-            .arg("--managed-python")
-            .arg("--python")
-            .arg("3.12")
-            .arg(runtime.join("venv"));
-        venv.env("UV_PYTHON_INSTALL_DIR", runtime.join("python"))
-            .env("UV_NO_PROGRESS", "1");
+        venv.arg("venv").arg("--clear").arg("--managed-python").arg("--python").arg("3.12").arg(runtime.join("venv"));
+        venv.env("UV_PYTHON_INSTALL_DIR", runtime.join("python")).env("UV_NO_PROGRESS", "1").env("UV_HTTP_TIMEOUT", "300");
         run_setup_command(&app, &mut venv)?;
-        let _ = app.emit(
-            "setup-progress",
-            "Descargando e instalando dependencias. Esto puede tardar varios minutos…",
-        );
-        let mut install = Command::new(&uv);
-        install
-            .arg("pip")
-            .arg("install")
-            .arg("--python")
-            .arg(&python)
-            .arg("--torch-backend")
-            .arg("cpu")
-            .arg("-r")
-            .arg(&manifest);
-        install
-            .env("UV_NO_PROGRESS", "1")
-            .env("UV_HTTP_TIMEOUT", "300");
-        run_setup_command(&app, &mut install)?;
+        let torch_backend = if backend == "nvidia" { "cu130" } else { "cpu" };
+        let lockfile = runtime.join("resolved-requirements.txt");
+        setup_event(&app, "resolve", "Calculando los componentes necesarios", 0, 0, "Dependencias de ModelBuilder");
+        let mut resolve = Command::new(&uv);
+        resolve.args(["pip", "compile", "--python"]).arg(&python).args(["--torch-backend", torch_backend, "--no-header", "--no-annotate", "--output-file"]).arg(&lockfile).arg(resources.join("pyproject.toml"));
+        resolve.env("UV_NO_PROGRESS", "1").env("UV_HTTP_TIMEOUT", "300");
+        run_setup_command(&app, &mut resolve)?;
+        let lock = std::fs::read_to_string(&lockfile).map_err(|e| e.to_string())?;
+        let packages: Vec<&str> = lock.lines().map(str::trim).filter(|line| !line.is_empty() && !line.starts_with('#')).collect();
+        if packages.is_empty() || packages.iter().any(|p| !p.contains("==") || p.starts_with('-')) { return Err("No se pudo interpretar la lista de dependencias".into()); }
+        let total = packages.len();
+        for (index, package) in packages.iter().enumerate() {
+            let name = package.split("==").next().unwrap_or(package);
+            setup_event(&app, "install", "Descargando e instalando componentes", index, total, name);
+            let mut install = Command::new(&uv);
+            install.args(["pip", "install", "--no-deps", "--python"]).arg(&python).args(["--torch-backend", torch_backend]).arg(package);
+            install.env("UV_NO_PROGRESS", "1").env("UV_HTTP_TIMEOUT", "300");
+            run_setup_command(&app, &mut install).map_err(|e| format!("{name}: {e}"))?;
+        }
+        setup_event(&app, "verify", "Comprobando la instalación", total, total, "Motor de ModelBuilder");
+        let mut dependencies = Command::new(&uv);
+        dependencies.args(["pip", "check", "--python"]).arg(&python);
+        run_setup_command(&app, &mut dependencies)?;
         let mut check = Command::new(&python);
-        check.args([
-            "-c",
-            "import torch, torchvision, numpy, PIL, datasets, transformers, ultralytics, cv2",
-        ]);
+        let verify = if backend == "nvidia" {
+            "import torch, torchvision, numpy, PIL, datasets, transformers, ultralytics, cv2; assert torch.version.cuda and torch.cuda.is_available(), 'No se detectó una GPU NVIDIA compatible. Comprueba el controlador o selecciona CPU.'; torch.ones(1, device='cuda').cpu()"
+        } else {
+            "import torch, torchvision, numpy, PIL, datasets, transformers, ultralytics, cv2"
+        };
+        check.args(["-c", verify]);
         run_setup_command(&app, &mut check)?;
-        std::fs::write(marker, requirements).map_err(|e| e.to_string())?;
+        let ready = json!({"manifest":manifest, "backend":backend});
+        std::fs::write(marker, serde_json::to_vec(&ready).map_err(|e| e.to_string())?).map_err(|e| e.to_string())?;
         Ok(())
-    })
-    .await
-    .map_err(|e| e.to_string())?
+    }).await.map_err(|e| e.to_string())?
 }
 
 fn runtime_paths(app: &AppHandle) -> Result<(PathBuf, PathBuf, PathBuf), String> {
@@ -292,6 +356,7 @@ async fn start_training(app: AppHandle, request: Value) -> Result<Value, String>
 pub fn run() {
     tauri::Builder::default()
         .invoke_handler(tauri::generate_handler![
+            runtime_status,
             prepare_runtime,
             backend_request,
             start_training,
